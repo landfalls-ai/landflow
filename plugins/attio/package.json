@@ -1,0 +1,34 @@
+{
+  "name": "@landflow/plugin-attio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Attio CRM for Landflow flows: an app-webhook trigger and List Changed Since operations that output activity items, record lookup with notes, workspace members, and note, task and list-entry creation over the REST API, served over HTTP, gRPC, brokers and MCP.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "3.1156.0",
+    "@azure/service-bus": "7.10.0",
+    "@confluentinc/kafka-javascript": "1.11.0",
+    "@google-cloud/pubsub": "6.3.1",
+    "@landflow/sdk": "workspace:*",
+    "@landflow/transports": "workspace:*",
+    "@nats-io/jetstream": "3.4.0",
+    "@nats-io/transport-node": "3.4.0",
+    "amqplib": "2.2.0",
+    "iovalkey": "0.4.0",
+    "mqtt": "5.16.1",
+    "pulsar-client": "1.18.0",
+    "rhea": "3.0.5"
+  },
+  "devDependencies": {
+    "@landflow/protocol": "workspace:*",
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "vitest": "^5.0.5"
+  }
+}

@@ -6,7 +6,10 @@
  * Moving keeps things working where that is safe: a moved credential stays usable by its old project (a `user`
  * share) unless told otherwise, and moving a workflow can share the credentials it uses with the new project.
  */
-import { personalProjectId, type ResourceKind, type TransferTarget } from '../../shared/projects';
+import { recordAudit } from '../audit';
+import { projectKeys } from '../credentials/project-keys'; // C31:
+import { logger } from '../telemetry/logger';
+import { personalProjectId, type ResourceKind, type ShareRole, type TransferTarget } from '../../shared/projects';
 import { authDb } from '../auth/db';
 import { deleteUser, getUser } from '../auth/users';
 import { dataTables } from '../datatables';
@@ -14,9 +17,13 @@ import { folders } from '../folders';
 import { forgetProjectSettings } from '../governance/scopes';
 import { agentTemplateRows } from '../agents/template-rows';
 import { localTemplates } from '../templates/store';
+import { settleRetired } from '../practices/inbox';
+import { removeProjectSubscriptions } from '../outbox/subscriptions';
+import { dropCollections, moveCollections, settleCollectionsBeforeMove } from '../rag/collection-access'; // C21:
 import { projectVariables } from './variables';
 import {
-  addShare,
+  auditShare,
+  putShare,
   defaultProjectId,
   ensurePersonalProject,
   getProject,
@@ -43,16 +50,42 @@ export function moveResource(kind: ResourceKind, id: string, projectId: string, 
   const target = getProject(projectId);
   if (!target) throw new ProjectError('Project not found', 404);
   const db = authDb();
-  return db.transaction(() => {
+  const kept: Array<[ResourceKind, string, string, ShareRole | undefined]> = [];
+  const result = db.transaction(() => {
     const from = homeProjectId(kind, id);
-    if (from === target.id && storedHomeProject(kind, id)) return { from, to: target };
+    if (from === target.id && storedHomeProject(kind, id)) return { from, to: target, moved: false };
     setHomeProject(kind, id, target.id);
-    if (kind === 'credential' && from && from !== target.id && options.keepAccess !== false) addShare('credential', id, from, 'user', options.actorId);
-    for (const credentialId of options.shareCredentials ?? []) {
-      if (homeProjectId('credential', credentialId) !== target.id) addShare('credential', credentialId, target.id, 'user', options.actorId);
+    if (kind === 'credential' && from && from !== target.id && options.keepAccess !== false) {
+      const before = putShare('credential', id, from, 'user', options.actorId);
+      if (before !== 'user') kept.push(['credential', id, from, before]);
     }
-    return { from, to: target };
+    for (const credentialId of options.shareCredentials ?? []) {
+      if (homeProjectId('credential', credentialId) !== target.id) {
+        const before = putShare('credential', credentialId, target.id, 'user', options.actorId);
+        if (before !== 'user') kept.push(['credential', credentialId, target.id, before]);
+      }
+    }
+    return { from, to: target, moved: true };
   });
+  // Recorded once the transaction has committed.
+  if (result.moved) {
+    const fromName = result.from ? (getProject(result.from)?.name ?? result.from) : undefined;
+    recordAudit({
+      action: 'resource.transfer',
+      target: { type: kind, id },
+      summary: `Moved ${kind} ${id} from ${fromName ?? 'the default project'} to ${target.name}`,
+      details: { kind, resourceId: id, from: result.from ?? null, to: target.id, toName: target.name, keepAccess: kind === 'credential' ? options.keepAccess !== false : null, sharedCredentials: options.shareCredentials?.length ?? 0 },
+    });
+    for (const [shareKind, shareId, withProject, was] of kept) auditShare(shareKind, shareId, withProject, was, 'user');
+    // C31: the credential is sealed with its new project's key now (the vault is not in this transaction: a failure leaves it on the old key, readable, and `migrate` finishes it).
+    if (kind === 'credential') projectKeys.resealCredentials([id]);
+  }
+  return { from: result.from, to: result.to };
+}
+
+/** C31: a project is gone: its keys are retired now and deleted by a later sweep (not here: another process may still be sealing with them). A failure is logged; `migrate` retries. */
+function removed(projectId: string) {
+  projectKeys.projectRemoved(projectId).catch((error) => logger.warn('a removed project’s keys could not be retired', { 'landflow.project_key.project': projectId, error: error instanceof Error ? error.name : 'error' }));
 }
 
 /** Data table names are unique per project: a table moving in with a name the project already has becomes `name 2`, `name 3`… */
@@ -86,11 +119,12 @@ function moveAll(fromProjectId: string, toProjectId: string, options: { includeU
   projectVariables.moveAll(fromProjectId, toProjectId);
   localTemplates.moveProject(fromProjectId, toProjectId);
   agentTemplateRows.moveProject(fromProjectId, toProjectId);
+  moveCollections(fromProjectId, toProjectId, options.actorId); // C21: its vector collections and the grants it held
   forgetProjectSettings(fromProjectId);
   for (const share of sharesTo(fromProjectId)) {
     // A share to the new owner is pointless (it owns or already has it), so it goes with the old project.
     if (homeProjectId(share.kind, share.resourceId) === toProjectId) continue;
-    if (!sharesTo(toProjectId, share.kind).some((s) => s.resourceId === share.resourceId)) addShare(share.kind, share.resourceId, toProjectId, share.role, options.actorId ?? share.createdBy);
+    if (!sharesTo(toProjectId, share.kind).some((s) => s.resourceId === share.resourceId)) putShare(share.kind, share.resourceId, toProjectId, share.role, options.actorId ?? share.createdBy);
   }
   return moved;
 }
@@ -101,6 +135,7 @@ function dropProjectData(projectId: string) {
   projectVariables.removeProject(projectId);
   localTemplates.moveProject(projectId);
   agentTemplateRows.moveProject(projectId);
+  dropCollections(projectId); // C21: its collections and grants go with it
   forgetProjectSettings(projectId);
 }
 
@@ -136,8 +171,10 @@ export function deleteUserWithTransfer(userId: string, target?: TransferTarget, 
   if (user.role === 'owner') throw new ProjectError('The owner can’t be removed', 403);
   const personal = personalProjectId(userId);
   const db = authDb();
-  return db.transaction(() => {
+  settleCollectionsBeforeMove(); // C21: the upgrade's adoption has run before anything moves
+  const { retired, credentialIds, ...result } = db.transaction(() => {
     const owned = resourcesIn(personal);
+    const credentialIds = owned.filter((r) => r.kind === 'credential').map((r) => r.id);
     let to: ProjectRecord | undefined;
     let moved: Partial<Record<ResourceKind, number>> = {};
     if (target) {
@@ -151,10 +188,16 @@ export function deleteUserWithTransfer(userId: string, target?: TransferTarget, 
     }
     db.delete('project_members', { user_id: userId });
     db.delete('scim_group_members', { user_id: userId });
-    removeProjectRows(personal);
+    removeProjectSubscriptions(personal);
+    const retired = removeProjectRows(personal);
     if (!deleteUser(userId)) throw new ProjectError('User not found', 404);
-    return { moved, ...(to && { to }) };
+    return { moved, retired, credentialIds, ...(to && { to }) };
   });
+  for (const practiceId of retired) settleRetired(practiceId, actorId);
+  // C31: what moved is sealed with the new project's key, then the personal project's keys are retired.
+  projectKeys.resealCredentials(credentialIds);
+  removed(personal);
+  return result;
 }
 
 /** Delete a team project; what it owns goes to `transferTo` (required when it owns anything). One transaction. */
@@ -163,9 +206,11 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
   if (!project) throw new ProjectError('Project not found', 404);
   if (project.type === 'personal') throw new ProjectError('A personal project goes when its user is removed', 400);
   const db = authDb();
-  return db.transaction(() => {
+  settleCollectionsBeforeMove(); // C21: the upgrade's adoption has run before anything moves
+  const result = db.transaction(() => {
     let moved: Partial<Record<ResourceKind, number>> = {};
     const owned = resourcesIn(projectId);
+    const credentialIds = owned.filter((r) => r.kind === 'credential').map((r) => r.id);
     if (transferTo) {
       if (transferTo === projectId) throw new ProjectError('Choose another project to transfer to', 400);
       if (!getProject(transferTo)) throw new ProjectError('The project to transfer to doesn’t exist', 404);
@@ -175,9 +220,23 @@ export function deleteProjectWithTransfer(projectId: string, transferTo?: string
     } else {
       dropProjectData(projectId);
     }
-    removeProjectRows(projectId);
-    return { moved };
+    removeProjectSubscriptions(projectId);
+    const retired = removeProjectRows(projectId);
+    return { moved, retired, credentialIds };
   });
+  // The project's practices are retired: their open inbox suggestions are dismissed, so none waits on a project that is gone.
+  for (const practiceId of result.retired) settleRetired(practiceId, actorId);
+  // C31: what moved is sealed with the target's key, then this project's keys are retired.
+  projectKeys.resealCredentials(result.credentialIds);
+  removed(projectId);
+  recordAudit({
+    action: 'project.delete',
+    target: { type: 'project', id: projectId, name: project.name },
+    project: projectId,
+    summary: `Deleted the project ${project.name}${transferTo ? ` (its items went to ${getProject(transferTo)?.name ?? transferTo})` : ''}`,
+    details: { name: project.name, transferredTo: transferTo ?? null, moved: Object.entries(result.moved).map(([k, n]) => `${k}:${n}`) },
+  });
+  return { moved: result.moved };
 }
 
 /**

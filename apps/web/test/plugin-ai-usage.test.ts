@@ -7,9 +7,17 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { metrics } from '@opentelemetry/api';
+import { MeterProvider, MetricReader, type DataPoint } from '@opentelemetry/sdk-metrics';
 import type { ExecutionEvent, ResolvedNodeType, Workflow } from '@landflow/engine';
 import type { ExecuteRequest, ExecuteResponse } from '@landflow/protocol';
 import type { JournalDraft } from '@/lib/shared/run-trace';
+
+class TestReader extends MetricReader {
+  protected async onForceFlush() {}
+  protected async onShutdown() {}
+}
+const reader = new TestReader();
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-plugin-ai-usage-'));
 const ENV = { LANDFLOW_DATA_DIR: dataDir, LANDFLOW_REGISTRY_GRPC_PORT: 'off', LANDFLOW_SCAN_ON_START: 'false', LANDFLOW_PLUGINS: '' };
@@ -59,6 +67,15 @@ describe('withAiUsage', () => {
     expect(response.outputs[0][0].json).toEqual({ ok: true });
     expect(executionUsage(scope)).toMatchObject({ inputTokens: 130, outputTokens: 25, calls: 2, models: [{ provider: 'ollama', model: 'qwen-test', calls: 2 }] });
     expect(aiUsageMeter().report({ executionId: 'ex_pai_1' }).totals).toMatchObject({ inputTokens: 130, outputTokens: 25, calls: 2 });
+  });
+
+  it('labels the tokens it counts with the purpose none, so no series is unlabelled', async () => {
+    metrics.setGlobalMeterProvider(new MeterProvider({ readers: [reader] }));
+    await reader.collect();
+    await runInUsageScope(executionScope({ executionId: 'ex_pai_metric', workflowId: 'wf_pai' }), () => withAiUsage(resolved([model(100, 20)])).execute(request()));
+    const { resourceMetrics } = await reader.collect();
+    const points = resourceMetrics.scopeMetrics.flatMap((m) => m.metrics).filter((m) => m.descriptor.name === 'landflow.ai.tokens').flatMap((m) => m.dataPoints as DataPoint<number>[]);
+    expect(points.map((p) => [p.attributes['gen_ai.token.type'], p.attributes['landflow.ai.purpose'], p.value]).sort()).toEqual([['input', 'none', 100], ['output', 'none', 20]]);
   });
 
   it('records the credential the request used', async () => {

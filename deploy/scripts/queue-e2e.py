@@ -112,8 +112,9 @@ def start_again(service):
 
 
 def _reachable(base):
+    """Ready, not just answering: /api/health/ready answers 503 (an HTTPError here) until the boot is done."""
     try:
-        urllib.request.urlopen(base + '/api/health', timeout=3).read()
+        urllib.request.urlopen(base + '/api/health/ready', timeout=3).read()
         return True
     except Exception:
         return False

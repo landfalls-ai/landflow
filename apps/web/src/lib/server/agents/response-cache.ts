@@ -23,8 +23,9 @@ export function answerShape(config: AgentConfig) {
 }
 
 /** A key for one question to one agent config: edit the prompt, model or guardrails and the old answers no longer match. */
-export function cacheKey(agentId: string, config: AgentConfig, question: string): string {
-  return createHash('sha256').update(JSON.stringify([agentId, answerShape(config), normalizeQuestion(question)])).digest('hex');
+export function cacheKey(agentId: string, config: AgentConfig, question: string, contextHash = ''): string {
+  // The project block's hash joins the key only when there is one, so keys without a block stay as they were.
+  return createHash('sha256').update(JSON.stringify([agentId, answerShape(config), normalizeQuestion(question), ...(contextHash ? [contextHash] : [])])).digest('hex');
 }
 
 const db = () => database();

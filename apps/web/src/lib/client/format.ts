@@ -10,6 +10,11 @@ export function timeAgo(iso?: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+/** A count with its noun: "1 plugin", "2 plugins", "1,204 rows"; pass `many` for an irregular plural. */
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+}
+
 export function duration(ms?: number): string {
   if (ms === undefined) return '—';
   if (ms < 1000) return `${ms} ms`;
@@ -47,4 +52,25 @@ export const TRANSPORT_META: Record<string, { label: string }> = {
 /** Label of any transport kind: the known ones from TRANSPORT_META, an unknown kind as is (the engine's Transport is open). */
 export function transportLabel(transport: string): string {
   return TRANSPORT_META[transport]?.label ?? transport;
+}
+
+const STAMP = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+const DAY_TIME = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+
+const valid = (iso?: string) => {
+  if (!iso) return undefined;
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+};
+
+/** A moment in a run or a history (docs/ui-review.md#words): "Nov 13, 09:52:09", 24-hour. "—" when unknown. */
+export function stamp(iso?: string): string {
+  const date = valid(iso);
+  return date ? STAMP.format(date) : '—';
+}
+
+/** A day and time with the year, for settings and logs that outlive the week: "Nov 13, 2026, 09:52". */
+export function dayTime(iso?: string): string {
+  const date = valid(iso);
+  return date ? DAY_TIME.format(date) : '—';
 }

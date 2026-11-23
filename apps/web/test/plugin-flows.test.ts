@@ -22,6 +22,7 @@ const { normalizeWorkflow, validateWorkflow } = await import('@/lib/server/mcp/w
 const { workflowSchema } = await import('@/lib/server/schemas');
 const { loadPlugin } = await import('@/lib/server/marketplace/plugin');
 const { readerFor } = await import('@/lib/server/marketplace/reader');
+const { runWorkflow } = await import('@/lib/server/runner');
 
 const fixtures = join(import.meta.dirname, 'fixtures', 'plugin-manifests');
 registry.registerBuiltin(corePlugin);
@@ -43,11 +44,22 @@ const flows = readdirSync(join(repo, 'plugins')).flatMap((plugin) => {
 const qualified = (nodeType: string, key: string) => (key.includes('.') ? key : `${nodeType.split('.')[0]}.${key}`);
 
 describe('plugin flows', () => {
-  it('ship with the Landfall, triage and threat-intel plugins', () => {
+  it('ship with the Landfall, triage, threat-intel, Linear, Attio, Fathom, Clickland and Landledger plugins', () => {
     expect(flows.map(([path]) => path).sort()).toEqual([
+      'attio/flows/work-attio.json',
+      'clickland/flows/clickland-alert-triage.json',
+      'clickland/flows/clickland-observability-assistant.json',
+      'fathom/flows/work-fathom.json',
       'landfall/flows/landflow-failures-to-landfall.json',
       'landfall/flows/landflow-heartbeat.json',
       'landfall/flows/learn-from-closed-rooms.json',
+      'landledger/flows/landledger-ai-budget.json',
+      'landledger/flows/landledger-approve-infra-change.json',
+      'landledger/flows/landledger-incident-cost.json',
+      'landledger/flows/landledger-slack-approver.json',
+      'landledger/flows/landledger-tool-or-seat.json',
+      'landledger/flows/landledger-variance-notes.json',
+      'linear/flows/work-linear.json',
       'threat-intel/flows/ioc-lookup.json',
       'triage/flows/alert-triage-to-landfall.json',
       'triage/flows/phishing-report-triage.json',
@@ -91,12 +103,52 @@ describe('plugin flows', () => {
       for (const entry of manifest.plugins) {
         const loaded = await loadPlugin(readerFor({ kind: 'local', root: repo, path: entry.source.slice(2) }), entry);
         expect(loaded.warnings, entry.name).toEqual([]);
+        if (entry.source.startsWith('./apps/web/claude-plugins/')) {
+          // The Claude Code mods (B38): no node plugin and no flows; their hooks are what Landflow reports it can't use.
+          expect(loaded.nodePlugin, entry.name).toBeUndefined();
+          expect(loaded.flows, entry.name).toEqual([]);
+          expect(entry.flows, entry.name).toBeUndefined();
+          expect(loaded.unsupported.map((u) => u.kind), entry.name).toContain('hooks');
+          continue;
+        }
+        if (entry.source.startsWith('./claude-plugins/')) {
+          // Skills and agents for people building on Landflow (landflow-dev): no node plugin and no flows.
+          expect(loaded.nodePlugin, entry.name).toBeUndefined();
+          expect(loaded.flows, entry.name).toEqual([]);
+          expect(entry.flows, entry.name).toBeUndefined();
+          continue;
+        }
+        expect(entry.source, entry.name).toMatch(/^\.\/plugins\//);
         expect(loaded.nodePlugin?.id, entry.name).toBe(entry.name);
         expect(loaded.flows.map((f) => `./${f.path}`).sort(), entry.name).toEqual([...(entry.flows ?? [])].sort());
       }
+      expect(manifest.plugins.filter((p) => p.source.startsWith('./apps/web/claude-plugins/')).map((p) => p.name).sort()).toEqual(['landflow-brain', 'landflow-harness']);
+      expect(manifest.plugins.filter((p) => p.source.startsWith('./claude-plugins/')).map((p) => [p.name, p.source, p.category])).toEqual([['landflow-dev', './claude-plugins/landflow-dev', 'development']]);
     } finally {
       delete process.env.LANDFLOW_MARKETPLACE_ALLOW_LOCAL;
     }
+  });
+
+  it('ship the landflow-dev plugin with skills and agents that name and describe themselves', () => {
+    const root = join(repo, 'claude-plugins', 'landflow-dev');
+    const plugin = JSON.parse(readFileSync(join(root, '.claude-plugin', 'plugin.json'), 'utf8')) as { name: string; description: string; keywords: string[] };
+    const manifest = JSON.parse(readFileSync(join(repo, '.claude-plugin', 'marketplace.json'), 'utf8')) as { plugins: Array<{ name: string; description: string; keywords: string[] }> };
+    const entry = manifest.plugins.find((p) => p.name === 'landflow-dev');
+    expect(plugin.name).toBe('landflow-dev');
+    expect(entry?.description).toBe(plugin.description);
+    expect(entry?.keywords).toEqual(plugin.keywords);
+    const frontmatter = (file: string, expected: string) => {
+      const text = readFileSync(file, 'utf8');
+      const head = /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] ?? '';
+      expect(head, file).toMatch(new RegExp(`^name: ${expected}$`, 'm'));
+      expect(head, file).toMatch(/^description: \S.{20,}$/m);
+    };
+    const skills = readdirSync(join(root, 'skills'));
+    expect(skills.length).toBeGreaterThan(0);
+    for (const skill of skills) frontmatter(join(root, 'skills', skill, 'SKILL.md'), skill);
+    const agents = readdirSync(join(root, 'agents')).filter((f) => f.endsWith('.md'));
+    expect(agents.sort()).toEqual(['landflow-platform-guide.md', 'landflow-plugin-builder.md']);
+    for (const agent of agents) frontmatter(join(root, 'agents', agent), agent.replace(/\.md$/, ''));
   });
 
   it('are listed in the repo’s marketplace', () => {
@@ -107,5 +159,72 @@ describe('plugin flows', () => {
       expect(entry, plugin).toBeDefined();
       expect(entry!.flows, path).toContain(`./${rest.join('/')}`);
     }
+  });
+});
+
+describe('Clickland alert triage', () => {
+  // Clickland marks a delivery for an alert it routed straight to Landfall with `route: "direct"`: Landfall has opened
+  // that room already, so the flow must stop before the triage agent and the Slack post.
+  it('drops a delivery Clickland routed straight to Landfall, before the agent', async () => {
+    const file = flows.find(([path]) => path === 'clickland/flows/clickland-alert-triage.json')![1];
+    const workflow = { ...normalizeWorkflow(structuredClone(file.template.workflow)), id: 'wf_clickland_triage' };
+    const trigger = workflow.nodes.find((n) => n.type === 'clickland.clicklandAlertTrigger')!;
+    const first = workflow.connections.filter((c) => c.type === 'main' && c.source === trigger.id);
+    expect(first).toHaveLength(1);
+    const gate = workflow.nodes.find((n) => n.id === first[0].target)!;
+    expect(gate.type).toBe('core.filter');
+    expect(workflow.connections.find((c) => c.type === 'main' && c.source === gate.id)?.target).toBe('agent');
+
+    const delivery = (route?: string) => ({
+      json: { type: 'alert.firing', id: 'evt_1', alert: { id: 'al_1', name: 'Checkout errors' }, value: 12, ...(route && { route }) },
+    });
+    const record = await runWorkflow({
+      workflow,
+      mode: 'trigger',
+      triggerOutput: { nodeId: trigger.id, items: [delivery('direct'), delivery(), delivery('flow')] },
+      destinationNodeId: gate.id,
+    });
+    expect(record.status).toBe('success');
+    const passed = record.runData[gate.id]?.at(-1)?.outputs[0] ?? [];
+    expect(passed.map((item) => item.json.route ?? null)).toEqual([null, 'flow']);
+  });
+});
+
+describe('Alert triage → Landfall', () => {
+  // Any source (Clickland among them) can send an alert straight to Landfall and mark the delivery `route: "direct"`, at
+  // the top of the body or in its `data`. Landfall has opened that room, so the generic flow stops such a delivery
+  // before Normalize alert: it can't open a second room or recover one it didn't open.
+  it('drops a delivery its source routed straight to Landfall, before Normalize alert', async () => {
+    const file = flows.find(([path]) => path === 'triage/flows/alert-triage-to-landfall.json')![1];
+    const workflow = { ...normalizeWorkflow(structuredClone(file.template.workflow)), id: 'wf_alert_triage' };
+    const trigger = workflow.nodes.find((n) => n.type === 'core.webhook')!;
+    const first = workflow.connections.filter((c) => c.type === 'main' && c.source === trigger.id);
+    expect(first).toHaveLength(1);
+    const gate = workflow.nodes.find((n) => n.id === first[0].target)!;
+    expect(gate.type).toBe('core.filter');
+    const next = workflow.connections.filter((c) => c.type === 'main' && c.source === gate.id);
+    expect(next.map((c) => workflow.nodes.find((n) => n.id === c.target)?.type)).toEqual(['triage.normalizeAlert']);
+
+    const webhook = (body: Record<string, unknown>, tag: string) => ({ json: { headers: {}, params: {}, query: {}, body: { ...body, tag } } });
+    const clickland = (route?: string) => ({ type: 'alert.firing', id: 'evt_1', data: { alert: { id: 'al_1', name: 'Checkout errors' }, value: 12, ...(route && { route }) } });
+    const record = await runWorkflow({
+      workflow,
+      mode: 'trigger',
+      triggerOutput: {
+        nodeId: trigger.id,
+        items: [
+          webhook(clickland('direct'), 'clickland-direct'),
+          webhook(clickland(), 'clickland-flow'),
+          webhook({ alertname: 'HighCPU', route: 'direct' }, 'generic-direct'),
+          webhook({ alertname: 'HighCPU', route: 'flow' }, 'generic-flow'),
+          webhook({ receiver: 'oncall', status: 'firing', alerts: [] }, 'alertmanager'),
+          { json: { type: 'alert.firing', alert: { id: 'al_2' }, route: 'direct', tag: 'trigger-item-direct' } },
+        ],
+      },
+      destinationNodeId: gate.id,
+    });
+    expect(record.status).toBe('success');
+    const passed = record.runData[gate.id]?.at(-1)?.outputs[0] ?? [];
+    expect(passed.map((item) => (item.json.body as { tag: string }).tag)).toEqual(['clickland-flow', 'generic-flow', 'alertmanager']);
   });
 });

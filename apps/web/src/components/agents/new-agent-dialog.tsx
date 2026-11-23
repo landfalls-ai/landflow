@@ -5,12 +5,11 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, Plus, Trash2 } from 'lucide-react';
+import { Check, FileUp, Plus, Sparkles, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { cn } from '@/lib/utils';
 import type { AgentTemplate } from '@/lib/shared/agents';
-import { ARCHITECT } from '@/lib/shared/agent-architect';
 import { randomFace } from '@/lib/shared/faces';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/badge';
@@ -19,6 +18,7 @@ import { AgentArchitect } from './architect';
 import { AgentAvatar } from './avatar';
 import { AGENT_COLORS, AvatarDialog, type AvatarChoice } from './avatar-dialog';
 import { Dialog, Field } from './dialog';
+import { parseAgentFile } from './util';
 
 const ALL = 'All';
 const SAVED = 'Your templates';
@@ -38,6 +38,43 @@ function summary(t: AgentTemplate): string {
   const examples = p?.examples?.length ?? 0;
   if (!rules && !examples) return 'Nothing filled in';
   return `${rules} ${rules === 1 ? 'rule' : 'rules'} · ${examples} ${examples === 1 ? 'example' : 'examples'}`;
+}
+
+export type Way = 'persona' | 'ai' | 'file';
+
+/** The three ways into a new agent: a persona from the gallery, the Agent architect, or a JSON file exported earlier. */
+export const NEW_AGENT_WAYS: ReadonlyArray<{ id: Way; label: string; hint: string }> = [
+  { id: 'persona', label: 'From a persona', hint: 'Pick one below, or start blank.' },
+  { id: 'ai', label: 'Design with AI', hint: 'Describe the job in a chat; the Agent architect drafts the agent.' },
+  { id: 'file', label: 'From a file', hint: 'Import an agent exported as JSON.' },
+];
+
+const WAY_ICONS: Record<Way, React.ReactNode> = { persona: <Users className="size-4" />, ai: <Sparkles className="size-4" />, file: <FileUp className="size-4" /> };
+
+export function NewAgentWays({ current = 'persona', importing, onPick }: { current?: Way; importing?: boolean; onPick: (way: Way) => void }) {
+  return (
+    <div role="group" aria-label="Ways to start" className="grid gap-2 sm:col-span-2 sm:grid-cols-3 lg:col-span-3">
+      {NEW_AGENT_WAYS.map((w) => (
+        <button
+          key={w.id}
+          type="button"
+          aria-pressed={w.id === current}
+          disabled={w.id === 'file' && importing}
+          onClick={() => onPick(w.id)}
+          className={cn(
+            'flex items-start gap-2.5 rounded-2xl border p-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ac disabled:opacity-60',
+            w.id === current ? 'border-acbd bg-acdim' : 'border-hair bg-wl hover:border-bd',
+          )}
+        >
+          <span className="mt-0.5 text-ac">{WAY_ICONS[w.id]}</span>
+          <span className="min-w-0">
+            <span className="block text-[13px] font-semibold text-t1">{w.label}</span>
+            <span className="block text-[12px] leading-snug text-t2">{w.hint}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function NewAgentDialog({
@@ -71,6 +108,32 @@ export function NewAgentDialog({
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string>();
   const selectedCard = useRef<HTMLButtonElement>(null);
+  const gallery = useRef<HTMLDivElement>(null);
+  // From a persona: the gallery below is the way, so the button takes you to its chosen card (or its first).
+  const toGallery = () => {
+    const card = selectedCard.current ?? gallery.current?.querySelector<HTMLButtonElement>(':scope > div.relative > button');
+    card?.scrollIntoView({ block: 'nearest' });
+    card?.focus();
+  };
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+
+  const importFile = async (file?: File) => {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const config = parseAgentFile(await file.text());
+      const { agent } = await api<{ agent: { id: string; name: string } }>('/api/agents/import', { method: 'POST', json: { config } });
+      toast.success(`Imported “${agent.name}”`);
+      router.push(`/agents/${agent.id}`);
+      onClose();
+    } catch (e) {
+      toast.error(`Could not import ${file.name}: ${(e as Error).message}`);
+      setImporting(false);
+    } finally {
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  };
 
   useEffect(() => {
     if (initialTemplateId) selectedCard.current?.scrollIntoView({ block: 'nearest' });
@@ -153,7 +216,7 @@ export function NewAgentDialog({
     <>
       <Dialog
         title="New agent"
-        subtitle="Start from a persona, or from a blank page."
+        subtitle="Start from a persona, design one with AI, or import a file."
         icon={<Plus className="size-5 text-ac" />}
         onClose={onClose}
         width={980}
@@ -201,17 +264,9 @@ export function NewAgentDialog({
           <nav aria-label="Template categories" className="flex shrink-0 gap-1 overflow-x-auto border-b border-hair p-3 md:w-[200px] md:flex-col md:overflow-visible md:border-b-0 md:border-r">
             {[ALL, ...categories].map(navItem)}
           </nav>
-          <div className="grid min-w-0 flex-1 grid-cols-1 content-start gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-acbd bg-acdim p-3.5 sm:col-span-2 lg:col-span-3">
-            <AgentAvatar agent={{ name: ARCHITECT.name, color: ARCHITECT.color, avatar: { kind: 'face', face: ARCHITECT.face } }} size={48} />
-            <div className="min-w-0 flex-1 basis-60">
-              <div className="text-[13px] font-semibold text-t1">Design it with the Agent architect</div>
-              <p className="text-[12px] leading-snug text-t2">Describe the job in a chat; it picks the persona and the tools from your plugins and drafts the agent.</p>
-            </div>
-            <Button variant="primary" size="sm" onClick={() => setMode('architect')}>
-              Start
-            </Button>
-          </div>
+          <div ref={gallery} className="grid min-w-0 flex-1 grid-cols-1 content-start gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+            <NewAgentWays importing={importing} onPick={(way) => (way === 'ai' ? setMode('architect') : way === 'file' ? fileInput.current?.click() : toGallery())} />
+            <input ref={fileInput} type="file" accept=".json,application/json" aria-label="Agent JSON file" className="hidden" onChange={(e) => void importFile(e.target.files?.[0])} />
             {shown.map((t) => {
               const on = t.id === selected?.id;
               const tones = t.config.persona?.tones ?? [];

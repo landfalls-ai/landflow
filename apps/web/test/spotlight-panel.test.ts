@@ -1,0 +1,192 @@
+/**
+ * The Spotlight panel (components/editor/spotlight/, ./timeline.ts, the store in ./assistant.ts): its header and steps
+ * come from the conversation, an agent being designed is a row after the turn that created it, and nothing but the person
+ * folds or unfolds it: a reply, a drafted flow, a test-and-fix session and autonomous mode leave `collapsed` alone. The runs
+ * it starts are rows of its timeline, not toasts.
+ */
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/components/editor/test-session', () => ({ testUntilItRuns: vi.fn(async () => {}) }));
+vi.mock('@/components/editor/assistant', async (original) => ({
+  ...(await original<typeof import('@/components/editor/assistant')>()),
+  applyChanges: vi.fn(() => true),
+}));
+
+const { fixedNodes, historyOf, ownRun, spotlightOwnsRun, useAssistant } = await import('@/components/editor/assistant');
+const { useEditor } = await import('@/components/editor/store');
+const { afterReply, useAutonomous } = await import('@/components/editor/autonomous');
+const { agentFixWaits, agentStep, draftPhase, draftStatus, lastRunOf, sessionIsWaiting, sessionWaitsForApply, stepsOf, titleOf } = await import('@/components/editor/timeline');
+type ChatItem = import('@/components/editor/assistant').ChatItem;
+
+const session: ChatItem[] = [
+  { id: 'u', role: 'user', text: 'When a ticket arrives, triage it and post to Slack' },
+  { id: 'd', role: 'assistant', parts: [{ kind: 'text', text: 'Built “Tickets” with 4 nodes. ⌘Z undoes it.' }, { kind: 'action', action: 'test', state: 'done' }] },
+  { id: 'r1', role: 'assistant', testId: 't', parts: [{ kind: 'run', run: { round: 1, state: 'failed', summary: 'failed at “Post to Slack”: No credential' } }] },
+  { id: 'f1', role: 'user', testId: 't', auto: true, text: 'Fix “Post to Slack”: No credential. It failed at run 1.' },
+  { id: 'a1', role: 'assistant', testId: 't', parts: [{ kind: 'text', text: 'Set the credential. Then it posts.' }, { kind: 'proposal', proposal: { id: 'p1', summary: 'Pick the Slack credential', ops: [{ op: 'setParameters', node: 'Post to Slack', parameters: { channel: '#support' } }], dropped: [], warnings: [], state: 'applied' } }] },
+  { id: 'r2', role: 'assistant', testId: 't', parts: [{ kind: 'run', run: { round: 2, state: 'passed', summary: '4 steps, 1 item reached “Post to Slack”' } }] },
+];
+
+beforeEach(() => {
+  useAssistant.getState().reset();
+  useAssistant.setState({ collapsed: false });
+  useAutonomous.setState({ on: true });
+});
+
+describe('the timeline', () => {
+  it('lists the draft, each run (with the node it failed at), each fix and the agents, in order', () => {
+    const agents = [{ nodeId: 'n1', name: 'Contract Reviewer', state: 'published' as const, summary: 'ollama/qwen3-coder:30b · 1 knowledge base', agentId: 'ag_1', after: 'a1' }];
+    const { ask, steps } = stepsOf(session, { agents });
+    expect(ask).toBe('When a ticket arrives, triage it and post to Slack');
+    expect(steps.map((s) => [s.kind, s.text])).toEqual([
+      ['draft', 'Built “Tickets” with 4 nodes.'],
+      ['run', 'Run 1 · “Post to Slack” · No credential'],
+      ['fix', 'Fixed · Set channel on “Post to Slack”'],
+      ['agent', 'Agent “Contract Reviewer” published · ollama/qwen3-coder:30b · 1 knowledge base'],
+      ['run', 'Run 2 · passed · 4 steps, 1 item reached “Post to Slack”'],
+    ]);
+    expect(steps[1]).toMatchObject({ icon: 'failed', nodeName: 'Post to Slack' });
+    expect(steps[3]).toMatchObject({ agentId: 'ag_1' });
+    expect(lastRunOf(session)).toMatchObject({ state: 'passed' });
+  });
+
+  it('a held card of an autonomous typed change is not the session\'s wait: the title stays Testing/Fixing', () => {
+    const held = { id: 'r0', role: 'assistant' as const, parts: [{ kind: 'proposal' as const, proposal: { id: 'p0', summary: 'Remove X', ops: [], dropped: [], warnings: [] } }] };
+    const sessionCard = { ...held, id: 'r1', testId: 't1', parts: [{ kind: 'proposal' as const, proposal: { id: 'p1', summary: 'Fix', ops: [], dropped: [], warnings: [] } }] };
+    const base = { drafting: false, testing: true, pending: false, hasItems: true };
+    expect(sessionWaitsForApply([held] as never, 't1')).toBe(false);
+    expect(titleOf({ ...base, ...(sessionWaitsForApply([held] as never, 't1') && { waitingForApply: true }) })).toBe('Testing the flow');
+    expect(titleOf({ ...base, fixingName: 'Triage', ...(sessionWaitsForApply([held] as never, 't1') && { waitingForApply: true }) })).toBe('Fixing “Triage”');
+    expect(sessionWaitsForApply([held, sessionCard] as never, 't1')).toBe(true);
+    expect(sessionWaitsForApply([held, { ...sessionCard, parts: [{ ...sessionCard.parts[0], proposal: { ...sessionCard.parts[0].proposal, state: 'dismissed' } }] }] as never, 't1')).toBe(false);
+  });
+
+  it('a fix reply still streaming is not a wait: the title stays Fixing until the reply is done', () => {
+    const card = { id: 'r1', role: 'assistant' as const, testId: 't1', parts: [{ kind: 'proposal' as const, proposal: { id: 'p1', summary: 'Fix', ops: [], dropped: [], warnings: [] } }] };
+    expect(sessionIsWaiting({ testing: true, pending: true }, [card] as never, 't1')).toBe(false);
+    expect(sessionIsWaiting({ testing: true, pending: false }, [card] as never, 't1')).toBe(true);
+    expect(sessionIsWaiting({ testing: false, pending: false }, [card] as never, 't1')).toBe(false);
+  });
+
+  it('an agent fix card the session waits on is a wait: Waiting for you, no spinner, until Publish is done', () => {
+    const card = (c: object) => [{ id: 'k1', role: 'assistant' as const, testId: 't1', parts: [{ kind: 'agentCard' as const, card: { fix: { attempt: 1 }, ...c } }] }] as never;
+    expect(sessionIsWaiting({ testing: true, pending: false }, card({ state: 'designed' }), 't1')).toBe(true);
+    expect(agentFixWaits(card({ state: 'created', smoke: { state: 'untested', reason: 'needs a credential: pick one' } }), 't1')).toBe(true);
+    expect(agentFixWaits(card({ state: 'created', smoke: { state: 'passed' } }), 't1')).toBe(true);
+    expect(agentFixWaits(card({ state: 'created', smoke: { state: 'passed' }, publish: { state: 'published' } }), 't1')).toBe(false);
+    expect(agentFixWaits(card({ state: 'creating', smoke: { state: 'testing' } }), 't1')).toBe(false);
+    expect(titleOf({ drafting: false, testing: true, pending: false, hasItems: true, waitingForApply: true, waitingForAgent: true })).toBe('Waiting for you');
+  });
+
+  it('says what Spotlight is doing in the header', () => {
+    const base = { drafting: false, testing: false, pending: false, hasItems: true };
+    expect(titleOf({ ...base, drafting: true })).toBe('Drafting the flow');
+    expect(titleOf({ ...base, testing: true, fixingName: 'Triage', designing: 'Contract Reviewer' })).toBe('Designing “Contract Reviewer”');
+    expect(titleOf({ ...base, testing: true, fixingName: 'Triage' })).toBe('Fixing “Triage”');
+    expect(titleOf({ ...base, testing: true })).toBe('Testing the flow');
+    expect(titleOf({ ...base, testing: true, waitingForApply: true, fixingName: 'Triage' })).toBe('Needs you: apply the fix?');
+    expect(titleOf({ ...base, needs: 'address' })).toBe('Needs you: fill in an address');
+    expect(titleOf({ ...base, lastRun: 'passed' })).toBe('Passed');
+    expect(titleOf({ ...base, lastRun: 'failed' })).toBe('Stopped');
+    expect(titleOf({ ...base, lastRun: 'failed', stoppedAt: 'Post to Slack' })).toBe('Stopped at “Post to Slack”');
+    expect(titleOf({ ...base, lastRun: 'failed', needs: 'credential' })).toBe('Needs you: pick a credential');
+    expect(titleOf({ ...base, hasItems: false })).toBe('Ask Spotlight');
+  });
+
+  it('writes an agent row for each state', () => {
+    expect(agentStep({ nodeId: 'n', name: 'R', state: 'designing' }).text).toBe('Designing the agent “R”…');
+    expect(agentStep({ nodeId: 'n', name: 'R', state: 'draft' }).text).toBe('Agent “R” saved as a draft');
+    expect(agentStep({ nodeId: 'n', name: 'R', state: 'failed', summary: 'Model went away' })).toMatchObject({ icon: 'failed', text: 'Couldn’t create the agent “R”: Model went away' });
+  });
+});
+
+describe('the panel stays where the person put it', () => {
+  it('a reply, a drafted flow and autonomous mode never fold or unfold it', async () => {
+    useAssistant.getState().setCollapsed(true);
+    useAssistant.getState().append([{ id: 'u', role: 'user', text: 'Drop Check' }, { id: 'r', role: 'assistant', done: { model: 'test', durationMs: 1, steps: 1 }, parts: [{ kind: 'proposal', proposal: { id: 'p', summary: 'Drop Check', ops: [{ op: 'removeNode', node: 'Check' }], dropped: [], warnings: [] } }] }]);
+    await afterReply('Drop Check');
+    expect(useAssistant.getState().collapsed).toBe(true);
+    useAssistant.getState().setCollapsed(false);
+    useAssistant.getState().append([{ id: 'u2', role: 'user', text: 'again' }]);
+    expect(useAssistant.getState().collapsed).toBe(false);
+    // ⌘I unfolds it.
+    useAssistant.getState().setCollapsed(true);
+    useAssistant.getState().setOpen(true);
+    expect(useAssistant.getState().collapsed).toBe(false);
+  });
+
+  it('records an agent after the turn that created it, then updates that row', () => {
+    useAssistant.getState().append([{ id: 'x', role: 'assistant', parts: [] }]);
+    useAssistant.getState().setAgent('n1', { name: 'Contract Reviewer' });
+    useAssistant.getState().setAgent('n1', { state: 'published', agentId: 'ag_1' });
+    expect(useAssistant.getState().agents).toEqual([{ nodeId: 'n1', name: 'Contract Reviewer', state: 'published', agentId: 'ag_1', after: 'x' }]);
+    useAssistant.getState().reset();
+    expect(useAssistant.getState().agents).toEqual([]);
+  });
+
+  it('puts what a fix changed on the nodes it touched, until dismissed', () => {
+    useEditor.setState({ nodes: [{ id: 'n1', data: { wf: { name: 'Post to Slack' } } }, { id: 'n2', data: { wf: { name: 'Pick credential' } } }] as never });
+    expect(fixedNodes([{ op: 'setParameters', node: 'Post to Slack', parameters: {} }, { op: 'connect', from: 'Pick credential', to: 'Post to Slack' }])).toEqual(['n1']);
+    // One bubble: the node the fix was asked for, when the fix touched it or named no node.
+    expect(fixedNodes([{ op: 'setParameters', node: 'Post to Slack', parameters: {} }, { op: 'setParameters', node: 'Pick credential', parameters: {} }], 'n2')).toEqual(['n2']);
+    expect(fixedNodes([{ op: 'setParameters', node: 'Post to Slack', parameters: {} }], 'n2')).toEqual(['n1']);
+    expect(fixedNodes([{ op: 'disconnect', from: 'a', to: 'b' }], 'n2')).toEqual(['n2']);
+    expect(fixedNodes([], 'gone')).toEqual([]);
+    useAssistant.getState().noteFix(['n1'], 'Pick the Slack credential');
+    expect(useAssistant.getState().fixNotes.n1).toMatchObject({ text: 'Pick the Slack credential' });
+    useAssistant.getState().dismissFix('n1');
+    expect(useAssistant.getState().fixNotes).toEqual({});
+    // Undoing the fix takes its bubble away too.
+    useAssistant.getState().noteFix(['n1'], 'Pick the Slack credential');
+    useAssistant.getState().setProposalState('x', 'p', 'undone');
+    expect(useAssistant.getState().fixNotes).toEqual({});
+  });
+
+  it('owns the runs it starts: no run toast while it tests or a run row is still running', () => {
+    expect(spotlightOwnsRun()).toBe(false);
+    useAssistant.getState().append([{ id: 'r', role: 'assistant', testId: 't', parts: [{ kind: 'run', run: { round: 1, state: 'running' } }] }]);
+    expect(spotlightOwnsRun()).toBe(true);
+    useAssistant.getState().reset();
+    useAssistant.setState({ testing: new AbortController() });
+    expect(spotlightOwnsRun()).toBe(true);
+    useAssistant.setState({ testing: undefined });
+    expect(spotlightOwnsRun()).toBe(false);
+    // Its run ends after the session asked the person and ended: still its own.
+    useEditor.setState({ executionId: 'ex_1' });
+    ownRun('ex_1');
+    expect(spotlightOwnsRun()).toBe(true);
+    useEditor.setState({ executionId: 'ex_2' });
+    expect(spotlightOwnsRun()).toBe(false);
+  });
+});
+
+describe('the status while a flow is drafted', () => {
+  const plan = { name: 'Bugs', steps: [], assumptions: [], cannot: [] };
+  const asked: ChatItem[] = [{ id: 'u', role: 'user', text: 'Read bugs from Linear' }, { id: 'c', role: 'assistant', parts: [] }];
+  const card = (state: 'waiting' | 'building' | 'built'): ChatItem => ({ id: 'c', role: 'assistant', parts: [{ kind: 'plan', plan: { plan, alternatives: {}, state, prompt: 'Read bugs from Linear' } }] });
+  const liveLine = (items: ChatItem[]) => stepsOf(items, { live: true, drafting: true }).steps.at(-1)?.text;
+
+  it('says "Planning the flow…" while the plan is made and the build wording once building', () => {
+    // The plan call: the card is empty, nothing is planned yet.
+    expect(draftPhase(asked, true)).toBe('planning');
+    expect(draftStatus(draftPhase(asked, true)!)).toBe('Planning the flow…');
+    expect(liveLine(asked)).toBe('Planning the flow…');
+    // The plan is agreed and the build runs.
+    const building = [asked[0], card('building'), { id: 'r', role: 'assistant', parts: [] } as ChatItem];
+    expect(draftPhase(building, true)).toBe('building');
+    expect(draftStatus('building')).toBe('Building the flow from the plan…');
+    expect(liveLine(building)).toBe('Building the flow from the plan…');
+    // An older, finished plan does not make the next ask's plan call look like a build; nothing drafting says nothing.
+    expect(draftPhase([card('built'), ...asked], true)).toBe('planning');
+    expect(draftPhase(building, false)).toBeUndefined();
+  });
+});
+
+describe('what the builder chat is told about earlier turns', () => {
+  it('gives a plan card a line with its steps, not "(no reply)"', () => {
+    const plan = { name: 'Bug triage', steps: [{ key: 's1', type: 'core.schedule', name: 'Every weekday', does: 'Run at 8' }, { key: 's2', type: 'linear.linear', name: 'Get bugs', does: 'Read new bugs', from: 's1' }], assumptions: [], cannot: [] };
+    const items: ChatItem[] = [{ id: 'u', role: 'user', text: 'Triage bugs' }, { id: 'c', role: 'assistant', parts: [{ kind: 'plan', plan: { plan, alternatives: {}, state: 'built', prompt: 'Triage bugs' } }] }];
+    const [, said] = historyOf(items);
+    expect(said.content).toBe('[Plan “Bug triage” (built): 1. Every weekday: Run at 8; 2. Get bugs: Read new bugs]');
+  });
+});

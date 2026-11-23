@@ -6,7 +6,7 @@
  * often (one alert per workflow per window, the rest as a digest). Admins change them; everyone else sees them.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { BellRing, Check, Mail, MessageCircle, MessageSquare, Pencil, Plus, Search, Send, Trash2, TriangleAlert, Users, Webhook, X } from 'lucide-react';
+import { BellRing, Check, Mail, MessageCircle, MessageSquare, Pencil, Plus, Search, Send, Ticket, Trash2, TriangleAlert, Users, Webhook, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -34,13 +34,15 @@ import {
 import type { PluginSummary, WorkflowSummary } from '@/lib/shared/types';
 import { useViewer } from '@/components/auth/viewer';
 import { useCredentials } from '@/components/credentials/use-credentials';
+import { AlertTicketFields } from '@/components/settings/alert-ticket-fields';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { HelpTip } from '@/components/ui/help-tip';
 import { FieldLabel, Input, SectionLabel, Select, Switch } from '@/components/ui/inputs';
 
-const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send, teams: Users, discord: MessageCircle };
+const KIND_ICON: Record<AlertChannelKind, typeof Mail> = { email: Mail, slack: MessageSquare, webhook: Webhook, telegram: Send, teams: Users, discord: MessageCircle, servicenow: Ticket };
 const THROTTLES = [
   { value: 0, label: 'Every alert' },
   { value: 5, label: 'At most one per 5 min' },
@@ -63,6 +65,8 @@ function channelTarget(channel: AlertChannel, telegramName?: string): string {
       return channel.secretsSet.includes('webhookUrl') ? 'Incoming webhook (saved)' : 'No webhook URL';
     case 'webhook':
       return `${channel.config.url ?? ''}${channel.secretsSet.includes('secret') ? ' · signed' : ''}`;
+    case 'servicenow':
+      return `${channel.config.url ?? ''} · ${channel.config.table ?? 'change_request'}`;
     case 'telegram':
       return `Chat ${channel.config.chatId ?? '?'}${telegramName ? ` via ${telegramName}` : ''}`;
   }
@@ -210,6 +214,7 @@ function ChannelEditor({
           </div>
         </div>
       )}
+      <AlertTicketFields kind={kind} config={config} set={set} credentials={credentials ?? []} />
       {kind === 'email' && !emailConfigured && (
         <p className="flex items-start gap-1.5 text-[12px] text-warn">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
@@ -347,6 +352,10 @@ function RuleEditor({
   const [grace, setGrace] = useState(String(initial?.plugins?.graceSeconds ?? DEFAULT_PLUGIN_GRACE_SECONDS));
   const [recovery, setRecovery] = useState(initial?.plugins?.notifyRecovery ?? true);
   const [threshold, setThreshold] = useState(String(initial?.cost?.thresholdPercent ?? DEFAULT_COST_THRESHOLD_PERCENT));
+  // SP23: forecast over a cap and unusual spend (on unless saved off), and Landledger's agent and model spikes (off unless saved on).
+  const [forecast, setForecast] = useState(initial?.cost?.forecast !== false);
+  const [anomalies, setAnomalies] = useState(initial?.cost?.anomalies !== false);
+  const [landledger, setLandledger] = useState(initial?.cost?.landledgerHandlesAgentModel === true);
   const [score, setScore] = useState({ metric: initial?.evaluation?.metric ?? '', below: initial?.evaluation?.below === undefined ? '' : String(initial.evaluation.below), dropPercent: initial?.evaluation?.dropPercent === undefined ? '' : String(initial.evaluation.dropPercent) });
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [saving, setSaving] = useState(false);
@@ -391,7 +400,7 @@ function RuleEditor({
     } else if (kind === 'cost') {
       const percent = Number(threshold);
       if (!(percent >= 1 && percent <= 100)) return setProblem('The threshold is a percentage from 1 to 100');
-      body.cost = { thresholdPercent: percent };
+      body.cost = { thresholdPercent: percent, forecast, anomalies, landledgerHandlesAgentModel: landledger }; // SP23: the three switches
     } else if (kind === 'evaluation') {
       const below = score.below.trim() === '' ? undefined : Number(score.below);
       const drop = score.dropPercent.trim() === '' ? undefined : Number(score.dropPercent);
@@ -498,7 +507,23 @@ function RuleEditor({
             Alert when usage reaches
             <Input value={threshold} onChange={(e) => setThreshold(e.target.value)} inputMode="decimal" className="h-7 w-16 text-center" aria-label="Threshold percent" />% of any cap, once per day or month
           </div>
-          <p className="text-[11px] text-t3">Caps watched: a workflow’s daily limits (Workflow settings), an agent’s daily and monthly limits, and the caps per credential and per user (Settings → AI prices). The alert goes out before the cap stops runs.</p>
+          <p className="text-[11px] text-t3">Caps watched: a workflow’s daily limits (Workflow settings), an agent’s daily and monthly limits, and the caps per credential and per user (Settings → AI caps). The alert goes out before the cap stops runs.</p>
+          {/* SP23: what else this rule tells the channels (docs/llm-gateway.md#forecasts-and-unusual-spend) */}
+          <div className="space-y-1.5 pt-1">
+            <label className="flex items-center gap-2 text-[12px] text-t2">
+              <Switch checked={forecast} onChange={setForecast} label="Forecast over a cap" />
+              Forecast over a cap: tell me once a month when a monthly cap is on course to be reached
+            </label>
+            <label className="flex items-center gap-2 text-[12px] text-t2">
+              <Switch checked={anomalies} onChange={setAnomalies} label="Unusual spend" />
+              Unusual spend: tell me when a person, agent, workflow, project or model spends far above its usual day
+            </label>
+            <label className="flex items-center gap-2 text-[12px] text-t2">
+              <Switch checked={landledger} onChange={setLandledger} label="Landledger alerts on agent and model spikes" />
+              Landledger alerts on agent and model spikes
+            </label>
+            <p className="pl-10 text-[11px] text-t3">Landledger flags agent and model spikes too, in its console and webhooks. Turn this on and Landflow sends no channel alert for those two, so nobody hears them twice; they still show in Needs you and the inbox. An alert only tells you: it never changes a cap, a budget or a run.</p>
+          </div>
         </div>
       )}
       {kind === 'evaluation' && (
@@ -619,7 +644,9 @@ function ruleSummary(rule: AlertRule, workflows: WorkflowSummary[]): string {
     case 'plugin':
       return `${rule.plugins?.ids?.length ? `${rule.plugins.ids.length} plugin${rule.plugins.ids.length === 1 ? '' : 's'}` : 'All plugins'} offline > ${rule.plugins?.graceSeconds ?? DEFAULT_PLUGIN_GRACE_SECONDS} s${rule.plugins?.notifyRecovery === false ? '' : ' (and back online)'}`;
     case 'cost':
-      return `AI usage at ${rule.cost?.thresholdPercent ?? DEFAULT_COST_THRESHOLD_PERCENT}% of a cap`;
+      return [`AI usage at ${rule.cost?.thresholdPercent ?? DEFAULT_COST_THRESHOLD_PERCENT}% of a cap`, rule.cost?.forecast !== false && 'forecast over a cap', rule.cost?.anomalies !== false && 'unusual spend', rule.cost?.landledgerHandlesAgentModel && 'Landledger alerts on agent and model spikes'] // SP23:
+        .filter(Boolean)
+        .join(' · ');
     case 'evaluation': {
       const { metric, below, dropPercent } = rule.evaluation ?? {};
       return `${scopeText(rule.workflows, workflows)} · ${metric || 'any metric'}${below !== undefined ? ` < ${below}` : ''}${dropPercent ? ` or down > ${dropPercent}%` : ''}`;
@@ -689,8 +716,10 @@ export function AlertsSettings() {
   return (
     <div className="space-y-6">
       <p className="text-[13px] text-t2">
-        Hear about failed runs without building an error workflow: pick where alerts go, then which workflows and events send them. Each alert names the workflow, the failing node and the
-        error, and links to the execution. A workflow’s own Settings has a quick <span className="font-semibold text-t1">Notify on failure</span> switch too.
+        Hear about failed runs without building an error workflow: pick where alerts go, then which workflows and events send them.
+        <HelpTip label="What an alert says" className="ml-1 align-middle">
+          Each alert names the workflow, the failing node and the error, and links to the execution. A workflow’s own Settings has a quick <span className="font-semibold text-t1">Notify on failure</span> switch too.
+        </HelpTip>
         {!admin && ' Only admins can change alerts.'}
       </p>
 

@@ -21,6 +21,9 @@ type File struct {
 	Trashed            bool
 	Content            []byte
 	Modified           time.Time
+	// Owner and OwnerName are the owner (not shown for shared-drive files, as
+	// in Drive); ModifiedBy is lastModifyingUser; DriveID a shared drive.
+	Owner, OwnerName, ModifiedBy, DriveID string
 }
 
 const mimeFolder = "application/vnd.google-apps.folder"
@@ -35,6 +38,7 @@ func (s *Server) AddFile(f *File) *File {
 			f.Parents = []string{"root"}
 		}
 		s.Files[f.ID] = f
+		s.recordChange(f, false)
 	})
 	return f
 }
@@ -56,6 +60,15 @@ func fileJSON(f *File) map[string]any {
 		"kind": "drive#file", "id": f.ID, "name": f.Name, "mimeType": f.MimeType, "parents": f.Parents,
 		"trashed": f.Trashed, "modifiedTime": f.Modified.UTC().Format(time.RFC3339), "createdTime": f.Modified.UTC().Format(time.RFC3339),
 		"webViewLink": "https://drive.google.com/file/d/" + f.ID + "/view",
+	}
+	if f.Owner != "" && f.DriveID == "" {
+		out["owners"] = []any{map[string]any{"kind": "drive#user", "emailAddress": f.Owner, "displayName": f.OwnerName}}
+	}
+	if f.ModifiedBy != "" {
+		out["lastModifyingUser"] = map[string]any{"kind": "drive#user", "emailAddress": f.ModifiedBy, "displayName": f.ModifiedBy}
+	}
+	if f.DriveID != "" {
+		out["driveId"] = f.DriveID
 	}
 	if !strings.HasPrefix(f.MimeType, "application/vnd.google-apps.") {
 		out["size"] = strconv.Itoa(len(f.Content))
@@ -198,6 +211,7 @@ var (
 	reMimeType     = regexp.MustCompile(`^mimeType (=|!=) '((?:[^'\\]|\\.)*)'$`)
 	reInParents    = regexp.MustCompile(`^'((?:[^'\\]|\\.)*)' in parents$`)
 	reTrashed      = regexp.MustCompile(`^trashed = (true|false)$`)
+	reModified     = regexp.MustCompile(`^modifiedTime\s*(>=|<=|>|<|=)\s*'([^']*)'$`)
 )
 
 // matchQuery evaluates the subset of Drive's query language the plugin
@@ -241,6 +255,24 @@ func matchQuery(f *File, q string) (bool, error) {
 		return contains(f.Parents, unq(reInParents.FindStringSubmatch(q)[1])), nil
 	case reTrashed.MatchString(q):
 		return f.Trashed == (reTrashed.FindStringSubmatch(q)[1] == "true"), nil
+	case reModified.MatchString(q):
+		m := reModified.FindStringSubmatch(q)
+		at, err := time.Parse(time.RFC3339, m[2])
+		if err != nil {
+			return false, fmt.Errorf("invalid modifiedTime %q", m[2])
+		}
+		mod := f.Modified.UTC().Truncate(time.Second)
+		switch m[1] {
+		case ">":
+			return mod.After(at), nil
+		case ">=":
+			return !mod.Before(at), nil
+		case "<":
+			return mod.Before(at), nil
+		case "<=":
+			return !mod.After(at), nil
+		}
+		return mod.Equal(at), nil
 	}
 	return false, fmt.Errorf("unsupported query clause %q", q)
 }

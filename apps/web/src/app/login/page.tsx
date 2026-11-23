@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { safeNext } from '@/lib/shared/auth-paths';
 import { setupRequired } from '@/lib/server/auth';
 import { mailConfigured } from '@/lib/server/auth/mail';
+import { localSignInMode } from '@/lib/server/auth/local-sign-in';
 import { oidcConfig } from '@/lib/server/auth/oidc';
 import { samlConfig } from '@/lib/server/auth/saml';
 import { currentPageUser } from '@/lib/server/auth/pages';
@@ -18,9 +19,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   if (setupRequired()) redirect('/setup');
   const oidc = oidcConfig();
   const saml = samlConfig();
+  const mode = localSignInMode();
   return (
-    <AuthShell title="Sign in" subtitle="Welcome back. Sign in to build and run workflows.">
-      <LoginForm next={next} oidcLabel={oidc?.label} samlLabel={saml?.label} initialError={params.error?.slice(0, 300)} smtp={mailConfigured()} />
+    <AuthShell title="Sign in">
+      <LoginForm next={next} oidcLabel={oidc?.label} samlLabel={saml?.label} initialError={params.error?.slice(0, 300)} smtp={mailConfigured()} localSignIn={mode} />
     </AuthShell>
   );
 }

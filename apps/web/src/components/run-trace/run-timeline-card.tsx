@@ -1,6 +1,6 @@
 'use client';
 /**
- * A run as a timeline (docs/run-trace.md#a-run-as-a-timeline), drawn in the new look only: the face of who leads the run,
+ * A run as a timeline (docs/run-trace.md#a-run-as-a-timeline): the face of who leads the run,
  * the workflow, who and which team, a status pill, and the steps joined by a line that fills as the run goes. The member at
  * work sits on its step with a bubble saying what it does; a wait for a person pulses amber with what it asks, a failure is
  * a red cross with Re-run from here. Above the Run Trace's tabs (`RunTimelineCard`), and as a card per run going on
@@ -15,7 +15,6 @@ import { runLine } from '@/lib/shared/run-line';
 import { fitSteps, runTimeline, timelineFill, type RunTimeline, type TimelineStatus, type TimelineStep } from '@/lib/shared/run-timeline';
 import { fmtMs, type RunModel } from '@/lib/shared/run-trace-model';
 import { cn } from '@/lib/utils';
-import { useNewLook } from '../shell/look-toggle';
 import { RerunFromHere } from './run-controls';
 import { Avatar, actorColor } from './parts';
 import { RunLineRow } from './run-line';
@@ -25,7 +24,7 @@ const STATUS: Record<TimelineStatus, { label: string; className: string; dot?: b
   'needs-you': { label: 'Needs you', className: 'border-warnbd bg-warndim text-warn', dot: true },
   'over-budget': { label: 'Over budget', className: 'border-warnbd bg-warndim text-warn' },
   failed: { label: 'Failed', className: 'border-rdbd bg-rddim text-rd' },
-  done: { label: 'Done', className: 'border-gnbd bg-gndim text-gn' },
+  done: { label: 'Succeeded', className: 'border-gnbd bg-gndim text-gn' },
 };
 
 const tokensText = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k tokens` : n ? `${n} tokens` : '');
@@ -45,13 +44,13 @@ function Mark({ step }: { step: TimelineStep }) {
   const color = actorColor(step.actor);
   if (step.state === 'done')
     return (
-      <span className="grid size-7 place-items-center rounded-full bg-gn text-white shadow-[0_0_0_3px_var(--sf)] animate-pop">
+      <span className="grid size-7 place-items-center rounded-full bg-gn text-bg shadow-[0_0_0_3px_var(--sf)] animate-pop">
         <Check className="size-4" strokeWidth={3} />
       </span>
     );
   if (step.state === 'failed')
     return (
-      <span className="grid size-7 place-items-center rounded-full bg-rd text-white shadow-[0_0_0_3px_var(--sf)] animate-shake">
+      <span className="grid size-7 place-items-center rounded-full bg-rd text-bg shadow-[0_0_0_3px_var(--sf)] animate-shake">
         <X className="size-4" strokeWidth={3} />
       </span>
     );
@@ -145,14 +144,13 @@ function CardHead({ timeline }: { timeline: RunTimeline }) {
 }
 
 /**
- * Above the Run Trace's tabs, in the new look. A wait points at Needs you below (its buttons decide it); a failure offers
+ * Above the Run Trace's tabs. A wait points at Needs you below (its buttons decide it); a failure offers
  * Re-run from the failed step; a run that is done says how long it took and what it used, with a link to the Story.
  */
 export function RunTimelineCard({ model, onStory }: { model: RunModel; onStory?: () => void }) {
-  const newLook = useNewLook();
   const timeline = useMemo(() => runTimeline(model, headlinesOf(model)), [model]);
   const [steps, setSteps] = useState(false);
-  if (!newLook || model.empty || !timeline.steps.length) return null;
+  if (model.empty || !timeline.steps.length) return null;
   // Once a run is over, its timeline folds into one line: what came in, who did it, what came out.
   if (!model.live && (timeline.status === 'done' || timeline.status === 'failed' || timeline.status === 'over-budget') && !steps)
     return (
@@ -176,7 +174,7 @@ export function RunTimelineCard({ model, onStory }: { model: RunModel; onStory?:
         {timeline.status === 'needs-you' && (
           <button
             type="button"
-            className="inline-flex h-7 items-center gap-1 rounded-full bg-warn px-3 text-[12px] font-semibold text-white"
+            className="inline-flex h-7 items-center gap-1 rounded-full bg-warn px-3 text-[12px] font-semibold text-bg"
             onClick={() => document.querySelector('[aria-label="Needs you"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
           >
             Answer below

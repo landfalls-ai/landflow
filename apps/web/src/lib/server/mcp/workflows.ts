@@ -5,13 +5,14 @@
  * against the registry (node types, required parameters and sub-nodes, ports, connections).
  */
 import { nanoid } from 'nanoid';
-import { defaultParameters, defaultVersionOf, indexedPorts, isPropertyVisible, withPropertyDefaults, type NodeDescriptor } from '@landflow/protocol';
+import { defaultParameters, defaultVersionOf, indexedPorts, isPropertyVisible, remapExpandedConnections, withPropertyDefaults, type NodeDescriptor } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import { registry } from '../plugins/registry';
 import { rosterSessionKeyProblems, unguardedRosterTargets } from '../chat';
 import { workflowSchema } from '../schemas';
 import { store } from '../store';
 import type { ExecutionRecord } from '../../shared/types';
+import { admitTool, mcpServerTrusted, MCP_CLIENT_TOOL, TRUSTED_MCP_VARIABLE } from '../nodes/judge-tools'; // C13:
 import { checkExpressionFields, describeIssue, fieldsOfItems, outputSchemaOf, schemaFields, type KnownFields } from './expression-fields';
 
 export interface WorkflowValidation {
@@ -51,6 +52,28 @@ const descriptorOf = (type: string): NodeDescriptor | undefined => {
   const resolved = registry.resolve(type);
   return 'error' in resolved ? undefined : resolved.descriptor;
 };
+
+/**
+ * Nodes saved without their connections (an update that names only `nodes`): each node whose outputs follow its
+ * parameters (Decide) and whose parameters changed keeps its connections on the outputs of the same name; the ones whose
+ * output is gone are removed and named in `dropped`. The rest of the connections are returned as they were.
+ */
+export function remapOutputConnections(existing: Pick<Workflow, 'nodes' | 'connections'>, nodes: ReadonlyArray<{ id?: string; name?: string; type?: string; parameters?: Record<string, unknown> }>): { connections: Workflow['connections']; dropped: string[] } {
+  let connections = existing.connections;
+  const dropped: string[] = [];
+  for (const node of nodes) {
+    const was = existing.nodes.find((n) => n.id === node.id);
+    if (!was || !node.type || JSON.stringify(was.parameters) === JSON.stringify(node.parameters ?? {})) continue;
+    if (!descriptorOf(node.type)?.outputs.some((p) => p.expand)) continue;
+    const mine = (c: Workflow['connections'][number]) => c.source === was.id && c.type === 'main';
+    const moved = remapExpandedConnections(was.parameters, node.parameters ?? {}, connections.filter(mine));
+    for (const gone of connections.filter((c) => mine(c) && !moved.some((m) => m.id === c.id))) {
+      dropped.push(`“${was.name}” → “${existing.nodes.find((n) => n.id === gone.target)?.name ?? gone.target}” (its output ${gone.sourceIndex} is gone)`);
+    }
+    connections = [...connections.filter((c) => !mine(c)), ...moved];
+  }
+  return { connections, dropped };
+}
 
 /**
  * Fill in what an agent may leave out. Node ids, type versions and default parameters; positions
@@ -168,6 +191,23 @@ export function validateWorkflow(input: unknown): WorkflowValidation {
     }
   }
 
+  // C13: an AI Judge only uses read-only tools (judge-tools.ts); an MCP server's own word is not enough.
+  for (const connection of workflow.connections) {
+    const root = byId.get(connection.target);
+    const tool = byId.get(connection.source);
+    if (connection.type !== 'ai_tool' || root?.type !== 'core.aiJudge' || !tool) continue;
+    const toolDescriptor = descriptors.get(tool.id);
+    const source = { type: tool.type, parameters: parametersOf.get(tool.id) ?? tool.parameters, ...(toolDescriptor && { descriptor: toolDescriptor }) };
+    if (tool.type === MCP_CLIENT_TOOL) {
+      // Its tools are only known when the judge runs, where each also needs the server's read-only mark.
+      if (!mcpServerTrusted(source.parameters.endpointUrl)) errors.push(`AI Judge "${root.name}" only uses read-only tools: "${tool.name}" is an MCP server that is not trusted for the judge (an admin lists it in ${TRUSTED_MCP_VARIABLE})`);
+      else warnings.push(`AI Judge "${root.name}": the tools of "${tool.name}" are checked when the judge runs (each must be marked read-only by the server)`);
+      continue;
+    }
+    const admission = admitTool(source, undefined);
+    if (!admission.ok) errors.push(`AI Judge "${root.name}" only uses read-only tools: "${tool.name}" is not (${admission.why})`);
+  }
+
   for (const node of workflow.nodes) {
     const descriptor = descriptors.get(node.id);
     if (!descriptor || node.disabled) continue;
@@ -218,6 +258,8 @@ export function validateWorkflow(input: unknown): WorkflowValidation {
  * What each node of a saved workflow wrote in its most recent runs (the newest five executions), as the fields of its
  * output items; nothing for a draft or a node that never produced output.
  */
+// Synchronous on purpose: validateWorkflow has sync callers across the host (and tests), so this reads through the sync
+// store API until validation can await (the read seam's follow-up in the Postgres on-demand work).
 export function lastRunFields(workflowId: string | undefined): (nodeId: string) => KnownFields | undefined {
   const records: ExecutionRecord[] = [];
   let loaded = false;

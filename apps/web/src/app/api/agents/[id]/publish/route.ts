@@ -5,9 +5,12 @@
  */
 import { adoptRun, checkPublish, EvalGateError, type GateResult } from '@/lib/server/agents/eval-gate';
 import { agentStore, configOf } from '@/lib/server/agents/store';
-import { error, handler, json } from '@/lib/server/http';
+import { z } from 'zod';
+import { error, handler, json, parseBody } from '@/lib/server/http';
 import { redeployIfDeployed } from '@/lib/server/kagent/deploy';
+import { currentPrincipal } from '@/lib/server/auth/guard';
 import { hasPrompt } from '@/lib/shared/persona';
+import { publishAndTrust } from '@/lib/server/trust/publish';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -22,10 +25,11 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   if (!current) return error('Agent not found', 404);
   if (!current.model?.model) return error('Choose a model before publishing');
   if (!hasPrompt(current)) return error('Describe the persona or add instructions before publishing');
-  const body = await request.json().catch(() => ({}));
+  const body = await parseBody(request, z.object({ skipEval: z.unknown().optional() }).passthrough(), { optional: true });
+  if (!body.ok) return body.response;
   let gate: GateResult | undefined;
   const checked = JSON.stringify(configOf(current));
-  if (!(body as { skipEval?: unknown })?.skipEval) {
+  if (!body.data.skipEval) {
     try {
       gate = await checkPublish(id, { signal: request.signal });
     } catch (caught) {
@@ -36,10 +40,13 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     const now = agentStore.get(id);
     if (!now || JSON.stringify(configOf(now)) !== checked) return error('The draft changed while the eval gate was checking it. Publish again to check the new draft.', 409);
   }
-  const agent = agentStore.publish(id)!;
+  // C27: what each MCP server lists now is what the publisher approved; a server that is slow is snapshotted at its first run.
+  const published = publishAndTrust(id, currentPrincipal()?.user)!;
+  const agent = published.agent;
   if (gate?.run && agent.published) adoptRun(gate.run, agent.published.version);
+  const trust = await published.trust;
   const kagent = await redeployIfDeployed(agent);
-  return json({ agent: kagent && !('error' in kagent) ? (agentStore.get(id) ?? agent) : agent, ...(kagent && { kagent }), ...(gate && !gate.skipped && { gate }) });
+  return json({ agent: kagent && !('error' in kagent) ? (agentStore.get(id) ?? agent) : agent, ...(kagent && { kagent }), ...(trust.deferred.length && { trust }), ...(gate && !gate.skipped && { gate }) });
 });
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {

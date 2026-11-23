@@ -1,0 +1,1097 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Landledger: raise or hold an AI budget",
+    "description": "When a Landflow agent has spent 80% of its monthly AI cap, the agent asks Landledger (with its sponsor, who confirms it) for more, with the month’s spend and forecast as evidence. If the approvers say yes, and the request is this flow's own with a verified origin, the flow raises the agent’s cap by the approved amount through Landflow’s API, publishes it and marks the request applied: at most once per agent and month, finishing a raise that stopped half way every hour; otherwise the cap holds.",
+    "categories": [
+      "finance",
+      "ai"
+    ],
+    "credentials": [
+      {
+        "id": "landledger",
+        "type": "landledger.landledgerApi",
+        "name": "Landledger (requests)",
+        "description": "Landledger's API URL (in the cluster http://landledger-api.landflow-dev.svc.cluster.local:4810, on this machine http://127.0.0.1:4810) and an ll_ key with read and requests:write (bound to this workflow in Landledger, so its origins are verified). Never decisions:relay or admin."
+      },
+      {
+        "id": "landledgerWebhooks",
+        "type": "landledger.landledgerApi",
+        "name": "Landledger (webhooks)",
+        "description": "Landledger's API URL (in the cluster http://landledger-api.landflow-dev.svc.cluster.local:4810, on this machine http://127.0.0.1:4810) and an ll_ key with webhooks:write only: the Landledger Trigger subscribes itself on publish and keeps the signing secret Landledger returns (never shown). Or the whsec_ secret of a webhook an admin made, in Webhook Signing Secret."
+      },
+      {
+        "id": "landflow",
+        "type": "core.httpBearerAuth",
+        "name": "Landflow API key",
+        "description": "A Landflow API key (lf_…) that can read usage and read, save and publish agents."
+      }
+    ],
+    "setup": [
+      "Pick or add **Landledger (requests)**: the API URL and an `ll_` key with `read` and `requests:write`, bound to this workflow in Landledger (`boundWorkflowIds`): **Plan the raise** acts only on requests whose origin Landledger verified.",
+      "Pick or add **Landledger (webhooks)** for **Request decided**: a key with only `webhooks:write` (or the `whsec_` secret of a webhook an admin made).",
+      "Add a **Landflow API key** (Settings → API keys) that can read usage and read, save and publish agents.",
+      "In **Settings** and **Raise settings**, set `LANDFLOW_URL` to this Landflow (as Landflow reaches itself), the cost center that pays for agents, the sponsor (the person accountable for the agents, not an approver; they confirm each request in Landledger), the threshold and how much to ask for; **Raise settings** caps any raise (`MAX_CAP`) and how often a failed publish is retried (`MAX_ATTEMPTS`).",
+      "Agents need a **monthly cost limit** (agent → Settings) for the flow to watch them.",
+      "The new cap is the cap in force plus the approved amount, once per agent and month. An agent with unpublished edits is held: **Plan the raise** says why, and a person raises its cap by hand. **Every hour** finishes raises that stopped half way.",
+      "Publish: Landledger must reach `LANDFLOW_PUBLIC_URL` for request.decided."
+    ],
+    "dataTables": [
+      {
+        "name": "Landledger AI cap raises",
+        "columns": [
+          {
+            "name": "request_id",
+            "type": "string"
+          },
+          {
+            "name": "agent_id",
+            "type": "string"
+          },
+          {
+            "name": "month",
+            "type": "string"
+          },
+          {
+            "name": "old_cap",
+            "type": "number"
+          },
+          {
+            "name": "new_cap",
+            "type": "number"
+          },
+          {
+            "name": "status",
+            "type": "string"
+          },
+          {
+            "name": "attempts",
+            "type": "number"
+          },
+          {
+            "name": "note",
+            "type": "string"
+          },
+          {
+            "name": "updated_at",
+            "type": "date"
+          }
+        ]
+      }
+    ],
+    "workflow": {
+      "name": "Landledger: raise or hold an AI budget",
+      "description": "At 80% of an agent’s monthly AI cap, an ai_budget request with the forecast; on approval of this flow's own, verified request the cap is raised by the approved amount through Landflow’s API, once per agent and month, reconciled hourly.",
+      "nodes": [
+        {
+          "id": "usage",
+          "name": "Agent AI calls",
+          "type": "core.usageTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {
+            "kinds": [
+              "ai.call"
+            ],
+            "attrEquals": "{}",
+            "workflowId": "",
+            "minCost": 0,
+            "batchSeconds": 300
+          },
+          "notes": "Every agent AI call, five minutes at a time: one run reads each agent that spent."
+        },
+        {
+          "id": "settings",
+          "name": "Settings",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            280,
+            0
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// Settings: where Landflow's API is (the HTTP nodes use the Landflow API key), who pays and who answers for the agents.\nconst LANDFLOW_URL = 'http://localhost:3000';\nconst COST_CENTER = 'ENG-AGENTS';\nconst SPONSOR = 'eden.tzur@landbright.test';  // the person accountable for the agents (not an approver); confirms each request\nconst THRESHOLD = 0.8;                         // ask once an agent has spent this share of its monthly cap\nconst RAISE_BY = 1.5;                          // ask for a cap of at least this times the old one…\nconst HEADROOM = 1.2;                          // …and at least this times the month's forecast\n\nconst now = new Date();\nconst monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));\nconst month = monthStart.toISOString().slice(0, 7);\n// One item per agent that made AI calls in this batch.\nconst agentIds = [...new Set(items.map((i) => i.json.agentId).filter(Boolean))];\nreturn agentIds.map((agentId) => ({\n  agentId, landflowUrl: LANDFLOW_URL.replace(/\\/+$/, ''), costCenter: COST_CENTER, sponsor: SPONSOR,\n  threshold: THRESHOLD, raiseBy: RAISE_BY, headroom: HEADROOM, month, monthStart: monthStart.toISOString(),\n}));"
+          }
+        },
+        {
+          "id": "readAgent",
+          "name": "Read the agent",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "position": [
+            560,
+            0
+          ],
+          "parameters": {
+            "method": "GET",
+            "url": "{{ $json.landflowUrl }}/api/agents/{{ $json.agentId }}",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "httpBearerAuth"
+          },
+          "credentials": {
+            "httpBearerAuth": {
+              "id": "landflow",
+              "name": "Landflow API key"
+            }
+          }
+        },
+        {
+          "id": "monthCost",
+          "name": "This month's AI cost",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "position": [
+            840,
+            0
+          ],
+          "parameters": {
+            "method": "GET",
+            "url": "{{ $('Settings').item.json.landflowUrl }}/api/usage",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "httpBearerAuth",
+            "query": {
+              "parameter": [
+                {
+                  "name": "groupBy",
+                  "value": "agent"
+                },
+                {
+                  "name": "kinds",
+                  "value": "ai.call"
+                },
+                {
+                  "name": "agentId",
+                  "value": "{{ $('Settings').item.json.agentId }}"
+                },
+                {
+                  "name": "from",
+                  "value": "{{ $('Settings').item.json.monthStart }}"
+                }
+              ]
+            }
+          },
+          "credentials": {
+            "httpBearerAuth": {
+              "id": "landflow",
+              "name": "Landflow API key"
+            }
+          }
+        },
+        {
+          "id": "check",
+          "name": "Over the threshold",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            1120,
+            0
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// One item per agent over the threshold of its monthly cap, with the forecast and the extra amount to ask for.\nconst settings = $('Settings').all();\nconst agents = $('Read the agent').all();\nconst out = [];\nitems.forEach((usage, i) => {\n  const s = settings[i].json;\n  const agent = agents[i].json.agent;\n  if (!agent) return;\n  // The published version's caps are the ones enforced.\n  const caps = agent.published?.config?.settings ?? agent.settings ?? {};\n  const cap = Number(caps.monthlyCostLimit ?? 0);\n  if (!(cap > 0)) return; // no monthly cap: nothing to raise\n  const spent = Number(usage.json.totals?.cost ?? 0);\n  if (spent < cap * s.threshold) return;\n  const start = Date.parse(s.monthStart);\n  const end = Date.UTC(new Date(start).getUTCFullYear(), new Date(start).getUTCMonth() + 1, 1);\n  const elapsed = Math.max(Date.now() - start, 24 * 3600 * 1000);\n  const forecast = spent * (end - start) / elapsed;\n  const newCap = Math.ceil(Math.max(cap * s.raiseBy, forecast * s.headroom));\n  out.push({\n    ...s,\n    agentName: agent.name,\n    cap,\n    spent: Math.round(spent * 100) / 100,\n    forecast: Math.round(forecast * 100) / 100,\n    newCap,\n    extra: (newCap - cap).toFixed(2),\n    share: Math.round((spent / cap) * 100),\n    evidence: {\n      lines: [{ label: `Raise ${agent.name}'s monthly AI cap by $${(newCap - cap).toFixed(2)} (from $${cap})`, amount: (newCap - cap).toFixed(2) }],\n      basis: `Spent $${spent.toFixed(2)} of a $${cap} cap (${Math.round((spent / cap) * 100)}%) by ${new Date().toISOString().slice(0, 10)}; at this pace the month ends near $${forecast.toFixed(2)}.`,\n      links: [{ label: `${agent.name} in Landflow`, url: `${s.landflowUrl}/agents/${agent.id}` }],\n      match: { agent: agent.id },\n      agentId: agent.id,\n      cap,\n      spent: Math.round(spent * 100) / 100,\n      forecast: Math.round(forecast * 100) / 100,\n      // Shown to the approvers only: the raise is the cap in force then plus the approved amount, never this figure.\n      newMonthlyCap: newCap,\n    },\n  });\n});\nreturn out;"
+          },
+          "notes": "Keeps the agents past the threshold of their monthly cap (the published caps, the ones enforced) with the forecast and the extra amount to ask for."
+        },
+        {
+          "id": "ask",
+          "name": "Ask to raise the cap",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            1400,
+            0
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "create",
+            "kind": "ai_budget",
+            "title": "Raise {{ $json.agentName }}'s monthly AI cap by ${{ $json.extra }}",
+            "costCenter": "{{ $json.costCenter }}",
+            "amount": "{{ $json.extra }}",
+            "currency": "USD",
+            "recurrence": "monthly",
+            "requestedBy": "agent",
+            "agentId": "{{ $json.agentId }}",
+            "agentName": "{{ $json.agentName }}",
+            "agentSystem": "landflow",
+            "sponsor": "{{ $json.sponsor }}",
+            "note": "{{ $json.agentName }} has spent ${{ $json.spent }} of its ${{ $json.cap }} monthly cap ({{ $json.share }}%); the month is forecast at ${{ $json.forecast }}. Approve to raise the cap by ${{ $json.extra }}; reject to hold it (the agent stops at the cap).",
+            "evidence": "{{ $json.evidence }}",
+            "requestFields": {
+              "idempotencyKey": "ai-budget:{{ $json.agentId }}:{{ $json.month }}",
+              "originTitle": "Raise or hold an AI budget"
+            }
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          },
+          "onError": "continue",
+          "notes": "One request per agent and month (the idempotency key). The sponsor confirms it in Landledger before the approvers see it."
+        },
+        {
+          "id": "asked",
+          "name": "Asked, or already asked",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            1680,
+            0
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// One request per agent and month: a later batch with newer figures sends the same idempotency key with another body,\n// which Landledger answers 409. That means \"already asked this month\"; any other failure stops the run.\nconst failed = $json.error ? String($json.error.message ?? $json.error) : '';\nif (failed && !/Landledger API error 409/.test(failed)) throw new Error(failed);\nconst plan = $('Over the threshold').item.json;\nreturn {\n  agentId: plan.agentId, month: plan.month,\n  asked: !failed, alreadyAsked: Boolean(failed),\n  requestId: $json.request?.id ?? null, status: $json.request?.status ?? null,\n};"
+          }
+        },
+        {
+          "id": "decided",
+          "name": "Request decided",
+          "type": "landledger.landledgerTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            420
+          ],
+          "parameters": {
+            "events": [
+              "request.decided"
+            ],
+            "kinds": "ai_budget",
+            "costCenters": ""
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledgerWebhooks",
+              "name": "Landledger (webhooks)"
+            }
+          }
+        },
+        {
+          "id": "approved",
+          "name": "Approved?",
+          "type": "core.if",
+          "typeVersion": 1,
+          "position": [
+            280,
+            420
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $json.outcome }}",
+                  "operator": "equals",
+                  "right": "approved"
+                }
+              ]
+            },
+            "combinator": "and"
+          }
+        },
+        {
+          "id": "hold",
+          "name": "Hold the cap",
+          "type": "core.noOp",
+          "typeVersion": 1,
+          "position": [
+            560,
+            560
+          ],
+          "parameters": {},
+          "notes": "Rejected, cancelled or expired: the cap stays and the agent stops at it."
+        },
+        {
+          "id": "reconcile",
+          "name": "Every hour",
+          "type": "core.schedule",
+          "typeVersion": 1,
+          "position": [
+            0,
+            700
+          ],
+          "parameters": {
+            "unit": "hours",
+            "every": 1
+          },
+          "notes": "Reconcile: approved requests whose raise did not finish (a failed publish, a Mark Applied that did not land) are finished here."
+        },
+        {
+          "id": "stillApproved",
+          "name": "Approved, not applied",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            280,
+            700
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "list",
+            "box": "mine",
+            "listFilters": {
+              "status": "approved",
+              "kind": "ai_budget"
+            },
+            "limit": 50
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          }
+        },
+        {
+          "id": "raiseSettings",
+          "name": "Raise settings",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            840,
+            420
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// Settings for the raise: where Landflow's API is (the same as Settings above) and the most a raise may set.\nconst LANDFLOW_URL = 'http://localhost:3000';\nconst MAX_CAP = 5000;      // never raise a monthly cap above this, whatever was approved\nconst MAX_ATTEMPTS = 3;    // a raise whose publish keeps failing is retried this often, then left to a person\nreturn {\n  requestId: $json.requestId ?? $json.id, landflowUrl: LANDFLOW_URL.replace(/\\/+$/, ''), maxCap: MAX_CAP, maxAttempts: MAX_ATTEMPTS,\n  month: new Date().toISOString().slice(0, 7),\n};"
+          }
+        },
+        {
+          "id": "get",
+          "name": "Get the request",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            1120,
+            420
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "get",
+            "requestId": "{{ $json.requestId }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          }
+        },
+        {
+          "id": "me",
+          "name": "Who is this flow",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            1400,
+            420
+          ],
+          "parameters": {
+            "resource": "key",
+            "operation": "me"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          }
+        },
+        {
+          "id": "readAgent2",
+          "name": "Read the agent now",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "position": [
+            1680,
+            420
+          ],
+          "parameters": {
+            "method": "GET",
+            "url": "{{ $('Raise settings').item.json.landflowUrl }}/api/agents/{{ $('Get the request').item.json.request.requester?.agent?.id ?? 'none' }}",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "httpBearerAuth"
+          },
+          "credentials": {
+            "httpBearerAuth": {
+              "id": "landflow",
+              "name": "Landflow API key"
+            }
+          },
+          "onError": "continue"
+        },
+        {
+          "id": "raises",
+          "name": "Raises this month",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "position": [
+            1960,
+            420
+          ],
+          "parameters": {
+            "operation": "get",
+            "dataTableId": "Landledger AI cap raises",
+            "matchType": "allConditions",
+            "filters": {
+              "conditions": [
+                {
+                  "keyName": "month",
+                  "condition": "eq",
+                  "keyValue": "{{ $('Raise settings').item.json.month }}"
+                }
+              ]
+            },
+            "returnAll": true
+          },
+          "executeOnce": true,
+          "alwaysOutputData": true,
+          "notes": "What this flow raised this month, and how far each got."
+        },
+        {
+          "id": "plan",
+          "name": "Plan the raise",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            2240,
+            420
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// For each approved request: trust it only if this flow's key raised it (createdBy), it is an approved ai_budget whose\n// origin Landledger verified (a key bound to this workflow), and it names a real agent. The new cap is the cap in force\n// plus the approved amount (never the evidence's figure), at most one automatic raise per agent per month, and a raise\n// already made is finished rather than made twice (reconcile).\nconst settings = $('Raise settings').all();\nconst gets = $('Get the request').all();\nconst mes = $('Who is this flow').all();\nconst reads = $('Read the agent now').all();\nconst rows = $input.all().map((i) => i.json).filter((r) => r.request_id);\nconst money = (n) => Math.round(n * 100) / 100;\nconst same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);\nreturn gets.map((g, i) => {\n  const s = settings[i].json;\n  const r = g.json.request ?? {};\n  const me = mes[i]?.json ?? {};\n  const agent = reads[i]?.json?.agent;\n  const published = agent?.published?.config;\n  const capOf = (settingsObject) => Number((settingsObject ?? {}).monthlyCostLimit ?? 0);\n  const publishedCap = capOf(published?.settings ?? agent?.settings);\n  const draftCap = capOf(agent?.settings);\n  const amount = Number(r.amount?.amount ?? 0);\n  const row = rows.find((x) => x.request_id === r.id);\n  const base = {\n    requestId: r.id, number: r.number ?? null, agentId: agent?.id ?? null, agentName: agent?.name ?? null, landflowUrl: s.landflowUrl,\n    month: s.month, oldCap: publishedCap, publish: Boolean(published), attempts: Number(row?.attempts ?? 0),\n  };\n  const out = (action, why, extra = {}) => ({ json: { ...base, action, why, ...extra }, pairedItem: { item: i } });\n  if (r.status === 'applied') return out('skip', 'Already applied');\n  if (r.createdBy?.kind !== 'key' || !me.id || r.createdBy.id !== me.id) return out('hold', `Raised by ${r.createdBy?.name ?? 'someone else'}, not this flow's key`);\n  if (r.kind !== 'ai_budget') return out('hold', `A ${r.kind} request, not an ai_budget`);\n  if (r.status !== 'approved') return out('hold', `Landledger says it is ${r.status}, not approved`);\n  if (r.origin?.type !== 'landflow_run' || r.origin.workflowId !== $workflow.id || r.origin.verified !== true) {\n    return out('hold', 'Its origin is not verified as this workflow: bind this flow\\'s Landledger key to the workflow (boundWorkflowIds)');\n  }\n  if (r.requester?.kind !== 'agent' || !agent || agent.id !== r.requester.agent?.id) return out('hold', 'The request does not name this agent');\n  if (!(amount > 0)) return out('hold', 'The approved amount is not above zero');\n  if (row) {\n    // A raise this flow began for this request: finish it (reconcile) rather than add the amount again.\n    const target = Number(row.new_cap);\n    const extra = { newCap: target, oldCap: Number(row.old_cap), settings: { ...(agent.settings ?? {}), monthlyCostLimit: target }, revert: { ...(agent.settings ?? {}), monthlyCostLimit: Number(row.old_cap) } };\n    if (publishedCap === target) return out('markApplied', `The cap is already $${target}: mark it applied`, extra);\n    if (base.attempts >= s.maxAttempts) return out('hold', `Publishing the raise failed ${base.attempts} times: raise it by hand, then mark the request applied`, extra);\n    if (published && draftCap === target) return out('publish', 'Saved but not published: publish again', { ...extra, attempts: base.attempts + 1 });\n    return out('raise', 'Raise again after a failed publish', { ...extra, attempts: base.attempts + 1 });\n  }\n  const recent = (x) => x.status !== 'raising' || Date.now() - Date.parse(x.updated_at) < 15 * 60 * 1000;\n  const other = rows.find((x) => x.agent_id === agent.id && x.month === s.month && x.request_id !== r.id && ['raising', 'applied'].includes(x.status) && recent(x));\n  if (other) return out('hold', `${agent.name}'s cap was already raised this month (${other.request_id}): one automatic raise per agent per month`);\n  if (!(publishedCap > 0)) return out('hold', `${agent.name} has no monthly cap to raise`);\n  const newCap = money(publishedCap + amount);\n  if (newCap > s.maxCap) return out('hold', `The new cap ($${newCap}) is above the flow's limit ($${s.maxCap})`);\n  const draftChanged = published ? Object.keys(published).some((k) => !same(agent[k], published[k])) : false;\n  if (draftChanged) return out('hold', `${agent.name} has unpublished changes: raise the cap by hand, then mark the request applied`);\n  return out('raise', `Raise from $${publishedCap} by $${amount} to $${newCap}`, {\n    newCap, attempts: 1,\n    settings: { ...(agent.settings ?? {}), monthlyCostLimit: newCap },\n    revert: { ...(agent.settings ?? {}), monthlyCostLimit: publishedCap },\n  });\n});"
+          }
+        },
+        {
+          "id": "what",
+          "name": "What to do",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "position": [
+            2520,
+            420
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ ({ raise: 0, publish: 1, markApplied: 2, hold: 3 })[$json.action] ?? 4 }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          },
+          "notes": "raise: save and publish the new cap · publish: a saved raise to publish again · markApplied: the cap is already raised · hold: a person decides · skip: nothing to do"
+        },
+        {
+          "id": "recordRaise",
+          "name": "Record the raise",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "position": [
+            2800,
+            220
+          ],
+          "parameters": {
+            "operation": "upsert",
+            "dataTableId": "Landledger AI cap raises",
+            "mappingMode": "defineBelow",
+            "columns": {
+              "column": [
+                {
+                  "column": "request_id",
+                  "value": "{{ $('Plan the raise').item.json.requestId }}"
+                },
+                {
+                  "column": "agent_id",
+                  "value": "{{ $('Plan the raise').item.json.agentId }}"
+                },
+                {
+                  "column": "month",
+                  "value": "{{ $('Plan the raise').item.json.month }}"
+                },
+                {
+                  "column": "old_cap",
+                  "value": "{{ $('Plan the raise').item.json.oldCap }}"
+                },
+                {
+                  "column": "new_cap",
+                  "value": "{{ $('Plan the raise').item.json.newCap }}"
+                },
+                {
+                  "column": "status",
+                  "value": "raising"
+                },
+                {
+                  "column": "attempts",
+                  "value": "{{ $('Plan the raise').item.json.attempts }}"
+                },
+                {
+                  "column": "note",
+                  "value": "{{ $('Plan the raise').item.json.why }}"
+                },
+                {
+                  "column": "updated_at",
+                  "value": "{{ new Date().toISOString() }}"
+                }
+              ]
+            },
+            "matchingColumns": [
+              "request_id"
+            ]
+          }
+        },
+        {
+          "id": "save",
+          "name": "Save the new cap",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "position": [
+            3080,
+            220
+          ],
+          "parameters": {
+            "method": "PUT",
+            "url": "{{ $('Plan the raise').item.json.landflowUrl }}/api/agents/{{ $('Plan the raise').item.json.agentId }}",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "httpBearerAuth",
+            "bodyType": "json",
+            "body": "{{ { settings: $('Plan the raise').item.json.settings } }}"
+          },
+          "credentials": {
+            "httpBearerAuth": {
+              "id": "landflow",
+              "name": "Landflow API key"
+            }
+          }
+        },
+        {
+          "id": "wasPublished",
+          "name": "Published agent?",
+          "type": "core.if",
+          "typeVersion": 1,
+          "position": [
+            3360,
+            220
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ $('Plan the raise').item.json.publish }}",
+                  "operator": "isTrue",
+                  "right": ""
+                }
+              ]
+            },
+            "combinator": "and"
+          }
+        },
+        {
+          "id": "recordRetry",
+          "name": "Record the retry",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "position": [
+            2800,
+            400
+          ],
+          "parameters": {
+            "operation": "upsert",
+            "dataTableId": "Landledger AI cap raises",
+            "mappingMode": "defineBelow",
+            "columns": {
+              "column": [
+                {
+                  "column": "request_id",
+                  "value": "{{ $('Plan the raise').item.json.requestId }}"
+                },
+                {
+                  "column": "attempts",
+                  "value": "{{ $('Plan the raise').item.json.attempts }}"
+                },
+                {
+                  "column": "note",
+                  "value": "{{ $('Plan the raise').item.json.why }}"
+                },
+                {
+                  "column": "updated_at",
+                  "value": "{{ new Date().toISOString() }}"
+                }
+              ]
+            },
+            "matchingColumns": [
+              "request_id"
+            ]
+          }
+        },
+        {
+          "id": "publish",
+          "name": "Publish the agent",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "position": [
+            3640,
+            120
+          ],
+          "parameters": {
+            "method": "POST",
+            "url": "{{ $('Plan the raise').item.json.landflowUrl }}/api/agents/{{ $('Plan the raise').item.json.agentId }}/publish",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "httpBearerAuth",
+            "bodyType": "json",
+            "body": "{\"skipEval\": true}"
+          },
+          "credentials": {
+            "httpBearerAuth": {
+              "id": "landflow",
+              "name": "Landflow API key"
+            }
+          },
+          "onError": "continue",
+          "notes": "Only the cap changed (Plan the raise held any agent with other unpublished edits), so the evaluation gate is skipped."
+        },
+        {
+          "id": "publishedOk",
+          "name": "Published?",
+          "type": "core.if",
+          "typeVersion": 1,
+          "position": [
+            3920,
+            120
+          ],
+          "parameters": {
+            "conditions": {
+              "condition": [
+                {
+                  "left": "{{ !$json.error }}",
+                  "operator": "isTrue",
+                  "right": ""
+                }
+              ]
+            },
+            "combinator": "and"
+          }
+        },
+        {
+          "id": "applied",
+          "name": "Mark applied",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            4200,
+            220
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "markApplied",
+            "requestId": "{{ $('Plan the raise').item.json.requestId }}",
+            "appliedNote": "{{ $('Plan the raise').item.json.agentName }}'s monthly AI cap raised from ${{ $('Plan the raise').item.json.oldCap }} to ${{ $('Plan the raise').item.json.newCap }} in Landflow.",
+            "links": "{{ [{ label: $('Plan the raise').item.json.agentName + ' in Landflow', url: $('Plan the raise').item.json.landflowUrl + '/agents/' + $('Plan the raise').item.json.agentId }] }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          }
+        },
+        {
+          "id": "recordApplied",
+          "name": "Record it applied",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "position": [
+            4480,
+            220
+          ],
+          "parameters": {
+            "operation": "update",
+            "dataTableId": "Landledger AI cap raises",
+            "matchType": "allConditions",
+            "filters": {
+              "conditions": [
+                {
+                  "keyName": "request_id",
+                  "condition": "eq",
+                  "keyValue": "{{ $('Plan the raise').item.json.requestId }}"
+                }
+              ]
+            },
+            "mappingMode": "defineBelow",
+            "columns": {
+              "column": [
+                {
+                  "column": "status",
+                  "value": "applied"
+                },
+                {
+                  "column": "updated_at",
+                  "value": "{{ new Date().toISOString() }}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "revert",
+          "name": "Put the cap back",
+          "type": "core.httpRequest",
+          "typeVersion": 1,
+          "position": [
+            4200,
+            0
+          ],
+          "parameters": {
+            "method": "PUT",
+            "url": "{{ $('Plan the raise').item.json.landflowUrl }}/api/agents/{{ $('Plan the raise').item.json.agentId }}",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "httpBearerAuth",
+            "bodyType": "json",
+            "body": "{{ { settings: $('Plan the raise').item.json.revert } }}"
+          },
+          "credentials": {
+            "httpBearerAuth": {
+              "id": "landflow",
+              "name": "Landflow API key"
+            }
+          },
+          "notes": "A failed publish leaves no saved cap behind, so later raises are not held as unpublished changes."
+        },
+        {
+          "id": "recordFailed",
+          "name": "Record the failed publish",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "position": [
+            4480,
+            0
+          ],
+          "parameters": {
+            "operation": "update",
+            "dataTableId": "Landledger AI cap raises",
+            "matchType": "allConditions",
+            "filters": {
+              "conditions": [
+                {
+                  "keyName": "request_id",
+                  "condition": "eq",
+                  "keyValue": "{{ $('Plan the raise').item.json.requestId }}"
+                }
+              ]
+            },
+            "mappingMode": "defineBelow",
+            "columns": {
+              "column": [
+                {
+                  "column": "status",
+                  "value": "publish_failed"
+                },
+                {
+                  "column": "note",
+                  "value": "{{ String($('Publish the agent').item.json.error?.message ?? $('Publish the agent').item.json.error ?? 'publish failed').slice(0, 500) }}"
+                },
+                {
+                  "column": "updated_at",
+                  "value": "{{ new Date().toISOString() }}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "report",
+          "name": "Report: publish failed",
+          "type": "core.noOp",
+          "typeVersion": 1,
+          "position": [
+            4760,
+            0
+          ],
+          "parameters": {},
+          "notes": "The request stays approved. Every hour the reconcile run tries again (up to Raise settings' MAX_ATTEMPTS), then holds it for a person; the table says what failed."
+        },
+        {
+          "id": "holdByHand",
+          "name": "Hold: raise by hand",
+          "type": "core.noOp",
+          "typeVersion": 1,
+          "position": [
+            2800,
+            640
+          ],
+          "parameters": {},
+          "notes": "Plan the raise says why (not this flow's key, an origin not verified, not this agent, already raised this month, out of range, unpublished edits, or publishing kept failing). A person raises it, then marks the request applied in Landledger."
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "usage",
+          "sourceIndex": 0,
+          "target": "settings",
+          "targetIndex": 0
+        },
+        {
+          "id": "c2",
+          "type": "main",
+          "source": "settings",
+          "sourceIndex": 0,
+          "target": "readAgent",
+          "targetIndex": 0
+        },
+        {
+          "id": "c3",
+          "type": "main",
+          "source": "readAgent",
+          "sourceIndex": 0,
+          "target": "monthCost",
+          "targetIndex": 0
+        },
+        {
+          "id": "c4",
+          "type": "main",
+          "source": "monthCost",
+          "sourceIndex": 0,
+          "target": "check",
+          "targetIndex": 0
+        },
+        {
+          "id": "c5",
+          "type": "main",
+          "source": "check",
+          "sourceIndex": 0,
+          "target": "ask",
+          "targetIndex": 0
+        },
+        {
+          "id": "c6",
+          "type": "main",
+          "source": "ask",
+          "sourceIndex": 0,
+          "target": "asked",
+          "targetIndex": 0
+        },
+        {
+          "id": "c7",
+          "type": "main",
+          "source": "decided",
+          "sourceIndex": 0,
+          "target": "approved",
+          "targetIndex": 0
+        },
+        {
+          "id": "c8",
+          "type": "main",
+          "source": "approved",
+          "sourceIndex": 0,
+          "target": "raiseSettings",
+          "targetIndex": 0
+        },
+        {
+          "id": "c9",
+          "type": "main",
+          "source": "approved",
+          "sourceIndex": 1,
+          "target": "hold",
+          "targetIndex": 0
+        },
+        {
+          "id": "c10",
+          "type": "main",
+          "source": "reconcile",
+          "sourceIndex": 0,
+          "target": "stillApproved",
+          "targetIndex": 0
+        },
+        {
+          "id": "c11",
+          "type": "main",
+          "source": "stillApproved",
+          "sourceIndex": 0,
+          "target": "raiseSettings",
+          "targetIndex": 0
+        },
+        {
+          "id": "c12",
+          "type": "main",
+          "source": "raiseSettings",
+          "sourceIndex": 0,
+          "target": "get",
+          "targetIndex": 0
+        },
+        {
+          "id": "c13",
+          "type": "main",
+          "source": "get",
+          "sourceIndex": 0,
+          "target": "me",
+          "targetIndex": 0
+        },
+        {
+          "id": "c14",
+          "type": "main",
+          "source": "me",
+          "sourceIndex": 0,
+          "target": "readAgent2",
+          "targetIndex": 0
+        },
+        {
+          "id": "c15",
+          "type": "main",
+          "source": "readAgent2",
+          "sourceIndex": 0,
+          "target": "raises",
+          "targetIndex": 0
+        },
+        {
+          "id": "c16",
+          "type": "main",
+          "source": "raises",
+          "sourceIndex": 0,
+          "target": "plan",
+          "targetIndex": 0
+        },
+        {
+          "id": "c17",
+          "type": "main",
+          "source": "plan",
+          "sourceIndex": 0,
+          "target": "what",
+          "targetIndex": 0
+        },
+        {
+          "id": "c18",
+          "type": "main",
+          "source": "what",
+          "sourceIndex": 0,
+          "target": "recordRaise",
+          "targetIndex": 0
+        },
+        {
+          "id": "c19",
+          "type": "main",
+          "source": "recordRaise",
+          "sourceIndex": 0,
+          "target": "save",
+          "targetIndex": 0
+        },
+        {
+          "id": "c20",
+          "type": "main",
+          "source": "save",
+          "sourceIndex": 0,
+          "target": "wasPublished",
+          "targetIndex": 0
+        },
+        {
+          "id": "c21",
+          "type": "main",
+          "source": "wasPublished",
+          "sourceIndex": 0,
+          "target": "publish",
+          "targetIndex": 0
+        },
+        {
+          "id": "c22",
+          "type": "main",
+          "source": "wasPublished",
+          "sourceIndex": 1,
+          "target": "applied",
+          "targetIndex": 0
+        },
+        {
+          "id": "c23",
+          "type": "main",
+          "source": "what",
+          "sourceIndex": 1,
+          "target": "recordRetry",
+          "targetIndex": 0
+        },
+        {
+          "id": "c24",
+          "type": "main",
+          "source": "recordRetry",
+          "sourceIndex": 0,
+          "target": "publish",
+          "targetIndex": 0
+        },
+        {
+          "id": "c25",
+          "type": "main",
+          "source": "publish",
+          "sourceIndex": 0,
+          "target": "publishedOk",
+          "targetIndex": 0
+        },
+        {
+          "id": "c26",
+          "type": "main",
+          "source": "publishedOk",
+          "sourceIndex": 0,
+          "target": "applied",
+          "targetIndex": 0
+        },
+        {
+          "id": "c27",
+          "type": "main",
+          "source": "publishedOk",
+          "sourceIndex": 1,
+          "target": "revert",
+          "targetIndex": 0
+        },
+        {
+          "id": "c28",
+          "type": "main",
+          "source": "revert",
+          "sourceIndex": 0,
+          "target": "recordFailed",
+          "targetIndex": 0
+        },
+        {
+          "id": "c29",
+          "type": "main",
+          "source": "recordFailed",
+          "sourceIndex": 0,
+          "target": "report",
+          "targetIndex": 0
+        },
+        {
+          "id": "c30",
+          "type": "main",
+          "source": "what",
+          "sourceIndex": 2,
+          "target": "applied",
+          "targetIndex": 0
+        },
+        {
+          "id": "c31",
+          "type": "main",
+          "source": "applied",
+          "sourceIndex": 0,
+          "target": "recordApplied",
+          "targetIndex": 0
+        },
+        {
+          "id": "c32",
+          "type": "main",
+          "source": "what",
+          "sourceIndex": 3,
+          "target": "holdByHand",
+          "targetIndex": 0
+        }
+      ],
+      "groups": [],
+      "stickyNotes": []
+    }
+  }
+}

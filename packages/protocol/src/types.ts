@@ -59,6 +59,11 @@ export interface PortDescriptor {
    * Fallback Model"). Hidden ports keep their index, so handle ids stay stable.
    */
   displayOptions?: DisplayOptions;
+  /**
+   * An output whose number and names follow the node's parameters: the port stands for the outputs a rule of the
+   * host works out (`decide`: the Decide node's routing). Handle ids count the expanded ports.
+   */
+  expand?: 'decide';
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +229,12 @@ export interface NodeDescriptor {
    * is reached (the reported usage is counted either way). Absent: reports are counted, but nothing is refused up front.
    */
   meterAiUsage?: boolean;
+  /**
+   * The node is a memory provider (docs/protocol.md#memory-providers): its `operation` option holds exactly `search`,
+   * `profile`, `add`, `forget` and `list`, each with an `outputSchema` requiring the keys the host reads. A project can
+   * then choose it as its memory backend. Old hosts treat the node as any action node.
+   */
+  memoryProvider?: boolean;
   /** Description given to the model when used as a tool (defaults to `description`). */
   toolDescription?: string;
   /**

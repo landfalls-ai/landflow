@@ -26,7 +26,7 @@ const { store } = await import('@/lib/server/store');
 const { runWorkflow } = await import('@/lib/server/runner');
 const { publishedVersionId } = await import('@/lib/server/publications');
 const policy = await import('@/lib/server/governance/policy');
-const { endpointFrom } = await import('@/lib/server/mcp/client');
+const { closeMcpClients, endpointFrom, withMcpClient } = await import('@/lib/server/mcp/client');
 const { buildTools, buildToolset } = await import('@/lib/server/agents/tools');
 const { queryEvents } = await import('@/lib/server/audit/store');
 const governanceRoute = await import('@/app/api/settings/governance/route');
@@ -228,5 +228,23 @@ describe('run time', () => {
     // The MCP Client node uses the same check.
     expect(() => endpointFrom({ endpointUrl: 'https://mcp.untrusted.example/mcp' } as never, {})).toThrow(/Blocked by policy/);
     expect(endpointFrom({ endpointUrl: 'https://mcp.trusted.example/sse' } as never, {}).url).toBe('https://mcp.trusted.example/sse');
+  });
+
+  it('checks the MCP allow-list on every redirect hop, not only the first URL', async () => {
+    // (The MCP SDK refuses a redirect to another origin itself; a same-origin one to a path the list leaves out is ours.)
+    const redirector = createServer((_req, res) => {
+      res.writeHead(307, { location: '/elsewhere' });
+      res.end();
+    });
+    await new Promise<void>((resolve) => redirector.listen(0, '127.0.0.1', resolve));
+    const port = (redirector.address() as { port: number }).port;
+    try {
+      await setPolicy({ mcp: { mode: 'allow', urls: [`http://127.0.0.1:${port}/mcp`] } });
+      const endpoint = endpointFrom({ endpointUrl: `http://127.0.0.1:${port}/mcp` } as never, {});
+      await expect(withMcpClient(endpoint, (client) => client.listTools())).rejects.toThrow(/127\.0\.0\.1:\d+\/elsewhere is not on this instance’s list of allowed MCP servers/);
+    } finally {
+      await closeMcpClients();
+      await new Promise<void>((resolve) => redirector.close(() => resolve()));
+    }
   });
 });

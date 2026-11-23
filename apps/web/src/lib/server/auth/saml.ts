@@ -38,6 +38,7 @@ import { SAML, ValidateInResponseTo, type CacheProvider, type Profile } from '@n
 import { decryptXml, parseDomFromString, xpath } from '@node-saml/node-saml/lib/xml';
 import type { AssignableRole, SamlKeyInfo, SamlSecurityView } from '../../shared/auth';
 import { describeProjectMap, grantsFor, parseProjectMap, syncManagedMemberships, type ProjectGrant } from '../projects/mapping';
+import { safeFetch } from '../net/safe-fetch';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { authDb } from './db';
@@ -47,6 +48,7 @@ import { samlDecryption, samlDecryptionKeys, samlEncryptionCerts, samlEncryption
 import { clearSamlState, dropUserStates, putState, readState, recordReplayIds, takeState } from './saml-state';
 import { DEACTIVATED_MESSAGE, deleteUserSessions } from './sessions';
 import { createUser, findUserByEmail, findUserBySaml, setupRequired, updateUser, type UserPatch, type UserRecord } from './users';
+import { envFlag } from '../config';
 
 export const SAML_STATE_COOKIE = 'landflow_saml_state';
 const STATE_TTL_MS = 10 * 60_000;
@@ -96,10 +98,7 @@ export interface SamlConfig {
 }
 
 const env = (name: string) => process.env[name]?.trim() || undefined;
-const flag = (name: string, fallback: boolean) => {
-  const value = env(name)?.toLowerCase();
-  return value === undefined ? fallback : ['1', 'true', 'yes', 'on'].includes(value);
-};
+const flag = envFlag;
 
 /** Certificates from one env value: PEM blocks, or base64 bodies separated by commas or `|`. */
 export function parseCerts(text: string | undefined): string[] {
@@ -236,7 +235,7 @@ export async function resolveIdp(config: SamlConfig, force = false): Promise<Idp
     const hit = cache.get(config.metadataUrl);
     if (hit && !force && Date.now() - hit.at < METADATA_TTL_MS) fromMetadata = hit.idp;
     else {
-      const response = await fetch(config.metadataUrl, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/samlmetadata+xml, application/xml, text/xml' } });
+      const response = await safeFetch(config.metadataUrl, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/samlmetadata+xml, application/xml, text/xml' } });
       if (!response.ok) throw new SamlError(`The IdP metadata answered ${response.status}`);
       fromMetadata = await parseIdpMetadata(await response.text());
       cache.set(config.metadataUrl, { idp: fromMetadata, at: Date.now() });

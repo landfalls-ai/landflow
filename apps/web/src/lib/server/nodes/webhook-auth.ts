@@ -37,5 +37,5 @@ export const ipWhitelistOption = {
   type: 'string' as const,
   default: '',
   placeholder: '203.0.113.7, 10.0.0.0/8',
-  description: 'Only these addresses or CIDR ranges may call (comma-separated; empty: any). Read from X-Forwarded-For / X-Real-IP set by your proxy.',
+  description: 'Only these addresses or CIDR ranges may call (comma-separated; empty: any). Read from X-Forwarded-For, trusted up to LANDFLOW_TRUSTED_PROXIES proxies.',
 };

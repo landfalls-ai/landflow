@@ -7,7 +7,7 @@ the [Landflow docs](../README.md); plugin README: [plugins/desktop](../../plugin
 ## How it fits together
 
 ```
-flow or AI Agent --(Desktop node, plugin :7117/:7217)--> docker exec --> container landflow-desktop-<id>
+flow or AI Agent --(Desktop node, plugin :7124/:7224)--> docker exec --> container landflow-desktop-<id>
                                                                           sandbox.py  Xvfb + Openbox + xdotool + scrot
                                                                           Mousepad, Firefox ESR (allow-listed)
 ```
@@ -22,7 +22,7 @@ flow or AI Agent --(Desktop node, plugin :7117/:7217)--> docker exec --> contain
 
 ## Use it
 
-1. Build the image (see the plugin README) and run `pnpm plugin:desktop`; the host finds it on 7117.
+1. Build the image (see the plugin README) and run `pnpm plugin:desktop`; the host finds it on 7124.
 2. In a flow: **Desktop** (Start Session, Apps `editor`, Start App `editor`) then **Desktop** (Act, Session ID `{{ $json.sessionId }}`,
    Actions JSON) then **Get File** and **End Session**. Or a single Act node, which starts its own desktop and removes it with
    **End Session After**.

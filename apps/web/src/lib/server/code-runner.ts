@@ -3,12 +3,15 @@
  *
  *   LANDFLOW_CODE_RUNNER_URL      http://127.0.0.1:53300 (the Docker runner from the Mac), http://code-runner:7300 (in compose)
  *   LANDFLOW_CODE_RUNNER_SECRET   the runner's CODE_RUNNER_SECRET
- *   LANDFLOW_CODE_IN_PROCESS      `false`: no in-process JavaScript (node:vm) on this host at all
+ *   LANDFLOW_CODE_IN_PROCESS      `true`/`false`: in-process JavaScript (node:vm) on this host; unset: allowed in the development
+ *                                 profile, off in production (Code nodes then need the runner; true there is a knowing choice)
  *   LANDFLOW_CODE_BINARY_MAX_BYTES  files a Code node reads (all together) and creates, either path (default 6 MiB)
  *
  * Read on every run. With a runner configured the sandbox is the default for JavaScript; Python always needs it.
+ * In production, without a runner and without LANDFLOW_CODE_IN_PROCESS=true, a Code node fails instead of running in the host.
  */
 import { NodeOperationError, type TracedFetch } from '@landflow/sdk';
+import { flag, profile } from './config';
 import type { Language, RunError, RunRequest, RunResponse } from '@landflow/code-runner/protocol';
 
 export type { Language, RunRequest, RunResponse };
@@ -21,8 +24,10 @@ export interface CodeRunnerSettings {
   /** Without a trailing slash; undefined when no runner is configured. */
   url?: string;
   secret?: string;
-  /** In-process JavaScript allowed (LANDFLOW_CODE_IN_PROCESS isn't `false`). */
+  /** In-process JavaScript allowed: LANDFLOW_CODE_IN_PROCESS when set, else yes outside production. */
   inProcess: boolean;
+  /** Set when in-process code is off only because the production profile defaults it off (LANDFLOW_CODE_IN_PROCESS is unset). */
+  productionDefault?: true;
   /** How long the host waits for an answer (the runner's own timeout is shorter). */
   timeoutMs: number;
   /** Bytes of files the code reads or creates (`this.helpers`), each way; the runner applies its own cap too. */
@@ -33,10 +38,15 @@ export function codeRunnerSettings(env: NodeJS.ProcessEnv = process.env): CodeRu
   const url = env.LANDFLOW_CODE_RUNNER_URL?.trim().replace(/\/+$/, '');
   const timeout = Number(env.LANDFLOW_EXECUTE_TIMEOUT_MS);
   const binaryMax = Number(env.LANDFLOW_CODE_BINARY_MAX_BYTES);
+  // Unset: the host runs Code nodes itself only in the development profile. Unparseable text counts as unset.
+  const explicit = env.LANDFLOW_CODE_IN_PROCESS?.trim();
+  const inProcess = flag(explicit, profile(env) !== 'production', 'LANDFLOW_CODE_IN_PROCESS');
+  const usesDefault = !explicit || !/^(1|true|yes|on|0|false|no|off)$/i.test(explicit);
   return {
     ...(url && { url }),
     ...(env.LANDFLOW_CODE_RUNNER_SECRET && { secret: env.LANDFLOW_CODE_RUNNER_SECRET }),
-    inProcess: !['false', '0', 'off', 'no'].includes((env.LANDFLOW_CODE_IN_PROCESS ?? '').trim().toLowerCase()),
+    inProcess,
+    ...(usesDefault && !inProcess && { productionDefault: true as const }),
     timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : 120_000,
     binaryMaxBytes: Number.isFinite(binaryMax) && binaryMax > 0 ? binaryMax : 6 * 1024 * 1024,
   };
@@ -63,9 +73,16 @@ export function placeCode(language: Language, runIn: string, settings: CodeRunne
   }
   if (runIn === 'inProcess' || !settings.url) {
     if (!settings.inProcess) {
-      throw new NodeOperationError('In-process code is disabled on this host (LANDFLOW_CODE_IN_PROCESS=false)', {
-        description: settings.url ? 'Set Run In to Sandbox or Default.' : `Configure the code runner to run code (${DOCS}).`,
-      });
+      throw new NodeOperationError(
+        settings.productionDefault
+          ? 'In-process code is off in the production profile: configure the code runner, or set LANDFLOW_CODE_IN_PROCESS=true knowingly'
+          : 'In-process code is disabled on this host (LANDFLOW_CODE_IN_PROCESS=false)',
+        {
+          description: settings.url
+            ? 'Set Run In to Sandbox or Default.'
+            : `Set LANDFLOW_CODE_RUNNER_URL and LANDFLOW_CODE_RUNNER_SECRET to a running code runner${settings.productionDefault ? ', or LANDFLOW_CODE_IN_PROCESS=true to run trusted code in the host (not isolated)' : ''} (${DOCS}).`,
+        },
+      );
     }
     return 'inProcess';
   }

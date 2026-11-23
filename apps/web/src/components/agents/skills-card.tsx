@@ -1,7 +1,7 @@
 'use client';
-/** Build tab → Skills: Agent Skills (SKILL.md) uploaded as a file or folder, picked from the marketplace library, or written by hand. */
-import { useRef, useState } from 'react';
-import { BookOpen, FileText, FolderOpen, Library, Loader2, PenLine, Pencil, Plus, Trash2, X } from 'lucide-react';
+/** Abilities → Capabilities → Skills: Agent Skills (SKILL.md) uploaded as a file or folder, picked from the marketplace library, or written by hand. */
+import { useEffect, useRef, useState } from 'react';
+import { BookOpen, FileText, FolderOpen, Library, Loader2, PenLine, Pencil, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -314,8 +314,14 @@ function SkillDialog({
   );
 }
 
-export function SkillsCard({ config, update }: { config: AgentConfig; update: UpdateConfig }) {
+/** Skills under Capabilities. `adding` opens the new-skill dialog (the Add capability menu asks for it). */
+export function SkillsCard({ config, update, adding, onAdded }: { config: AgentConfig; update: UpdateConfig; adding?: boolean; onAdded?: () => void }) {
   const [dialog, setDialog] = useState<{ skill?: AgentSkill } | null>(null);
+  useEffect(() => {
+    if (!adding) return;
+    setDialog({});
+    onAdded?.();
+  }, [adding, onAdded]);
   const agents = useAgentList();
   const toolNames = config.tools.map((t) => toolName(t, agents));
 
@@ -328,18 +334,17 @@ export function SkillsCard({ config, update }: { config: AgentConfig; update: Up
     setDialog(null);
   };
 
+  const dialogEl = dialog && <SkillDialog skill={dialog.skill} toolNames={toolNames} onSave={save} onClose={() => setDialog(null)} />;
+  // Nothing to list: the card stays out of the way until the Add menu asks for a skill.
+  if (!config.skills.length) return <>{dialogEl}</>;
+
   return (
     <Section
       icon={<BookOpen className="size-4" />}
       title="Skills"
       description="Know-how for specific tasks, loaded only when a task calls for it."
-      actions={
-        <Button size="sm" variant="outline" onClick={() => setDialog({})}>
-          <Plus className="size-3.5" /> Add skill
-        </Button>
-      }
     >
-      {config.skills.length ? (
+      {
         <div className="space-y-1.5">
           {config.skills.map((skill) => (
             <ItemRow
@@ -378,10 +383,8 @@ export function SkillsCard({ config, update }: { config: AgentConfig; update: Up
             />
           ))}
         </div>
-      ) : (
-        <EmptyState compact title="No skills yet" hint="Upload a SKILL.md or write one to teach the agent a repeatable procedure." />
-      )}
-      {dialog && <SkillDialog skill={dialog.skill} toolNames={toolNames} onSave={save} onClose={() => setDialog(null)} />}
+      }
+      {dialogEl}
     </Section>
   );
 }

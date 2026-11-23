@@ -17,7 +17,7 @@ import { DEFAULT_OLLAMA_URL, PROVIDERS } from '../agents/util';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
-import { FieldLabel, Input, Select, Switch, Textarea } from '../ui/inputs';
+import { Checkbox, FieldLabel, Input, Select, Switch, Textarea } from '../ui/inputs';
 
 /** What PUT takes: `model: null` goes back to the agent's own model. */
 export type OnlineEvalPatch = Partial<Omit<OnlineEvalConfig, 'model'>> & { model?: AgentModel | null };
@@ -389,10 +389,7 @@ export function OnlineEvalPanel({
             )}
             <div className="mb-1.5 mt-3 flex items-center gap-2">
               <span className="text-[12px] text-t3">Latest {report.scores.length}</span>
-              <label className="ml-auto flex cursor-pointer select-none items-center gap-1.5 text-[12px] text-t2">
-                <input type="checkbox" checked={flaggedOnly} onChange={(e) => setFlaggedOnly(e.target.checked)} className="size-3.5 cursor-pointer accent-ac2" />
-                Flagged only
-              </label>
+              <Checkbox checked={flaggedOnly} onChange={setFlaggedOnly} label="Flagged only" className="ml-auto text-[12px]" />
             </div>
             <ul className="space-y-1.5">
               {scores.map((score) => (

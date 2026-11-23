@@ -10,6 +10,7 @@
  * `resourceCan` is the one place that says which access allows which action; the server works out the access
  * (`resourceAccess` in lib/server/projects/access.ts) and the client uses the same table to hide what it can't do.
  */
+import type { ProjectBriefView } from './goals';
 
 export const PROJECT_ROLES = ['admin', 'editor', 'viewer'] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
@@ -27,13 +28,23 @@ export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 export const RESOURCE_LABELS: Record<ResourceKind, string> = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent', agentTeam: 'agent team' };
 
 /** Kinds that can be shared with other projects. */
-export const SHAREABLE_KINDS = ['workflow', 'credential'] as const satisfies readonly ResourceKind[];
+export const SHAREABLE_KINDS = ['workflow', 'credential', 'agent'] as const satisfies readonly ResourceKind[];
 export type ShareableKind = (typeof SHAREABLE_KINDS)[number];
 
 /** A share's role: workflows are shared to edit or to view, credentials to use. */
 export type ShareRole = 'editor' | 'viewer' | 'user';
-export const SHARE_ROLES: Record<ShareableKind, readonly ShareRole[]> = { workflow: ['editor', 'viewer'], credential: ['user'] };
+export const SHARE_ROLES: Record<ShareableKind, readonly ShareRole[]> = { workflow: ['editor', 'viewer'], credential: ['user'], agent: ['user'] }; // PC06: agent
 export const SHARE_ROLE_LABELS: Record<ShareRole, string> = { editor: 'Can edit', viewer: 'Can view', user: 'Can use' };
+
+/** PC06: the share row's project id for "All projects" (agents only). */
+export const ALL_PROJECTS = '*';
+
+/** PC06: where an agent is available: its home, the projects it is shared with, or all of them. */
+export interface AgentAvailability {
+  home: { id: string; name: string };
+  all: boolean;
+  projects: Array<{ id: string; name: string }>;
+}
 
 /** What someone does with one resource. */
 export type ResourceAction = 'read' | 'use' | 'run' | 'update' | 'delete' | 'share' | 'move';
@@ -104,6 +115,8 @@ export interface ProjectView {
   role?: ProjectRole;
   memberCount: number;
   counts?: Partial<Record<ResourceKind, number>>;
+  /** Its tasks (PC19), present when it has any: deleting the project deletes them and their runs, never moves them. */
+  taskCount?: number;
 }
 
 export interface ProjectMemberView {
@@ -117,6 +130,9 @@ export interface ProjectMemberView {
 }
 
 export interface ProjectDetail extends ProjectView {
+  /** The brief and the goals the project serves (docs/projects-and-goals.md). */
+  brief?: ProjectBriefView;
+  repos?: string[]; // PC10: owner/name, lowercased
   members: ProjectMemberView[];
 }
 

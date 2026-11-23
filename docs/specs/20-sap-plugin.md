@@ -222,9 +222,9 @@ state, saves the returned state, and the first poll after activation or after a 
 
 #### 3.1 Plugin
 
-`plugins/sap` (`@landflow/plugin-sap`), TypeScript SDK, HTTP **7116**, gRPC **7216**, `pnpm plugin:sap` (opt-in, not in `dev:all`, like Agent
+`plugins/sap` (`@landflow/plugin-sap`), TypeScript SDK, HTTP **7123**, gRPC **7223**, `pnpm plugin:sap` (opt-in, not in `dev:all`, like Agent
 Shell and AI SDK; the next free numbers after 7115/7215). Same layout as `plugins/github`: `src/main.ts` (`definePlugin`, credential types,
-`serve(plugin, { http: 7116, grpc: 7216, maxConcurrency: 4 })`), `src/odata/` (client, metadata, query builder, errors), `src/nodes/`,
+`serve(plugin, { http: 7123, grpc: 7223, maxConcurrency: 4 })`), `src/odata/` (client, metadata, query builder, errors), `src/nodes/`,
 `src/catalog/` (the curated services), `test/` (the fake server). Written like the web-search plugin: caps, limits and a README with the same
 sections (node, credentials, safeguards, local testing).
 
@@ -356,7 +356,7 @@ The estimates are **assumptions** (one developer with an agent, familiar with th
 | Phase | Deliverable | Estimate (assumed) | Done when |
 |---|---|---|---|
 | **0. Verify** | In a browser: official Help Portal pages for authentication, scenarios, events; scenario ids and service names of the five APIs; sandbox shapes. Updates this spec's UNVERIFIED list. | 0.5 to 1 day, needs the user's browser or an SAP account for the Hub | Every UNVERIFIED in "Unverified claims" is confirmed, corrected or kept with a reason. |
-| **1. Smallest first slice: read-only** | `plugins/sap` with `sapS4hanaBasicApi` (and sandbox key), the SAP OData node with **Get and List only**, curated catalog with the 5 services, `$metadata` cache and pickers, paging with `maxRecords`, error mapping, usable as an agent tool, host registered on 7116/7216, fake server with token/`$metadata`/paging/errors, README | 3 to 5 days | A flow lists sales orders and gets one business partner from the fake server; an agent calls it as a tool and sees the trace span with keys and counts only, no bodies; limits and error cases tested; `pnpm --filter @landflow/plugin-sap test` passes with no network; docs and `docs/history.md` row. |
+| **1. Smallest first slice: read-only** | `plugins/sap` with `sapS4hanaBasicApi` (and sandbox key), the SAP OData node with **Get and List only**, curated catalog with the 5 services, `$metadata` cache and pickers, paging with `maxRecords`, error mapping, usable as an agent tool, host registered on 7123/7223, fake server with token/`$metadata`/paging/errors, README | 3 to 5 days | A flow lists sales orders and gets one business partner from the fake server; an agent calls it as a tool and sees the trace span with keys and counts only, no bodies; limits and error cases tested; `pnpm --filter @landflow/plugin-sap test` passes with no network; docs and `docs/history.md` row. |
 | **2. Writes and safety** | Create, Update, Delete with CSRF and ETag, Allow writes, approvals, Max writes, Dry run, idempotency notes; Business Partner and Purchase Order presets; Redact Fields | 4 to 6 days | Fake-server tests for 428, 412, expired CSRF, stale ETag and deep insert; an agent write waits for approval and a denied write sends nothing; dry run proven to send no write request. |
 | **3. Poll trigger and OAuth** | SAP Trigger (Poll) with cursor and seen set; `sapS4hanaOAuth2Api` (PKCE) via `core.oAuth2Api`; Private Edition client-credentials type | 4 to 6 days | A change on the fake server fires one run once; restart keeps the cursor; overlap and duplicate tests; a PKCE round trip against the fake token endpoint; token refresh once on 401. |
 | **4. Events** (only if D4 yes) | SAP Event trigger (appWebhook) with CloudEvents parsing and secret check; docs for setting up an AEM or Event Mesh delivery point | 3 to 5 days, plus the user's broker time | The fake delivery fires a run; a wrong secret is refused; the page says exactly which broker settings the admin must enter. |
@@ -365,7 +365,7 @@ The estimates are **assumptions** (one developer with an agent, familiar with th
 
 Docs per CLAUDE.md for every phase: a feature page (`docs/sap.md`, listed in `docs/README.md`), `docs/reference/` for the variables
 (`LANDFLOW_SAP_ALLOWED_HOSTS`, caps), `docs/limitations.md` and `docs/roadmap.md`, a `docs/history.md` row, and the compose and Kubernetes
-entries (ports 7116/7216, opt-in profile, as for Browser).
+entries (ports 7123/7223, opt-in profile, as for Browser).
 
 ## Risks
 

@@ -1,20 +1,22 @@
 'use client';
 /**
- * What a run did, in one line (docs/run-trace.md#what-a-run-did-in-one-line), drawn in the new look: what came in, who did
+ * What a run did, in one line (docs/run-trace.md#what-a-run-did-in-one-line): what came in, who did
  * it (the agent's face, or the team's lead with the faces of the members who worked under it), and what came out, green
  * when done, amber when it waits for you, red when it failed. A tap on the result opens it (a pull request on GitHub);
  * the rest of the row opens the run's Story.
  */
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Calendar, Check, ExternalLink, FileText, GitPullRequest, Globe, Hourglass, Mail, MessageSquare, Play, Workflow, X, Zap } from 'lucide-react';
+import { ArrowRight, Calendar, Check, ExternalLink, FileText, GitPullRequest, Globe, Hourglass, Mail, MessageSquare, Play, Sparkles, Workflow, X, Zap } from 'lucide-react';
 import { api } from '@/lib/client/api';
+import { askAbout, askDetail } from '@/lib/client/ask-about';
 import { timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
 import type { RunLine as Line } from '@/lib/shared/run-line';
 import { safeUrl } from '@/lib/shared/artifact-kinds';
 import { fmtMs } from '@/lib/shared/run-trace-model';
 import { cn } from '@/lib/utils';
+import { StatusDot } from '../ui/badge';
 import { Avatar } from './parts';
 
 const IN_ICON = { manual: Play, schedule: Calendar, webhook: Zap, form: FileText, chat: MessageSquare, pull_request: GitPullRequest, email: Mail, other: Workflow } as const;
@@ -56,8 +58,52 @@ function Faces({ by }: { by: Line['by'] }) {
   );
 }
 
+/** A run of one flow with no agent or team on it: Home draws it as one line instead of a card. */
+export function isSingleFlow(line: Line): boolean {
+  return !line.by.lead && !line.by.team && line.by.members.length === 0;
+}
+
+const DOT = { ok: 'success', live: 'running', warn: 'paused', bad: 'error' } as const;
+
+/** "Ask why it failed": opens the chat about a failed run (docs/spotlight.md#ask-about-it). */
+export function AskWhyButton({ runId, name, workflowId, className }: { runId: string; name: string; workflowId?: string; className?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => askAbout(askDetail({ type: 'run', id: runId, name: `${name} run`, ...(workflowId && { workflowId }) }, { failed: true }))}
+      className={cn('pointer-events-auto relative z-10 inline-flex w-fit items-center gap-1 rounded-full border border-rdbd px-2 py-0.5 text-[11.5px] font-semibold text-rd hover:border-rd max-md:min-h-11 max-md:px-3', className)}
+    >
+      <Sparkles className="size-3" /> Ask why it failed
+    </button>
+  );
+}
+
+/** A single-flow run in one line: status dot, name, how long it took and when. The whole row opens the run. */
+export function RunOneLine({ line, name, href, startedAt, runId, workflowId, className }: { line: Line; name: string; href: string; startedAt?: string; runId?: string; workflowId?: string; className?: string }) {
+  const live = line.out.tone === 'live';
+  const ask = runId && line.out.tone === 'bad';
+  const row = (
+    <Link href={href} aria-label={`Open the run: ${name}`} className={cn('flex min-h-11 items-center gap-3 rounded-2xl border border-hair bg-sf px-3 py-2 transition-colors hover:bg-acdim/30', className)}>
+      <StatusDot status={DOT[line.out.tone]} pulse={live} />
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-t1">{name}</span>
+      {!live && line.ms > 0 && <span className="shrink-0 font-mono text-[12px] text-t2">{fmtMs(line.ms)}</span>}
+      {startedAt && <span className="shrink-0 text-[12px] text-t3">{timeAgo(startedAt)}</span>}
+    </Link>
+  );
+  // A button cannot sit inside the link, so a failed run's row is the link and the button side by side.
+  return ask ? (
+    <div className="flex items-center gap-2 max-md:flex-wrap">
+      <div className="min-w-0 flex-1">{row}</div>
+      <AskWhyButton runId={runId} name={name} {...(workflowId && { workflowId })} />
+    </div>
+  ) : (
+    row
+  );
+}
+
 /** One run as in → who → out, with the time it took and when. */
-export function RunLineRow({ line, name, href, onOpen, startedAt, className }: { line: Line; name?: string; href?: string; onOpen?: () => void; startedAt?: string; className?: string }) {
+export function RunLineRow({ line, name, href, onOpen, startedAt, runId, workflowId, className }: { line: Line; name?: string; href?: string; onOpen?: () => void; startedAt?: string; runId?: string; workflowId?: string; className?: string }) {
+  if (name && href && isSingleFlow(line)) return <RunOneLine line={line} name={name} href={href} {...(startedAt && { startedAt })} {...(runId && { runId })} {...(workflowId && { workflowId })} {...(className && { className })} />;
   const InIcon = IN_ICON[line.in.kind] ?? Workflow;
   const tone = OUT_TONE[line.out.tone];
   const url = safeUrl(line.out.url);
@@ -97,6 +143,7 @@ export function RunLineRow({ line, name, href, onOpen, startedAt, className }: {
       <p className="pointer-events-none relative mt-2 truncate text-[11.5px] text-t3">
         {[line.ms ? fmtMs(line.ms) : '', tokensText(line.tokens), startedAt ? timeAgo(startedAt) : ''].filter(Boolean).join(' · ')}
       </p>
+      {runId && line.out.tone === 'bad' && <AskWhyButton runId={runId} name={name ?? line.in.label} {...(workflowId && { workflowId })} className="mt-2" />}
     </div>
   );
 }
@@ -127,8 +174,17 @@ export function useRunLines(ids: string[]): Record<string, Line> | undefined {
   return lines;
 }
 
+/** A run to draw as a line; `workflowId` names its workflow, as an ask-about's run ref does (lib/shared/mentions.ts). */
+export interface RunLineItem {
+  id: string;
+  href: string;
+  name: string;
+  startedAt?: string;
+  workflowId?: string;
+}
+
 /** Runs as lines, each from `GET /api/runs/lines`; a run without a journal yet shows its name until its line comes. */
-export function RunLines({ runs, empty }: { runs: Array<{ id: string; href: string; name: string; startedAt?: string }>; empty?: React.ReactNode }) {
+export function RunLines({ runs, empty }: { runs: RunLineItem[]; empty?: React.ReactNode }) {
   const lines = useRunLines(runs.map((r) => r.id));
   if (!runs.length) return <>{empty ?? null}</>;
   return (
@@ -136,7 +192,7 @@ export function RunLines({ runs, empty }: { runs: Array<{ id: string; href: stri
       {runs.map((r) => {
         const line = lines?.[r.id];
         return line ? (
-          <RunLineRow key={r.id} line={line} name={r.name} href={r.href} startedAt={r.startedAt} className="animate-in" />
+          <RunLineRow key={r.id} line={line} name={r.name} href={r.href} startedAt={r.startedAt} runId={r.id} {...(r.workflowId && { workflowId: r.workflowId })} className="animate-in" />
         ) : (
           <Link key={r.id} href={r.href} className="flex items-center gap-3 rounded-2xl border border-hair bg-sf p-3 hover:bg-acdim/30">
             <span className={cn('size-[30px] shrink-0 rounded-lg bg-acdim', !lines && 'animate-pulse-soft')} />
@@ -151,11 +207,11 @@ export function RunLines({ runs, empty }: { runs: Array<{ id: string; href: stri
 
 /** The last runs an agent took part in (`GET /api/runs/search?actor=`), as lines: the agent page's Sessions tab. */
 export function AgentLastRuns({ agentName, limit = 3 }: { agentName: string; limit?: number }) {
-  const [runs, setRuns] = useState<Array<{ id: string; href: string; name: string; startedAt?: string }>>();
+  const [runs, setRuns] = useState<RunLineItem[]>();
   useEffect(() => {
     let gone = false;
     api<{ items: Array<{ executionId: string; workflowId: string; workflowName: string; startedAt: string }> }>(`/api/runs/search?actor=${encodeURIComponent(agentName)}&limit=${limit}`)
-      .then((r) => !gone && setRuns(r.items.map((i) => ({ id: i.executionId, href: `/runs/${i.executionId}`, name: i.workflowName, startedAt: i.startedAt }))))
+      .then((r) => !gone && setRuns(r.items.map((i) => ({ id: i.executionId, href: `/runs/${i.executionId}`, name: i.workflowName, startedAt: i.startedAt, workflowId: i.workflowId }))))
       .catch(() => !gone && setRuns([]));
     return () => {
       gone = true;

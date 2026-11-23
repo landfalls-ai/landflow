@@ -12,7 +12,7 @@ import { ArtifactPreview } from '../src/components/run-trace/artifact-preview';
 import { DiffView } from '../src/components/run-trace/diff-view';
 import { LineCommentsProvider } from '../src/components/run-trace/line-comments';
 import { DetailSheet } from '../src/components/run-trace/sheet';
-import { Report } from '../src/components/run-trace/report';
+import { StorySummary } from '../src/components/run-trace/report';
 import { buildRunReport } from '../src/lib/shared/run-report';
 import { RUN_PROFILES } from '../src/lib/shared/run-profiles';
 
@@ -140,14 +140,12 @@ describe('Artifacts tab with previews', () => {
     expect(html).not.toContain('Links ·');
   });
 
-  it('counts the files agents wrote as made in the report, on the Report tab and in its Markdown', () => {
+  it('counts the files agents wrote as made in the report, in the summary of the Story and in its Markdown', () => {
     const report = buildRunReport(model, RUN_PROFILES.generic, { changes: foldChanges(events) });
     expect(report.files).toEqual([{ path: '/w/out/report.html', created: true, additions: 1, deletions: 0, by: ['Developer'], spanId: 'node:dev:0/step:1' }]);
     expect(report.markdown).toContain('### Files written\n\n- `/w/out/report.html` · new · +1 −0 · Developer');
-    const tab = renderToStaticMarkup(createElement(Report, { model, report, open: () => {} }));
-    expect(tab).toContain('Artifacts · 5');
-    expect(tab).toContain('file written · Developer · +1 −0');
-    expect(tab).not.toContain('Nothing was made');
+    const tab = renderToStaticMarkup(createElement(StorySummary, { model, report, changes: foldChanges(events), open: () => {} }));
+    expect(tab).toMatch(/<b[^>]*>5<\/b><span[^>]*>artifacts<\/span>/);
   });
 
   it('shows a table in the detail sheet as cards, not its raw text', () => {

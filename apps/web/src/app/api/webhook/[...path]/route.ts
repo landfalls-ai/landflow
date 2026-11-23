@@ -57,6 +57,7 @@ async function handle(request: Request, { params }: Ctx) {
   const earlier = idempotencyKey ? findIdempotent(workflow.id, idempotencyKey) : undefined;
   if (earlier) {
     recordWebhookRequest(200, workflow.id);
+    await store.promoteExecution(earlier);
     return replay(earlier);
   }
   // Uploaded files are stored under the run's id before it starts; they go if it never does.
@@ -115,7 +116,10 @@ async function handle(request: Request, { params }: Ctx) {
   if (!started) {
     // Turned down before it started? (onStart comes synchronously, or a moment later in queue mode.)
     const caught = await turnedDown(run, begun.promise);
-    if (caught instanceof DuplicateRunError) return respond(replay(caught.executionId));
+    if (caught instanceof DuplicateRunError) {
+      await store.promoteExecution(caught.executionId);
+      return respond(replay(caught.executionId));
+    }
     // Held by the trigger's debounce or batching: accepted, a later run takes it.
     if (caught instanceof RunBufferedError) {
       return respond(json({ status: caught.reason, workflowId: workflow.id, message: caught.message, count: caught.count, runsAt: caught.dueAt, ...(caught.startedNow && { started: true }) }, 202));

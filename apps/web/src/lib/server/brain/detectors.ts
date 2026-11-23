@@ -11,9 +11,10 @@
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import { missingSystem } from '../../shared/agent-architect';
 import type { AssistantOp } from '../../shared/assistant-ops';
-import type { DetectorId, ProposalEvidence, ProposalRisk } from '../../shared/brain';
+import type { BuiltinDetectorId, DetectorId, ProposalEvidence, ProposalRisk } from '../../shared/brain';
 import { agentStore } from '../agents/store';
-import { DEFAULT_PRICES, priceOverrides } from '../ai-usage/prices';
+import { DEFAULT_PRICES, LOCAL_PROVIDERS, priceOverrides } from '../ai-usage/prices';
+import { LOCAL_MODEL_DAYS, localModelName, localPrice } from '../ai-usage/local-models'; // SP13:
 import { credentials } from '../credentials/vault';
 import { database, type Database, type SqlValue } from '../db';
 import { homeProjectId } from '../projects/store';
@@ -21,8 +22,12 @@ import { searchTerms } from '../rag/search';
 import { instanceTimezone } from '../settings';
 import { store } from '../store';
 import { percentile } from '../usage/query';
+import { overlapFindings } from './overlap';
 import type { NewProposal } from './proposals';
+import { practiceDrift } from './practice-drift'; // PR09:
+import { spendAnomalyFindings } from './spend-anomaly'; // SP23:
 import { fingerprintOf } from './proposals';
+import { agentLoops, cacheMisses, contextBloat, fatToolResults, repeatedCalls, unusedTools } from './spend-detectors'; // SP13:
 
 const DAY_MS = 86_400_000;
 const PRODUCTION = "COALESCE(json_extract(attrs, '$.mode'), '') <> 'manual'";
@@ -56,7 +61,7 @@ export interface DetectContext {
   workflows: Workflow[];
 }
 
-const execHref = (workflowId: string, executionId?: string) => (executionId ? `/workflows/${workflowId}/executions/${executionId}` : `/workflows/${workflowId}`);
+const execHref = (workflowId: string, executionId?: string) => (executionId ? `/workflows/${workflowId}/runs/${executionId}` : `/workflows/${workflowId}`);
 const pct = (n: number) => `${Math.round(n * 1000) / 10}%`;
 const seconds = (ms: number) => `${(ms / 1000).toFixed(ms >= 10_000 ? 0 : 1)} s`;
 const clamp = (n: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, n));
@@ -327,6 +332,86 @@ export function aiCost(ctx: DetectContext): Finding[] {
       }),
     });
   }
+  out.push(...localAiCost(ctx)); // SP13:
+  return out;
+}
+
+// SP13: a local model has no price and no cost, so `usage_events` (cost > 0) never sees it: it is judged on tokens, from ai_usage.
+const modelSize = (model: string): number | undefined => {
+  const m = /:(\d+(?:\.\d+)?)b\b/i.exec(localModelName(model));
+  return m ? Number(m[1]) : undefined;
+};
+const modelFamily = (model: string) => localModelName(model).split(':')[0].toLowerCase();
+
+/** A workflow that sends short answers to a large unpriced local model: try a smaller local model of the same family seen on this instance. */
+function localAiCost(ctx: DetectContext): Finding[] {
+  const min = Math.ceil(20 * ctx.quiet('ai-cost'));
+  const marks = LOCAL_PROVIDERS.map(() => '?').join(', ');
+  const rows = ctx.db.all<{ workflow_id: string; model: string; n: number; input: number; output: number }>(
+    `SELECT workflow_id, model, COUNT(*) AS n, COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output
+     FROM ai_usage WHERE at >= ? AND at <= ? AND workflow_id IS NOT NULL AND surface IS NULL AND operation <> 'embeddings' AND cost = 0
+       AND (provider IN (${marks}) OR gateway_provider IN (${marks})) GROUP BY workflow_id, model`,
+    iso(ctx.now - 7 * DAY_MS),
+    iso(ctx.now),
+    ...LOCAL_PROVIDERS,
+    ...LOCAL_PROVIDERS,
+  );
+  if (!rows.length) return [];
+  const overrides = priceOverrides(ctx.db);
+  // The local models seen in the 30 days up to `now` (localModels() has no upper bound, so a backtest would see later ones).
+  const seenRows = ctx.db.all<{ model: string }>(
+    `SELECT DISTINCT model FROM ai_usage WHERE at >= ? AND at <= ? AND (provider IN (${marks}) OR gateway_provider IN (${marks}))`,
+    iso(ctx.now - LOCAL_MODEL_DAYS * DAY_MS),
+    iso(ctx.now),
+    ...LOCAL_PROVIDERS,
+    ...LOCAL_PROVIDERS,
+  );
+  const seen = [...new Set(seenRows.map((r) => localModelName(r.model)))].filter((m) => !localPrice(m, overrides));
+  const merged = new Map<string, { workflow: string; model: string; n: number; input: number; output: number }>();
+  for (const r of rows) {
+    const key = `${r.workflow_id}|${localModelName(r.model)}`;
+    const m = merged.get(key) ?? { workflow: r.workflow_id, model: localModelName(r.model), n: 0, input: 0, output: 0 };
+    m.n += Number(r.n);
+    m.input += Number(r.input);
+    m.output += Number(r.output);
+    merged.set(key, m);
+  }
+  const out: Finding[] = [];
+  for (const r of merged.values()) {
+    const size = modelSize(r.model);
+    if (r.n < min || size === undefined || localPrice(r.model, overrides)) continue;
+    const avgOutput = r.output / r.n;
+    if (avgOutput > 400) continue;
+    // The largest smaller model of the family that was seen here.
+    const smaller = seen
+      .filter((m) => m !== r.model && modelFamily(m) === modelFamily(r.model) && (modelSize(m) ?? Infinity) < size)
+      .sort((a, b) => (modelSize(b) as number) - (modelSize(a) as number))[0];
+    const workflow = ctx.workflows.find((w) => w.id === r.workflow);
+    if (!smaller || !workflow) continue;
+    const nodes = workflow.nodes.filter((n) => typeof n.parameters?.model === 'string' && localModelName(n.parameters.model) === r.model);
+    out.push({
+      proposal: base('ai-cost', `${workflow.id}|local|${r.model}`, target(workflow, nodes[0]), {
+        title: `Try ${smaller} instead of ${r.model} in “${workflow.name}”`,
+        why: `${r.n} calls to ${r.model} this week sent ${Math.round(r.input / r.n)} input tokens and got short answers (${Math.round(avgOutput)} output tokens on average). A local model costs no money, but a large one takes more time and memory per token: ${smaller} is smaller and is already running on this instance. ${nodes.length ? 'Check the answers stay good (an evaluation run) before you switch.' : ''}`,
+        evidence: [
+          { label: 'Calls this week', value: r.n },
+          { label: 'Input tokens this week', value: r.input },
+          { label: 'Average output tokens', value: Math.round(avgOutput) },
+          { label: 'Smaller model seen here', value: smaller },
+        ],
+        effect: 'Faster answers and less memory on your own hardware',
+        ops: nodes.map((n) => {
+          // Keep the gateway prefix the node has (ollama_chat/…): only the model name changes.
+          const current = n.parameters.model as string;
+          const prefix = current.endsWith(r.model) ? current.slice(0, current.length - r.model.length) : '';
+          return { op: 'setParameters' as const, node: n.name, parameters: { model: `${prefix}${smaller}` } };
+        }),
+        risk: 'medium',
+        confidence: 0.5,
+        impact: 1,
+      }),
+    });
+  }
   return out;
 }
 
@@ -531,7 +616,7 @@ export function copyPaste(ctx: DetectContext): Finding[] {
 export function deadWeight(ctx: DetectContext): Finding[] {
   const days = Math.ceil(60 * ctx.quiet('dead-weight'));
   const cutoff = ctx.now - days * DAY_MS;
-  const oldest = ctx.db.get<{ at: string | null }>('SELECT MIN(at) AS at FROM usage_events')?.at;
+  const oldest = ctx.db.get<{ at: string | null }>('SELECT MIN(at) AS at FROM usage_events WHERE owner_id IS NULL')?.at;
   const oldestDaily = ctx.db.get<{ day: string | null }>('SELECT MIN(day) AS day FROM usage_daily')?.day;
   const covered = [oldest, oldestDaily ? `${oldestDaily}T00:00:00Z` : null].filter(Boolean).some((t) => Date.parse(t!) <= cutoff);
   // The ledger has to look back far enough to say "nobody".
@@ -790,7 +875,26 @@ export function noSafetyNet(ctx: DetectContext): Finding[] {
   ];
 }
 
-export const DETECTOR_RUNS: Record<DetectorId, (ctx: DetectContext) => Finding[]> = {
+/** Two people whose shared work of the last 3 days is about the same thing, introduced once in 14 days (./overlap.ts). */
+export function workOverlap(ctx: DetectContext): Finding[] {
+  // Inbox only: no Slack message is sent on its own (a mirror needs a credential someone chose).
+  return overlapFindings(ctx.db, ctx.now, ctx.quiet('work-overlap')).map(({ overlap, title, why, evidence, audience }) => ({
+    proposal: {
+      ...base('work-overlap', overlap.pair.join('|'), { type: 'instance', name: 'Work overlap' }, {
+        title,
+        why,
+        evidence,
+        effect: 'Two people who work on the same thing talk before they duplicate it',
+        risk: 'low',
+        confidence: overlap.thing.type === 'similar' ? 0.55 : 0.75,
+        impact: 2,
+      }),
+      audience,
+    },
+  }));
+}
+
+export const DETECTOR_RUNS: Record<BuiltinDetectorId, (ctx: DetectContext) => Finding[]> = {
   'failure-hot-spot': failureHotSpots,
   'flaky-call': flakyCalls,
   'slow-step': slowSteps,
@@ -803,6 +907,15 @@ export const DETECTOR_RUNS: Record<DetectorId, (ctx: DetectContext) => Finding[]
   'no-safety-net': noSafetyNet,
   'repeated-sequence': repeatedSequences,
   'missing-tool': missingTools,
+  'work-overlap': workOverlap,
+  'practice-drift': practiceDrift, // PR09:
+  'context-bloat': contextBloat, // SP13:
+  'fat-tool-results': fatToolResults, // SP13:
+  'unused-tools': unusedTools, // SP13:
+  'cache-misses': cacheMisses, // SP13:
+  'repeated-calls': repeatedCalls, // SP13:
+  'agent-loops': agentLoops, // SP13:
+  'spend-anomaly': spendAnomalyFindings, // SP23:
 };
 
 export function detectContext(quiet: Partial<Record<DetectorId, number>> = {}, db: Database = database(), now = Date.now()): DetectContext {

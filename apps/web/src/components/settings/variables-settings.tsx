@@ -5,7 +5,7 @@
  * the instance's. The instance's are changed by owners and admins, a project's by its editors and admins.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Braces, Check, Copy, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { Braces, Check, Copy, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -15,8 +15,9 @@ import { useViewer } from '@/components/auth/viewer';
 import { projectLabel, useProjects } from '@/components/projects/use-projects';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
+import { HelpTip } from '@/components/ui/help-tip';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Input, Select } from '@/components/ui/inputs';
+import { Input, SearchInput, Select } from '@/components/ui/inputs';
 import { VariableEnvironments } from './variable-environments';
 
 /** GET /api/projects/<id>/variables */
@@ -183,22 +184,22 @@ export function VariablesSettings({ projectId }: { projectId?: string }) {
         <p className="min-w-0 flex-1 text-[13px] text-t2">
           {scope ? (
             <>
-              Values for the expressions of {project ? `the “${projectLabel(project, viewer?.id)}” project’s` : 'this project’s'} workflows:{' '}
-              <code className="rounded bg-acdim px-1.5 py-0.5 font-mono text-[12px] text-t1">{'{{ $vars.KEY }}'}</code> reads a project variable first, then the instance’s of the same key. Not
-              encrypted: keep secrets in Credentials.
+              Values for the expressions of {project ? `the “${projectLabel(project, viewer?.id)}” project’s` : 'this project’s'} workflows: <code className="rounded bg-acdim px-1.5 py-0.5 font-mono text-[12px] text-t1">{'{{ $vars.KEY }}'}</code>.
+              <HelpTip label="How variables resolve" className="ml-1 align-middle">
+                A project variable is read first, then the instance’s of the same key. Not encrypted: keep secrets in Credentials.
+              </HelpTip>
             </>
           ) : (
             <>
-              Instance-wide values for expressions: <code className="rounded bg-acdim px-1.5 py-0.5 font-mono text-[12px] text-t1">{'{{ $vars.KEY }}'}</code>. Values are strings and
-              read-only in workflows; a run sees the values at the time it starts; a project’s own variable of the same key wins in its workflows. Not encrypted: keep secrets in Credentials.
+              Instance-wide values for expressions: <code className="rounded bg-acdim px-1.5 py-0.5 font-mono text-[12px] text-t1">{'{{ $vars.KEY }}'}</code>.
+              <HelpTip label="How variables work" className="ml-1 align-middle">
+                Values are strings and read-only in workflows; a run sees the values at the time it starts; a project’s own variable of the same key wins in its workflows. Not encrypted: keep secrets in Credentials.
+              </HelpTip>
             </>
           )}
         </p>
         {(list?.length ?? 0) > 6 && (
-          <div className="relative w-56">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search variables" className="h-8 pl-8" />
-          </div>
+          <SearchInput value={query} onChange={setQuery} placeholder="Search variables" className="w-56" />
         )}
         {canEdit && (
           <Button variant="primary" size="sm" onClick={() => setEditing('new')} disabled={editing === 'new'}>

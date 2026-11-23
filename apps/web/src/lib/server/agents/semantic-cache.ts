@@ -6,10 +6,11 @@
 import { createHash } from 'node:crypto';
 import type { AgentConfig } from '../../shared/agents';
 import { cosine, normalizeQuestion, type SemanticCache as SemanticSettings } from '../../shared/agent-cache';
+import { withCallPurpose } from '../ai-usage/call-context';
 import { database } from '../db';
 import { ollamaEmbeddings } from '../rag/embeddings';
 import { singleton } from '../singleton';
-import { OLLAMA_URL } from './models';
+import { ollamaUrl } from '../config';
 import { answerShape } from './response-cache';
 
 export type Embedder = (text: string, signal?: AbortSignal) => Promise<number[]>;
@@ -23,14 +24,15 @@ export interface SemanticStore {
 }
 
 /** A hash of what decides an answer, without the question: edit the prompt, model or guardrails and the old answers no longer match. */
-export function configHash(agentId: string, config: AgentConfig): string {
-  return createHash('sha256').update(JSON.stringify([agentId, answerShape(config)])).digest('hex');
+export function configHash(agentId: string, config: AgentConfig, contextHash = ''): string {
+  return createHash('sha256').update(JSON.stringify([agentId, answerShape(config), ...(contextHash ? [contextHash] : [])])).digest('hex');
 }
 
 /** The embedder the settings name: an Ollama embedding model. */
 export function embedderFor(settings: SemanticSettings): Embedder {
-  const embeddings = ollamaEmbeddings({ baseUrl: settings.baseUrl?.trim() || OLLAMA_URL, model: settings.model });
-  return (text, signal) => embeddings.embedQuery(normalizeQuestion(text), signal);
+  const embeddings = ollamaEmbeddings({ baseUrl: settings.baseUrl?.trim() || ollamaUrl(), model: settings.model });
+  // SP02: the question's embedding is cache bookkeeping, not an answer.
+  return (text, signal) => withCallPurpose('cache-embed', () => embeddings.embedQuery(normalizeQuestion(text), signal));
 }
 
 const db = () => database();

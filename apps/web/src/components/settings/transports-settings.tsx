@@ -14,7 +14,10 @@ import type { ConnectionField, TransportConnectionCheck, TransportConnectionHeal
 import { Card } from '@/components/shell/page-header';
 import { Badge, StatusDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { confirmAction } from '@/components/ui/confirm';
+import { HelpTip } from '@/components/ui/help-tip';
 import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '@/components/ui/inputs';
+import { groupIssues, IssueBanner, listedKinds, StatusRow } from './status-rows';
 
 interface Draft {
   /** Undefined: a new connection. */
@@ -197,12 +200,13 @@ function ConnectionRow({ connection, kinds, onEdit, onChanged, onDeleted }: { co
       else toast.error(check.message);
     });
   const toggle = (enabled: boolean) => act('toggle', async () => onChanged(await api<TransportConnectionView>(`/api/transports/connections/${encodeURIComponent(connection.id)}`, { method: 'PATCH', json: { enabled } })));
-  const remove = () =>
-    act('delete', async () => {
-      if (!window.confirm(`Delete ${connection.name}? Plugins reached only through it become unreachable.`)) return;
+  const remove = async () => {
+    if (!(await confirmAction(`Delete ${connection.name}? Plugins reached only through it become unreachable.`, { action: 'Delete', danger: true }))) return;
+    await act('delete', async () => {
       await api(`/api/transports/connections/${encodeURIComponent(connection.id)}`, { method: 'DELETE' });
       onDeleted();
     });
+  };
 
   return (
     <li className="py-2.5">
@@ -266,6 +270,7 @@ function ConnectionRow({ connection, kinds, onEdit, onChanged, onDeleted }: { co
 
 /** The kinds this host knows: direct ones always ready, brokers with or without a driver. */
 function KindsCard({ kinds, connections }: { kinds: TransportKindInfo[]; connections: TransportConnectionView[] }) {
+  const { listed, hidden } = listedKinds(kinds, connections);
   return (
     <Card className="px-5 py-4">
       <div className="mb-2 flex items-center gap-2">
@@ -273,11 +278,15 @@ function KindsCard({ kinds, connections }: { kinds: TransportKindInfo[]; connect
         <SectionLabel>Installed transports</SectionLabel>
       </div>
       <p className="mb-3 text-[12px] text-t3">
-        A transport is offered for a plugin when both sides have it: this host has the driver and a healthy connection, and the plugin has a live endpoint on it. Direct transports need no connection; brokers are
-        reached through the connections below. Each plugin chooses per call (Auto), or is pinned on the Plugins page.
+        A transport is offered for a plugin when this host and the plugin both have it.
+        <HelpTip label="How a transport is chosen" className="ml-1 align-middle">
+          Both sides need it: this host has the driver and a healthy connection, and the plugin has a live endpoint on it. Direct transports need no connection; brokers are reached through the connections below. Each
+          plugin chooses per call (Auto), or is pinned on the Plugins page.
+        </HelpTip>
       </p>
+      <div className="mb-3 empty:hidden"><IssueBanner noun="transports" issues={groupIssues(kinds.map((k) => ({ label: k.label, message: k.health?.ok === false ? k.health.message : undefined })))} /></div>
       <ul className="grid gap-2 sm:grid-cols-2">
-        {kinds.map((kind) => {
+        {listed.map((kind) => {
           const count = connections.filter((c) => c.kind === kind.kind).length;
           return (
             <li key={kind.kind} className="flex items-center gap-2 rounded-[10px] border border-hair bg-wl px-3 py-2">
@@ -287,11 +296,6 @@ function KindsCard({ kinds, connections }: { kinds: TransportKindInfo[]; connect
                 <span className="block text-[11px] text-t3">
                   {kind.direct ? 'direct · the host connects to the plugin' : kind.installed ? `broker · ${count} connection${count === 1 ? '' : 's'}` : `broker · driver in a later release${count ? ` · ${count} connection${count === 1 ? '' : 's'} saved` : ''}`}
                 </span>
-                {kind.health?.ok === false && kind.health.message && (
-                  <span className="block truncate text-[11px] text-rd" title={kind.health.message}>
-                    {kind.health.message}
-                  </span>
-                )}
               </span>
               {kind.capabilities && (
                 <span className="font-mono text-[11px] text-t3" title={`Up to ${Math.round(kind.capabilities.maxMessageBytes / 1024 / 1024)} MiB per message · ${kind.capabilities.delivery.join(', ')}`}>
@@ -302,6 +306,7 @@ function KindsCard({ kinds, connections }: { kinds: TransportKindInfo[]; connect
           );
         })}
       </ul>
+      {hidden > 0 && <p className="mt-2 text-[12px] text-t3">{hidden} more broker{hidden === 1 ? '' : 's'} available: add a connection below to use one.</p>}
     </Card>
   );
 }
@@ -320,7 +325,7 @@ export function TransportsSettings() {
   }, []);
 
   if (!data) {
-    return error ? <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div> : <div className="h-56 rounded-2xl border border-hair bg-sf animate-pulse-soft" />;
+    return error ? <div role="alert" className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div> : <div className="h-56 rounded-2xl border border-hair bg-sf animate-pulse-soft" />;
   }
   const brokers = data.kinds.filter((k) => !k.direct);
   const replace = (view: TransportConnectionView) =>
@@ -337,19 +342,26 @@ export function TransportsSettings() {
           </Button>
         </div>
         <p className="mb-2 text-[12px] text-t3">
-          One row per installed broker. Plugins on a broker are reached as <code className="font-mono text-[11px]">{'<kind>://<connection>/<plugin>'}</code>; secrets are stored encrypted like credentials. A
-          connection can also come from <code className="font-mono text-[11px]">LANDFLOW_TRANSPORT_&lt;KIND&gt;_URL</code> (read-only here).
+          One row per installed broker.
+          <HelpTip label="How broker connections work" className="ml-1 align-middle">
+            Plugins on a broker are reached as <code className="font-mono text-[11px]">{'<kind>://<connection>/<plugin>'}</code>; secrets are stored encrypted like credentials. A connection can also come from{' '}
+            <code className="font-mono text-[11px]">LANDFLOW_TRANSPORT_&lt;KIND&gt;_URL</code> (read-only here).
+          </HelpTip>
         </p>
-        <p className="mb-2 text-[12px] text-t3" data-testid="claim-store-line">
-          {data.claimStore?.configured ? (
-            <>Claim store: <code className="font-mono text-[11px]">{data.claimStore.description}</code>. A request or reply too big for a broker goes by reference through it.</>
-          ) : (
-            <>
-              Claim store: not configured (<code className="font-mono text-[11px]">LANDFLOW_CLAIM_STORE</code>). A call too big for a broker fails <code className="font-mono text-[11px]">too_large</code> and may use another transport.
-              {data.claimStore?.error ? <> The setting was ignored: {data.claimStore.error}</> : null}
-            </>
-          )}
-        </p>
+        <div data-testid="claim-store-line" className="mb-2">
+          <StatusRow
+            className="rounded-[10px] bg-wl px-3 py-2"
+            config={{ label: 'Claim store', configured: Boolean(data.claimStore?.configured), on: data.claimStore?.description ?? 'configured', error: data.claimStore?.error }}
+          >
+            {data.claimStore?.configured ? (
+              <p>A request or reply too big for a broker goes by reference through it.</p>
+            ) : (
+              <p>
+                Set <code className="font-mono text-[11px]">LANDFLOW_CLAIM_STORE</code>. Without it, a call too big for a broker fails <code className="font-mono text-[11px]">too_large</code> and may use another transport.
+              </p>
+            )}
+          </StatusRow>
+        </div>
         {data.connections.length ? (
           <ul className="divide-y divide-hair">
             {data.connections.map((connection) => (

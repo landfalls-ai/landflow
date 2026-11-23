@@ -56,7 +56,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   } catch (caught) {
     trigger.end(caught);
     if (caught instanceof DuplicateRunError) {
-      const existing = liveExecution(caught.executionId) ?? store.getExecution(caught.executionId);
+      const existing = liveExecution(caught.executionId) ?? await store.loadExecution(caught.executionId);
       return json({ executionId: caught.executionId, workflowId: id, status: existing?.status ?? 'running', duplicate: true });
     }
     throw caught;

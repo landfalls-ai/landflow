@@ -33,6 +33,7 @@ import {
 } from '@/lib/shared/groups';
 import type { ConnectionType, GroupComposite, WorkflowGroup } from '@/lib/shared/types';
 import type { FlowEdge, FlowNode, StickyFlowNode } from './store';
+import { plural } from '@/lib/client/format';
 
 export { GROUP_HANDLES };
 
@@ -398,7 +399,6 @@ const containsCenter = (outer: Rect, inner: Rect) => {
 
 const sameRect = (a: Rect, b: Rect) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 /** What screen readers announce for a frame: its name, the nodes inside it (nested ones included) and the groups nested in it. */
 export function frameLabel(data: Pick<GroupData, 'name' | 'collapsed'>, nodeCount: number, groupCount = 0): string {

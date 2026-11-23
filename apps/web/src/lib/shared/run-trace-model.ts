@@ -9,7 +9,7 @@ import { formatCost } from './ai-usage';
 import { mergeConnections, toolInput, type JournalEvent, type RunActor, type RunArtifact, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from './run-trace';
 
 /** What a request to another agent came to, from evidence (what it delivered), not from what the agent said. */
-export type ResultLabel = 'Delivered' | 'Answered' | 'Left undelivered' | 'Working' | 'Waiting';
+export type ResultLabel = 'Delivered' | 'Answered' | 'Expired' | 'Left undelivered' | 'Working' | 'Waiting';
 export type ResultTone = 'ok' | 'bad' | 'warn' | '';
 
 export interface RunArtifactItem {
@@ -380,11 +380,16 @@ const ms = (iso?: string): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
+/** Whether the span sits below the node (no node named: any). */
+function inNode(span: RunSpan, nodeId: unknown): boolean {
+  return typeof nodeId !== 'string' || span.id.startsWith(`node:${nodeId}:`);
+}
+
 /** The result label of a request to another agent (and of a wait), as of the fold. */
 export function resultOf(span: RunSpan): [ResultLabel, ResultTone] {
   if (span.status === 'waiting' || span.state === 'input-required') return OPEN(span.status) ? ['Waiting', 'warn'] : ['Answered', ''];
   if (span.status === 'running') return span.kind === 'wait' ? ['Waiting', 'warn'] : ['Working', 'warn'];
-  if (span.kind === 'wait') return span.status === 'success' ? ['Answered', ''] : ['Left undelivered', 'bad'];
+  if (span.kind === 'wait') return span.attrs.expired === true ? ['Expired', 'warn'] : span.status === 'success' ? ['Answered', ''] : ['Left undelivered', 'bad'];
   if (span.status === 'error' || span.status === 'canceled') return ['Left undelivered', 'bad'];
   if (span.delivered.length) return ['Delivered', 'ok'];
   if (textOf(span.output)) return ['Answered', ''];
@@ -586,6 +591,15 @@ export function foldJournal(events: JournalEvent[], options: { until?: string | 
     }
   }
 
+  // AP03: an approval wait nobody answered in time reads as the expiry it was (the tool call it held says "Expired at …"), not as "Answered".
+  for (const wait of order) {
+    if (wait.kind !== 'wait' || wait.attrs.wait !== 'approval' || OPEN(wait.status)) continue;
+    const calls = Array.isArray(wait.attrs.calls) ? (wait.attrs.calls as Array<{ tool?: unknown }>).map((c) => c.tool) : [];
+    const parent = wait.parentId ? spans[wait.parentId] : undefined;
+    const held = parent?.kind === 'tool' ? [parent] : order.filter((s) => s.kind === 'tool' && calls.includes(s.attrs.tool) && s.t0 >= wait.t0 && inNode(s, wait.attrs.nodeId));
+    const line = held.map((s) => s.attrs.approvedBy).find((l): l is string => typeof l === 'string' && /^Expired\b/.test(l));
+    if (line) Object.assign(wait.attrs, { expired: true, settled: line });
+  }
   // Actors and what each did.
   const stats = new Map<string, RunActorStats>();
   const statOf = (actor: RunActor, at: string): RunActorStats => {

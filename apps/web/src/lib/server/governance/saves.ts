@@ -8,6 +8,7 @@
  * lib/server/projects/credentials.ts), `publishRequest` and `activationRefused`.
  * Policies off: the save is exactly the plain one, plus the audit event.
  */
+import { guardAccessFlow } from '../access/guard';
 import type { Workflow } from '@landflow/engine';
 import type { PolicyViolation, PublishRequestView } from '../../shared/governance';
 import { recordAudit } from '../audit';
@@ -26,6 +27,8 @@ export interface SaveExtras {
 }
 
 export function governedSave<T extends Workflow>(next: T, existing: Workflow | undefined, save: (workflow: T) => T, options: { by?: string; source?: string; action?: string } = {}): { workflow: T; extras: SaveExtras } {
+  // The access request flows decide who gets access: only an instance admin changes them (access/guard.ts).
+  if (existing) guardAccessFlow(existing.id, options.by);
   const governed = holdActivation(next, existing);
   const workflow = save(governed.workflow);
   const extras: SaveExtras = {};

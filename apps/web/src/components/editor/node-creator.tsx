@@ -16,14 +16,33 @@ import { cn } from '@/lib/utils';
 import { languageMeta, TRANSPORT_META } from '@/lib/client/format';
 import { CATEGORY_COLOR, nodeColor, tint } from '@/lib/client/node-style';
 import type { NodeTypeInfo } from '@/lib/shared/types';
+import { nodeActions, type NodeAction } from '@/lib/shared/node-subtitle';
+import { defaultParameters, expandPorts, withPropertyDefaults } from '@landflow/protocol';
+import { DevOnly } from '@/lib/client/developer-details';
 import { describeMatcher, nodeMatches, type CompositeTypeInfo } from '@/lib/shared/composites';
 import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
 import { api } from '@/lib/client/api';
 import { useEditor, type PaletteRequest } from './store';
+import { usePhone } from '@/lib/client/use-phone';
+import { useDialogFocus } from '../ui/use-dialog-focus';
+import { toast } from 'sonner'; // AG16
+import type { AgentSummary } from '@/lib/shared/agents'; // AG16
+import type { AgentSmoke } from '@/lib/shared/agent-card'; // AG16
+import { boundAgentOf, useBubbleAnswer, usedByOf } from '@/lib/client/agent-bubble-data'; // AG16
+import { addKnowledgeFolder, addToAgent, loadKnowledgeBases, loadModelChoices, setAgentMemory, setAgentModel, type ModelChoice } from '@/lib/client/agent-edit'; // AG16
+import { AgentAvatar } from '../agents/avatar'; // AG16
+import { useTeamLeads } from '../agents/faces'; // AG16
+import { ConfirmChange, toastEdit, usedByWords } from '../canvas/bubble-confirm'; // AG16
+import { BRANDS, brandIcon, brandOfProvider } from '@/lib/shared/brand-icons'; // AG16
+import { AGENT_DRAG, agentDragPayload, boundParameters, nodeNameFor } from './place-agent'; // AG16
+import { FolderDialog } from '../canvas/bubble-folder-dialog'; // AG16
+
+/** AG16: the dataTransfer type of an agent dragged from Your agents onto the canvas. */
+export { AGENT_DRAG };
 
 type Mode = 'trigger' | 'next' | 'ai_languageModel' | 'ai_memory' | 'ai_tool' | 'ai_embedding' | 'ai_document' | 'ai_textSplitter' | 'ai_retriever' | 'ai_reranker';
-type View = { kind: 'root' } | { kind: 'triggers' } | { kind: 'category'; key: string } | { kind: 'plugin'; pluginId: string };
+type View = { kind: 'root' } | { kind: 'triggers' } | { kind: 'category'; key: string } | { kind: 'plugin'; pluginId: string } | { kind: 'node'; type: string };
 
 interface Segment {
   pluginId: string;
@@ -139,6 +158,8 @@ interface RowItem {
   meta?: ReactNode;
   nav?: boolean;
   disabled?: boolean;
+  /** AG16: a row a person can drag onto the canvas (Your agents): the dataTransfer type and its payload. */
+  drag?: { type: string; payload: string };
   onSelect: () => void;
 }
 
@@ -155,8 +176,11 @@ function IconBox({ color, children, round, image }: { color: string; children: R
   );
 }
 
-export function NodeCreator() {
+export function NodeCreator({ initialQuery = '' }: { initialQuery?: string } = {}) {
   const request = useEditor((s) => s.palette);
+  // A phone: the picker takes the whole screen, as a dialog that keeps the focus (docs/mobile.md#sheets-and-dialogs).
+  const phone = usePhone();
+  const creator = useRef<HTMLElement>(null);
   const nodeTypes = useEditor((s) => s.nodeTypes);
   const hasNodes = useEditor((s) => s.nodes.length > 0);
   const hasTrigger = useEditor((s) => s.nodes.some((n) => s.nodeTypes[n.data.wf.type]?.descriptor.kind === 'trigger'));
@@ -173,7 +197,7 @@ export function NodeCreator() {
   const { screenToFlowPosition, flowToScreenPosition, setCenter, getZoom } = useReactFlow();
   const [stack, setStack] = useState<View[]>([{ kind: 'root' }]);
   const [direction, setDirection] = useState<'push' | 'pop'>('push');
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const reported = useRef(new Set<string>());
@@ -187,6 +211,47 @@ export function NodeCreator() {
       : request.connectionType && request.connectionType !== 'main'
         ? (request.connectionType as Mode)
         : 'next';
+
+  // AG16: opened from the + of a bound Run an Agent / Run a Team node's slot, the panel is "Add to <agent>": a choice changes the saved agent's
+  // draft (lib/client/agent-edit.ts), never the flow. Opened anywhere else for a next step, it also lists Your agents.
+  const anchorWf = useEditor((s) => (s.palette?.from?.handleType === 'target' ? s.nodes.find((n) => n.id === s.palette!.from!.nodeId)?.data.wf : undefined));
+  const anchorId = request?.from?.handleType === 'target' ? request.from.nodeId : undefined;
+  const workflowId = useEditor((s) => s.workflowId);
+  const leads = useTeamLeads(anchorWf?.type === 'core.runTeam' ? [anchorWf] : undefined);
+  const targetAgent = boundAgentOf(anchorWf, leads);
+  const targetAnswer = useBubbleAnswer(targetAgent && anchorId ? { agentId: targetAgent, nodeId: anchorId, ...(workflowId && { workflowId }) } : undefined);
+  const targetName = targetAnswer?.agent.name ?? 'the agent';
+  const addMode = Boolean(targetAgent && (mode === 'ai_languageModel' || mode === 'ai_memory' || mode === 'ai_tool'));
+  const [models, setModels] = useState<ModelChoice[]>();
+  const [bases, setBases] = useState<Array<Record<string, unknown>>>();
+  const [roster, setRoster] = useState<AgentSummary[]>();
+  const [confirm, setConfirm] = useState<{ words: string; go: () => void }>();
+  const [folder, setFolder] = useState<boolean>(false);
+  useEffect(() => {
+    if (!request) return;
+    if (mode === 'next' && !addMode) void api<{ agents: AgentSummary[] }>('/api/agents', { background: true }).then((r) => setRoster(r.agents ?? []), () => setRoster([]));
+    if (addMode && mode === 'ai_languageModel') void loadModelChoices().then(setModels);
+    if (addMode && mode === 'ai_tool' && targetAgent) void loadKnowledgeBases(targetAgent).then(setBases, () => setBases([]));
+  }, [request, mode, addMode, targetAgent]);
+
+  /** One edit of the target agent's draft: the confirm first when several workflows run it, then the edit, then what it said back. */
+  const editAgent = (label: string, run: (agentId: string) => Promise<{ smoke: AgentSmoke }>) => {
+    if (!targetAgent) return;
+    const words = usedByWords(targetName, targetAnswer?.usedBy ?? usedByOf(targetAgent, anchorId, workflowId));
+    const name = targetName;
+    const go = async () => {
+      setConfirm(undefined);
+      try {
+        const { smoke } = await run(targetAgent);
+        toastEdit(name, label, smoke);
+      } catch (e) {
+        toast.error((e as Error).message);
+      }
+    };
+    close();
+    if (words) setConfirm({ words, go: () => void go() });
+    else void go();
+  };
 
   // Fresh panel every time it opens.
   useEffect(() => {
@@ -238,14 +303,21 @@ export function NodeCreator() {
     setActive(0);
   };
 
-  const choose = (type: NodeTypeInfo) => {
+  const choose = (type: NodeTypeInfo, initial?: Record<string, unknown>, options: { name?: string; open?: boolean } = {}) => {
     if (!request || !mode) return;
+    // AG16: a tool picked for a bound agent's Tool slot goes into the agent's draft as a node tool (no credential: its bubble says so).
+    if (addMode && mode === 'ai_tool') {
+      return void editAgent(`Added ${type.descriptor.displayName} to`, (agentId) =>
+        addToAgent(agentId, { tool: { type: 'node', name: type.descriptor.displayName, description: type.descriptor.toolDescription ?? type.descriptor.description, nodeType: type.type, parameters: { ...defaultParameters(type.descriptor), ...initial } } }),
+      );
+    }
     const state = useEditor.getState();
     let effective: PaletteRequest = request;
     if (mode === 'next' && !request.from && !request.slot) {
       // Plain "add": chain onto the selected node, or the one added last (n8n does the same).
       const anchor = state.nodes.find((n) => n.selected) ?? state.nodes.find((n) => n.id === state.lastAddedId);
-      const outputs = anchor ? (state.nodeTypes[anchor.data.wf.type]?.descriptor.outputs.filter((p) => p.type === 'main').length ?? 0) : 0;
+      const anchorType = anchor && state.nodeTypes[anchor.data.wf.type];
+      const outputs = anchor && anchorType ? expandPorts(anchorType.descriptor.outputs, anchor.data.wf.parameters).filter((p) => p.type === 'main').length : 0;
       if (anchor && outputs) {
         const used = new Set(state.edges.filter((e) => e.source === anchor.id && e.data?.connectionType === 'main').map((e) => e.sourceHandle));
         const free = Array.from({ length: outputs }, (_, i) => `main:${i}`).find((h) => !used.has(h)) ?? 'main:0';
@@ -267,8 +339,10 @@ export function NodeCreator() {
       }
     }
     const center = screenToFlowPosition({ x: window.innerWidth / 2 - 200, y: window.innerHeight / 2.3 });
-    const id = state.placeNode(type.type, effective, { x: center.x - 44, y: center.y - 44 });
+    const id = state.placeNode(type.type, effective, { x: center.x - 44, y: center.y - 44 }, initial);
     if (!id) return;
+    if (options.name) useEditor.getState().updateNode(id, { name: nodeNameFor(options.name) }); // AG16: a placed agent is named for the agent
+    // An action picked from the list is placed with its resource and operation set (one undo step), what depends on them at its defaults.
     if (feeds) state.onConnect({ source: id, sourceHandle: 'main:0', target: feeds, targetHandle: 'main:0' });
     close();
     // Keep the new node in view.
@@ -278,7 +352,8 @@ export function NodeCreator() {
       if (p.x < 200 || p.y < 100 || p.x > window.innerWidth - 300 || p.y > window.innerHeight - 260)
         setCenter(node.position.x + 44, node.position.y + 44, { zoom: getZoom(), duration: 450 });
     }
-    if (type.descriptor.kind !== 'subnode' && type.descriptor.properties.length) setTimeout(() => useEditor.getState().openNode(id), 260);
+    if (options.open !== false && type.descriptor.kind !== 'subnode' && type.descriptor.properties.length) setTimeout(() => useEditor.getState().openNode(id), 260);
+    return id;
   };
 
   /** Drop a frame of a composite type: where the panel was opened, else in the middle of the view. */
@@ -333,14 +408,44 @@ export function NodeCreator() {
       description: override?.description ?? t.descriptor.description,
       meta:
         t.pluginId !== 'core' ? (
-          <span className="flex items-center gap-1 font-mono text-[10px] text-t3">
-            <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
-            {lang.short}
-          </span>
+          <DevOnly>
+            <span className="flex items-center gap-1 font-mono text-[10px] text-t3">
+              <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
+              {lang.short}
+            </span>
+          </DevOnly>
         ) : undefined,
       disabled: !t.available,
       onSelect: () => choose(t),
     };
+  };
+
+  /** What an app's node can do, one row per resource and operation: picking one adds the node set to do exactly that. */
+  const actionRow = (t: NodeTypeInfo, a: NodeAction): RowItem => ({
+    key: `${t.type}:${a.parameters.resource ?? ''}:${a.parameters.operation}`,
+    icon: (
+      <IconBox color={nodeColor(t)} image={isImage(t.descriptor.icon)}>
+        <NodeIcon icon={t.descriptor.icon} size={isImage(t.descriptor.icon) ? 34 : 18} style={{ color: nodeColor(t) }} strokeWidth={1.8} />
+      </IconBox>
+    ),
+    title: a.label,
+    description: a.description ?? t.descriptor.displayName,
+    disabled: !t.available,
+    onSelect: () => choose(t, a.parameters),
+  });
+
+  /** An app's node with actions opens its action list; any other node is added as it is. */
+  const appRow = (t: NodeTypeInfo): RowItem => {
+    const row = nodeRow(t, mode === 'trigger' ? TRIGGER_TITLES[t.type] : undefined);
+    const count = mode === 'next' && t.pluginId !== 'core' ? nodeActions(t.descriptor).length : 0;
+    return count ? { ...row, description: `${count} actions: ${t.descriptor.description}`, nav: true, onSelect: () => push({ kind: 'node', type: t.type }) } : row;
+  };
+
+  /** A node's actions as sections, one per resource ("Issue (6)"): a node without resources has one section. */
+  const actionSections = (t: NodeTypeInfo, actions: NodeAction[]) => {
+    const byResource = new Map<string, NodeAction[]>();
+    for (const a of actions) byResource.set(a.group ?? 'Actions', [...(byResource.get(a.group ?? 'Actions') ?? []), a]);
+    return [...byResource].map(([label, list]) => ({ label: `${label} (${list.length})`, rows: list.map((a) => actionRow(t, a)) }));
   };
 
   const segmentRow = (seg: Segment, count: number): RowItem => {
@@ -360,14 +465,39 @@ export function NodeCreator() {
       ),
       description: seg.description ?? `${count} node${count === 1 ? '' : 's'}`,
       meta: (
-        <span className="flex items-center gap-1 font-mono text-[10px] text-t3">
-          <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
-          {lang.short} · {TRANSPORT_META[seg.transport].label}
-        </span>
+        <DevOnly>
+          <span className="flex items-center gap-1 font-mono text-[10px] text-t3">
+            <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
+            {lang.short} · {TRANSPORT_META[seg.transport].label}
+          </span>
+        </DevOnly>
       ),
       nav: true,
       onSelect: () => push({ kind: 'plugin', pluginId: seg.pluginId }),
     };
+  };
+
+  /** AG16: Your agents: a click places a Run an Agent node bound to the agent; a drag drops it where the person lets go (editor.tsx). */
+  const agentRows = (query: string): RowItem[] => {
+    const runAgent = nodeTypes['core.messageAgent'];
+    if (!runAgent || !roster) return [];
+    const published = (a: AgentSummary) => a.publishedVersion !== undefined;
+    return roster
+      .filter((a) => score(`${a.name} ${a.role ?? ''} ${a.description}`, query) > 0)
+      .sort((a, b) => Number(published(b)) - Number(published(a)) || a.name.localeCompare(b.name))
+      .map((a) => ({
+        key: `agent:${a.id}`,
+        icon: <AgentAvatar agent={a} size={36} />,
+        title: (
+          <span className="flex items-center gap-1.5">
+            {a.name}
+            {!published(a) && <span className="rounded-md border border-hair px-1 text-[10px] font-normal text-t3">not published</span>}
+          </span>
+        ),
+        description: a.role || a.description || undefined,
+        drag: { type: AGENT_DRAG, payload: agentDragPayload(a) },
+        onSelect: () => void choose(runAgent, boundParameters(a.id), { name: a.name, open: false }),
+      }));
   };
 
   // ------------------------------------------------------------ view model
@@ -382,7 +512,7 @@ export function NodeCreator() {
       out.title = `Add to ${slot.displayName}`;
       out.subtitle = `Takes ${describeMatcher(slot.accepts)}`;
       const core = shown.filter((t) => t.pluginId === 'core');
-      if (core.length) out.sections.push({ label: 'Built in', rows: core.map((t) => nodeRow(t)) });
+      if (core.length) out.sections.push({ label: 'Built-in', rows: core.map((t) => nodeRow(t)) });
       for (const seg of segments) {
         const rows = shown.filter((t) => t.pluginId === seg.pluginId).map((t) => nodeRow(t));
         if (rows.length) out.sections.push({ label: seg.name, rows });
@@ -390,7 +520,79 @@ export function NodeCreator() {
       if (!shown.length) out.sections.push({ rows: [] });
       return out;
     }
-    const pool = all.filter((t) => fits(t, mode));
+    // AG16: adding a tool to a bound agent: only what an agent can call.
+    const addTool = addMode && mode === 'ai_tool';
+    const pool = all.filter((t) => fits(t, mode) && (!addTool || t.descriptor.usableAsTool));
+    if (addMode && mode === 'ai_languageModel') {
+      out.title = `Add to ${targetName}`;
+      out.subtitle = 'Choose its chat model: the agent’s draft changes, in every workflow that runs it, once you publish';
+      const shown = (models ?? []).filter((m) => score(`${m.label} ${m.model} ${m.provider}`, query) > 0);
+      out.sections.push({
+        label: 'Models',
+        rows: shown.map((m) => {
+          const brand = brandOfProvider(m.provider);
+          return {
+            key: `model:${m.provider}/${m.model}`,
+            icon: (
+              <IconBox color="var(--t2)" round>
+                <NodeIcon icon={brand ? brandIcon(brand) : 'lucide:brain-circuit'} size={18} strokeWidth={1.8} />
+              </IconBox>
+            ),
+            title: m.label,
+            description: `${brand ? BRANDS[brand].title : m.provider}${m.description ? ` · ${m.description}` : ''}`,
+            onSelect: () => editAgent('Set the model of', (agentId) => setAgentModel(agentId, m)),
+          };
+        }),
+      });
+      if (!models) out.sections.push({ rows: [] });
+      return out;
+    }
+    if (addMode && mode === 'ai_memory') {
+      out.title = `Add to ${targetName}`;
+      out.subtitle = 'Choose what it remembers: the agent’s draft changes, live after you publish';
+      const choices = [
+        { key: 'this', title: 'This conversation', description: 'It remembers what was said in the current conversation only', cross: false },
+        { key: 'across', title: 'Across sessions', description: 'It keeps notes about each person between conversations', cross: true },
+      ].filter((c) => score(`${c.title} ${c.description}`, query) > 0);
+      out.sections.push({
+        label: 'Memory',
+        rows: choices.map((c) => ({
+          key: `memory:${c.key}`,
+          icon: (
+            <IconBox color="var(--t2)" round>
+              <NodeIcon icon="lucide:brain" size={18} strokeWidth={1.8} />
+            </IconBox>
+          ),
+          title: c.title,
+          description: c.description,
+          onSelect: () => editAgent('Set the memory of', (agentId) => setAgentMemory(agentId, c.cross)),
+        })),
+      });
+      return out;
+    }
+
+    if (view.kind === 'node') {
+      const t = all.find((x) => x.type === view.type);
+      if (!t) return out;
+      out.title = t.descriptor.displayName;
+      out.header = (
+        <div className="flex items-center gap-3">
+          <IconBox color={nodeColor(t)} image={isImage(t.descriptor.icon)}>
+            <NodeIcon icon={t.descriptor.icon} size={isImage(t.descriptor.icon) ? 38 : 24} style={{ color: nodeColor(t) }} />
+          </IconBox>
+          <div className="min-w-0">
+            <div className="truncate text-[17px] font-semibold text-t1">{t.descriptor.displayName}</div>
+            <div className="truncate text-[12px] text-t3">{t.pluginName}</div>
+          </div>
+        </div>
+      );
+      out.subtitle = 'What should it do?';
+      const actions = nodeActions(t.descriptor);
+      const found = query.trim() ? actions.filter((a) => score(`${a.label} ${a.group ?? ''} ${a.description ?? ''}`, query) > 0) : actions;
+      out.sections.push(...actionSections(t, found));
+      if (!found.length) out.sections.push({ rows: [] });
+      return out;
+    }
 
     if (query.trim()) {
       const within = view.kind === 'plugin' ? pool.filter((t) => t.pluginId === view.pluginId) : pool;
@@ -401,10 +603,25 @@ export function NodeCreator() {
       const groups = new Map<string, RowItem[]>();
       for (const { t } of hits) {
         const group = t.pluginId === 'core' ? (t.descriptor.kind === 'trigger' ? 'Triggers' : (t.descriptor.categories?.[0] ?? 'Core')) : t.pluginName;
-        groups.set(group, [...(groups.get(group) ?? []), nodeRow(t, mode === 'trigger' ? TRIGGER_TITLES[t.type] : undefined)]);
+        groups.set(group, [...(groups.get(group) ?? []), appRow(t)]);
+      }
+      // The actions of an app that match a search ("send message"): picking one adds the node set to do it. They lead the results.
+      const matching: RowItem[] = [];
+      if (mode === 'next') {
+        for (const t of within.filter((x) => x.pluginId !== 'core' && x.descriptor.kind === 'action' && x.available)) {
+          for (const a of nodeActions(t.descriptor)) {
+            if (score(`${a.label} ${a.group ?? ''} ${t.descriptor.displayName}`, query) < 2) continue;
+            matching.push({ ...actionRow(t, a), description: t.descriptor.displayName });
+          }
+        }
       }
       out.title = mode === 'trigger' ? 'What triggers this workflow?' : 'Search results';
       out.sections = [...groups.entries()].map(([label, rows]) => ({ label, rows }));
+      if (matching.length) out.sections.unshift({ label: 'Actions', rows: matching.slice(0, 8) });
+      if (mode === 'next' && view.kind !== 'plugin') {
+        const yours = agentRows(query);
+        if (yours.length) out.sections.unshift({ label: 'Your agents', rows: yours.slice(0, 8) });
+      }
       if (mode === 'next' && view.kind !== 'plugin') {
         const found = composites.filter((c) => score(`${c.descriptor.displayName} ${c.descriptor.description} ${c.type} composite`, query) > 0);
         if (found.length) out.sections.unshift({ label: 'Composites', rows: found.map(compositeRow) });
@@ -426,8 +643,11 @@ export function NodeCreator() {
           <div className="min-w-0">
             <div className="truncate text-[17px] font-semibold text-t1">{seg.name}</div>
             <div className="flex items-center gap-1.5 font-mono text-[11px] text-t3">
-              <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
-              {lang.label} · {TRANSPORT_META[seg.transport].label} · {seg.online ? 'online' : 'offline'}
+              <DevOnly>
+                <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
+                {lang.label} · {TRANSPORT_META[seg.transport].label} ·{' '}
+              </DevOnly>
+              {seg.online ? 'online' : 'offline'}
             </div>
           </div>
         </div>
@@ -440,7 +660,13 @@ export function NodeCreator() {
       }
       const triggers = types.filter((t) => t.descriptor.kind === 'trigger');
       if (triggers.length) out.sections.push({ label: `Triggers (${triggers.length})`, rows: triggers.map((t) => nodeRow(t)) });
-      for (const [group, list] of byGroup) out.sections.push({ label: `${group} (${list.length})`, rows: list.map((t) => nodeRow(t)) });
+      // An app with one node (Linear, Attio): its actions are listed here. An app with several (Slack, Discord) lists its nodes, each opening its actions.
+      const only = [...byGroup.values()].flat();
+      if (only.length === 1 && mode === 'next' && nodeActions(only[0].descriptor).length) {
+        out.sections.push(...actionSections(only[0], nodeActions(only[0].descriptor)));
+        return out;
+      }
+      for (const [group, list] of byGroup) out.sections.push({ label: `${group} (${list.length})`, rows: list.map((t) => appRow(t)) });
       if (!types.length) out.sections.push({ rows: [] });
       return out;
     }
@@ -463,10 +689,41 @@ export function NodeCreator() {
     }
 
     if (mode !== 'next') {
-      out.title = SUBNODE_TITLES[mode];
+      out.title = addTool ? `Add to ${targetName}` : SUBNODE_TITLES[mode];
+      // AG16: the knowledge bases other agents already have, and a folder to make one from.
+      if (addTool) {
+        const kb = (bases ?? []).filter((b) => score(`${b.collection} ${b.name} knowledge base`, query) > 0);
+        out.sections.push({
+          label: 'Knowledge',
+          rows: [
+            ...kb.map((b) => ({
+              key: `kb:${b.store}:${b.collection}`,
+              icon: (
+                <IconBox color="var(--t2)" round>
+                  <NodeIcon icon="lucide:library" size={18} strokeWidth={1.8} />
+                </IconBox>
+              ),
+              title: String(b.collection),
+              description: 'A knowledge base another agent has: give it to this one too',
+              onSelect: () => editAgent(`Added ${String(b.collection)} to`, (agentId) => addToAgent(agentId, { tool: { ...b, id: undefined } })),
+            })),
+            {
+              key: 'kb:folder',
+              icon: (
+                <IconBox color="var(--t2)" round>
+                  <NodeIcon icon="lucide:folder-open" size={18} strokeWidth={1.8} />
+                </IconBox>
+              ),
+              title: 'Knowledge from a folder…',
+              description: 'Index the documents of a folder into a new knowledge base',
+              onSelect: () => setFolder(true),
+            },
+          ],
+        });
+      }
       out.subtitle = mode === 'ai_tool' ? 'Any node marked as a tool works, in any language: the agent calls it through its plugin' : undefined;
       const core = pool.filter((t) => t.pluginId === 'core');
-      if (core.length) out.sections.push({ label: 'Built in', rows: core.map((t) => nodeRow(t)) });
+      if (core.length) out.sections.push({ label: 'Built-in', rows: core.map((t) => nodeRow(t)) });
       for (const seg of segments) {
         const rows = pool.filter((t) => t.pluginId === seg.pluginId).map((t) => nodeRow(t));
         if (rows.length) out.sections.push({ label: seg.name, rows });
@@ -522,6 +779,9 @@ export function NodeCreator() {
         onSelect: () => push({ kind: 'category', key: c.key }),
       })),
     });
+    // AG16: the agents the person can read, published first.
+    const yours = agentRows('');
+    if (yours.length) out.sections.push({ label: 'Your agents', rows: yours });
     const withActions = segments.map((s) => ({ s, n: s.types.filter((t) => fits(t, 'next')).length })).filter((x) => x.n);
     if (withActions.length) out.sections.push({ label: 'Plugins', rows: withActions.map(({ s, n }) => segmentRow(s, n)) });
     // Composite types: a frame of steps with a contract (its slots, rules and outputs), from plugins or saved here.
@@ -544,7 +804,7 @@ export function NodeCreator() {
     });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, all, segments, view, query, composites, slot]);
+  }, [mode, all, segments, view, query, composites, slot, addMode, models, bases, roster, targetName, nodeTypes]);
 
   const rows = sections.flatMap((s) => s.rows);
 
@@ -564,7 +824,8 @@ export function NodeCreator() {
     list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
-  if (!request || !mode) return null;
+  useDialogFocus(creator, phone && Boolean(request && mode));
+  if (!request || !mode) return confirm ? <ConfirmChange words={confirm.words} onCancel={() => setConfirm(undefined)} onConfirm={confirm.go} /> : null;
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -591,12 +852,17 @@ export function NodeCreator() {
   };
 
   const placeholder =
-    view.kind === 'plugin' ? `Search ${segments.find((s) => s.pluginId === view.pluginId)?.name ?? ''} nodes…` : 'Search nodes, plugins, languages…';
+    view.kind === 'plugin' ? `Search ${segments.find((s) => s.pluginId === view.pluginId)?.name ?? ''} nodes…` : view.kind === 'node' ? 'Search its actions…' : 'Search nodes, plugins, languages…';
   let index = -1;
 
   return (
+    <>
     <aside
-      className="absolute bottom-0 right-0 top-0 z-30 flex w-[384px] animate-panel flex-col border-l border-hair bg-sf shadow-[-12px_0_32px_rgba(0,0,0,0.06)]"
+      ref={creator}
+      role={phone ? 'dialog' : undefined}
+      aria-modal={phone || undefined}
+      aria-label={phone ? 'Add a step' : undefined}
+      className="absolute bottom-0 right-0 top-0 z-30 flex w-[384px] animate-panel flex-col border-l border-hair bg-sf shadow-[-12px_0_32px_rgba(0,0,0,0.06)] max-md:fixed max-md:inset-0 max-md:z-40 max-md:w-auto max-md:border-l-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]"
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div className="shrink-0 px-5 pb-3 pt-4">
@@ -605,7 +871,7 @@ export function NodeCreator() {
             <button
               onClick={pop}
               aria-label="Back"
-              className="-ml-1.5 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1"
+              className="-ml-1.5 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1 max-md:-mt-2 max-md:size-11"
             >
               <ArrowLeft className="size-4" />
             </button>
@@ -617,7 +883,7 @@ export function NodeCreator() {
           <button
             onClick={close}
             aria-label="Close"
-            className="-mr-1.5 grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1"
+            className="-mr-1.5 grid size-7 shrink-0 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:-mt-2 max-md:size-11"
           >
             <X className="size-4" />
           </button>
@@ -671,6 +937,7 @@ export function NodeCreator() {
                   disabled={row.disabled}
                   onMouseEnter={() => setActive(i)}
                   onClick={row.onSelect}
+                  {...(row.drag && { draggable: true, onDragStart: (e: React.DragEvent) => { e.dataTransfer.setData(row.drag!.type, row.drag!.payload); e.dataTransfer.effectAllowed = 'copy'; } })}
                   style={{ animationDelay: `${Math.min(i, 14) * 16}ms` }}
                   className={cn(
                     'group relative flex w-full animate-fade-up items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40',
@@ -711,5 +978,8 @@ export function NodeCreator() {
         </span>
       </div>
     </aside>
+    {confirm && <ConfirmChange words={confirm.words} onCancel={() => setConfirm(undefined)} onConfirm={confirm.go} />}
+    {folder && targetAgent && <FolderDialog agentName={targetName} onClose={() => setFolder(false)} onAdd={(path) => { setFolder(false); editAgent(`Added knowledge from ${path} to`, (agentId) => addKnowledgeFolder(agentId, path)); }} />}
+    </>
   );
 }

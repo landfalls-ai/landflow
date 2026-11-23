@@ -11,7 +11,9 @@ import type { SecurityView } from '@/lib/shared/auth';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { CopyButton } from '@/components/ui/copy-button';
+import { HelpTip } from '@/components/ui/help-tip';
 import { SectionLabel } from '@/components/ui/inputs';
+import { StatusRow } from './status-rows';
 import { SamlSettings } from './saml-settings';
 import { ScimSettings } from './scim-settings';
 
@@ -37,8 +39,9 @@ function Status({ on, labels = ['On', 'Off'] }: { on: boolean; labels?: [string,
   );
 }
 
-export function SecuritySettings() {
-  const [view, setView] = useState<SecurityView>();
+/** `initial` is what the first render shows before the view loads (tests render it on the server). */
+export function SecuritySettings({ initial }: { initial?: SecurityView } = {}) {
+  const [view, setView] = useState<SecurityView | undefined>(initial);
   const [error, setError] = useState<string>();
   useEffect(() => {
     api<SecurityView>('/api/settings/security')
@@ -46,30 +49,28 @@ export function SecuritySettings() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  if (error) return <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>;
+  if (error) return <div role="alert" className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>;
   if (!view) return <div className="h-56 rounded-2xl border border-hair bg-sf animate-pulse-soft" />;
   const { oidc, smtp } = view;
   const roleMap = Object.entries(oidc.roleMap);
 
   return (
     <div className="space-y-4">
-      <Card className="px-5 py-4">
-        <div className="mb-2 flex items-center gap-2">
-          <ShieldCheck className="size-4 text-t3" strokeWidth={1.8} />
-          <SectionLabel>Single sign-on (OIDC)</SectionLabel>
-          <span className="ml-auto">
-            {!oidc.configured ? (
-              <Status on={false} labels={['Configured', 'Not configured']} />
-            ) : oidc.reachable ? (
-              <Status on labels={['Connected', '']} />
-            ) : (
-              <Badge tone="danger">
-                <TriangleAlert className="size-3" /> Unreachable
-              </Badge>
-            )}
-          </span>
-        </div>
-        {oidc.configured ? (
+      {oidc.configured ? (
+        <Card className="px-5 py-4">
+          <div className="mb-2 flex items-center gap-2">
+            <ShieldCheck className="size-4 text-t3" strokeWidth={1.8} />
+            <SectionLabel>Single sign-on (OIDC)</SectionLabel>
+            <span className="ml-auto">
+              {oidc.reachable ? (
+                <Status on labels={['Connected', '']} />
+              ) : (
+                <Badge tone="danger">
+                  <TriangleAlert className="size-3" /> Unreachable
+                </Badge>
+              )}
+            </span>
+          </div>
           <div className="divide-y divide-hair">
             <Row label="Issuer">
               <Env>{oidc.issuer}</Env>
@@ -107,26 +108,52 @@ export function SecuritySettings() {
               </Row>
             )}
           </div>
-        ) : (
-          <p className="text-[13px] text-t2">
-            Set <Env>LANDFLOW_OIDC_ISSUER</Env>, <Env>LANDFLOW_OIDC_CLIENT_ID</Env> and <Env>LANDFLOW_OIDC_CLIENT_SECRET</Env> to add a single sign-on button to the sign-in page (Keycloak, Okta, Entra ID,
-            Google, Auth0…). People who sign in through it for the first time get an account; map identity provider roles with <Env>LANDFLOW_OIDC_ROLE_MAP</Env>.
+        </Card>
+      ) : (
+        <StatusRow config={{ label: 'Single sign-on (OIDC)', configured: false }}>
+          <p>
+            Set <Env>LANDFLOW_OIDC_ISSUER</Env>, <Env>LANDFLOW_OIDC_CLIENT_ID</Env> and <Env>LANDFLOW_OIDC_CLIENT_SECRET</Env> to add a single sign-on button to the sign-in page. Map identity provider roles with{' '}
+            <Env>LANDFLOW_OIDC_ROLE_MAP</Env>.
           </p>
-        )}
-      </Card>
+        </StatusRow>
+      )}
 
-      <SamlSettings saml={view.saml} />
+      {view.saml?.configured ? (
+        <SamlSettings saml={view.saml} />
+      ) : (
+        <StatusRow config={{ label: 'Single sign-on (SAML 2.0)', configured: false }}>
+          <p>
+            Set <Env>LANDFLOW_SAML_IDP_METADATA_URL</Env> (or <Env>LANDFLOW_SAML_ENTRY_POINT</Env>, <Env>LANDFLOW_SAML_IDP_ISSUER</Env> and <Env>LANDFLOW_SAML_IDP_CERT</Env>) to add a SAML button to the sign-in page, and
+            give the IdP this instance’s metadata at <Env>/api/auth/saml/metadata</Env>. Map IdP attributes with <Env>LANDFLOW_SAML_ROLE_MAP</Env> and <Env>LANDFLOW_SAML_PROJECT_MAP</Env>.
+          </p>
+        </StatusRow>
+      )}
+      {view.mfa && (
+        <Card className="px-5 py-4">
+          <div className="mb-2 flex items-center gap-2">
+            <ShieldCheck className="size-4 text-t3" strokeWidth={1.8} />
+            <SectionLabel>Second factor</SectionLabel>
+          </div>
+          <Row label="Required">
+            <span data-testid="mfa-mode">Second factor required: {view.mfa.mode}</span>{' '}
+            <span className="text-t3">
+              (<Env>LANDFLOW_MFA_REQUIRED</Env>: <Env>off</Env>, <Env>admins</Env> or <Env>all</Env>)
+            </span>
+          </Row>
+          <p className="mt-1 text-[12px] text-t3">Anyone with a local account can add an authenticator app under Sign-in &amp; security. Single sign-on sessions are never asked, and API keys are not affected.</p>
+        </Card>
+      )}
       {view.scim && <ScimSettings scim={view.scim} />}
 
-      <Card className="px-5 py-4">
-        <div className="mb-2 flex items-center gap-2">
-          <Mail className="size-4 text-t3" strokeWidth={1.8} />
-          <SectionLabel>Email</SectionLabel>
-          <span className="ml-auto">
-            <Status on={smtp.configured} labels={['Configured', 'Not configured']} />
-          </span>
-        </div>
-        {smtp.configured ? (
+      {smtp.configured ? (
+        <Card className="px-5 py-4">
+          <div className="mb-2 flex items-center gap-2">
+            <Mail className="size-4 text-t3" strokeWidth={1.8} />
+            <SectionLabel>Email</SectionLabel>
+            <span className="ml-auto">
+              <Status on labels={['Configured', 'Not configured']} />
+            </span>
+          </div>
           <div className="divide-y divide-hair">
             <Row label="SMTP server">
               <Env>
@@ -135,13 +162,15 @@ export function SecuritySettings() {
             </Row>
             <Row label="From">{smtp.from}</Row>
           </div>
-        ) : (
-          <p className="text-[13px] text-t2">
+        </Card>
+      ) : (
+        <StatusRow config={{ label: 'Email', configured: false }}>
+          <p>
             Invites and password resets show a link to copy. Set <Env>LANDFLOW_SMTP_HOST</Env> (and <Env>LANDFLOW_SMTP_PORT</Env>, <Env>LANDFLOW_SMTP_USER</Env>, <Env>LANDFLOW_SMTP_PASS</Env>,{' '}
             <Env>LANDFLOW_SMTP_FROM</Env>) to email them, and to let people reset their own password.
           </p>
-        )}
-      </Card>
+        </StatusRow>
+      )}
 
       <Card className="px-5 py-4">
         <div className="mb-2 flex items-center gap-2">
@@ -156,7 +185,10 @@ export function SecuritySettings() {
             <span className="flex flex-wrap items-center gap-2">
               <Status on={view.registrySecret} labels={['Required', 'Not set']} />
               <span className="text-[12px] text-t3">
-                {view.registrySecret ? 'Plugins must send LANDFLOW_REGISTRY_SECRET to register.' : 'Any process that can reach Landflow can register a plugin. Set LANDFLOW_REGISTRY_SECRET to require one.'}
+                {view.registrySecret ? 'Plugins must send a secret to register.' : 'Any process that can reach Landflow can register a plugin.'}
+                <HelpTip label="About the plugin registry secret" text={view.registrySecret ? undefined : 'How to set up ›'} className="ml-1 align-middle">
+                  <Env>LANDFLOW_REGISTRY_SECRET</Env>: when set, plugins must send it to register.
+                </HelpTip>
               </span>
             </span>
           </Row>
@@ -164,7 +196,10 @@ export function SecuritySettings() {
             <span className="flex flex-wrap items-center gap-2">
               <Status on={view.metricsPublic} labels={['Public', 'Signed in']} />
               <span className="text-[12px] text-t3">
-                {view.metricsPublic ? '/api/metrics is open to scrapers (LANDFLOW_METRICS_PUBLIC).' : '/api/metrics needs a session or an API key with executions:read.'}
+                {view.metricsPublic ? '/api/metrics is open to scrapers.' : '/api/metrics needs a session or an API key.'}
+                <HelpTip label="About metrics access" className="ml-1 align-middle">
+                  <Env>LANDFLOW_METRICS_PUBLIC</Env> opens <Env>/api/metrics</Env> to scrapers; otherwise it needs a session or an API key with <Env>executions:read</Env>.
+                </HelpTip>
               </span>
             </span>
           </Row>

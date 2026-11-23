@@ -7,6 +7,11 @@
 # (imagePullPolicy: Never): nothing is pulled or pushed. Data stays on the landflow-data PersistentVolumeClaim (OrbStack's
 # local-path storage) across rollouts: credentials, agents and the images Landflow's registry serves kagent survive a new
 # image. `kubectl --context orbstack -n landflow-dev delete pvc landflow-data` (with the host scaled to 0) starts over.
+#
+# This overlay is the whole local Landflow with every feature that needs no outside account: all plugins, the code runner,
+# Mailpit for mail, the LiteLLM gateway and Ollama on the Mac. Password sign-in only (no OIDC, SAML or SCIM): the owner invites
+# people. Landflow is http://localhost:53000, Mailpit http://localhost:58025. Build every image first (docs/deployment.md
+# "The whole thing on OrbStack").
 # Dev-only secrets below.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -21,11 +26,21 @@ components:
   - ../../components/package-cache
   # GitHub's MCP server for the agents' GitHub MCP tool (docs/a2a.md): no token in it, Landflow sends its credential.
   - ../../components/github-mcp
-  # The Browser plugin (Chrome inside; build landflow/plugin-browser:k8s-dev first, see components/browser): off by default.
-#   - ../../components/browser
-  # Agent Shell and Web Search plugins (build landflow/plugin-<name>:k8s-dev first, see each component): off by default.
-#   - ../../components/agent-shell
-#   - ../../components/web-search
+  # The Browser plugin (Chrome inside), Agent Shell and Web Search (build landflow/plugin-<name>:k8s-dev first, see each component).
+  - ../../components/browser
+  - ../../components/agent-shell
+  - ../../components/web-search
+  # The plugins the base has no manifest for, the sandboxed code runner for the Code node, and Mailpit (SMTP and web UI) so invites
+  # and other mail can be read. local-access publishes the host and Mailpit on this Mac's localhost (LoadBalancer Services).
+  - ../../components/landfall
+  - ../../components/triage
+  - ../../components/threat-intel
+  - ../../components/grafana
+  - ../../components/ai-sdk
+  - ../../components/code-runner
+  - ../../components/mailpit
+  - ../../components/local-access
+  # SAP plugin (build landflow/plugin-sap:k8s-dev first, see components/sap): off by default.
 #   - ../../components/sap
 #   - ../../components/postgres
 #   - ../../components/valkey
@@ -39,9 +54,19 @@ images:
   - { name: landflow/plugin-google-workspace, newTag: k8s-dev }
   - { name: landflow/plugin-databases, newTag: k8s-dev }
   - { name: landflow/plugin-github, newTag: k8s-dev }
+  - { name: landflow/plugin-linear, newTag: k8s-dev }
+  - { name: landflow/plugin-attio, newTag: k8s-dev }
+  - { name: landflow/plugin-fathom, newTag: k8s-dev }
+  - { name: landflow/plugin-clickland, newTag: k8s-dev }
   - { name: landflow/plugin-browser, newTag: k8s-dev } # only used with components/browser
   - { name: landflow/plugin-agent-shell, newTag: k8s-dev } # only used with components/agent-shell
   - { name: landflow/plugin-web-search, newTag: k8s-dev } # only used with components/web-search
+  - { name: landflow/plugin-landfall, newTag: k8s-dev }
+  - { name: landflow/plugin-triage, newTag: k8s-dev }
+  - { name: landflow/plugin-threat-intel, newTag: k8s-dev }
+  - { name: landflow/plugin-grafana, newTag: k8s-dev }
+  - { name: landflow/plugin-ai-sdk, newTag: k8s-dev }
+  - { name: landflow/code-runner, newTag: k8s-dev }
   - { name: landflow/plugin-sap, newTag: k8s-dev } # only used with components/sap
 generatorOptions:
   disableNameSuffixHash: true
@@ -51,7 +76,7 @@ secretGenerator:
   - name: landflow-registry
     literals: [secret=landflow-registry-dev-only]
   - name: landflow-host
-    literals: [owner-email=owner@landflow.test, owner-password=landflow-dev-only, mcp-gateway-secret=landflow-mcp-gateway-dev-only-secret]
+    literals: [owner-email=owner@landflow.test, owner-password=landflow-dev-only, mcp-gateway-secret=landflow-mcp-gateway-dev-only-secret, code-runner-secret=landflow-code-runner-dev-only, llm-gateway-key=sk-landflow-dev-master-only]
 patches:
   # Local images only.
   - target: { kind: Deployment, labelSelector: app.kubernetes.io/part-of=landflow }
@@ -69,8 +94,38 @@ patches:
           spec:
             containers:
               - name: host
+                # A 30B model on the Mac's Ollama starves this laptop for minutes while Spotlight builds a flow: the base probes
+                # (3 s, six failures) then restart the host mid-build. Wait up to 5 minutes before killing it.
+                livenessProbe:
+                  httpGet: { path: /api/health/live, port: http }
+                  periodSeconds: 20
+                  timeoutSeconds: 10
+                  failureThreshold: 15
+                readinessProbe:
+                  httpGet: { path: /api/health/ready, port: http }
+                  periodSeconds: 5
+                  timeoutSeconds: 10
+                  failureThreshold: 6
                 env:
-                  - { name: LANDFLOW_PUBLIC_URL, value: "http://landflow-host.landflow-dev.svc.cluster.local:3000" }
-                  - { name: LANDFLOW_MCP_GATEWAY_PUBLIC_URL, value: "http://landflow-host.landflow-dev.svc.cluster.local:4000" }
+                  # What the browser on this Mac opens (components/local-access publishes it on localhost).
+                  - { name: LANDFLOW_PUBLIC_URL, value: "http://localhost:53000" }
+                  - { name: LANDFLOW_MCP_GATEWAY_PUBLIC_URL, value: "http://localhost:54000" }
                   # The Mac's Ollama, for Spotlight and the second brain.
                   - { name: OLLAMA_URL, value: "http://host.docker.internal:11434" }
+                  # Mail: Mailpit in this namespace (invites, resets, the Send Email node land in its web UI, localhost:58025).
+                  - { name: LANDFLOW_SMTP_HOST, value: landflow-mailpit }
+                  - { name: LANDFLOW_SMTP_PORT, value: "1025" }
+                  - { name: LANDFLOW_SMTP_SECURE, value: "false" }
+                  - { name: LANDFLOW_SMTP_IGNORE_TLS, value: "true" }
+                  - { name: LANDFLOW_SMTP_FROM, value: "Landflow <landflow@landflow.test>" }
+                  # The sandboxed Code node runner (components/code-runner) and its shared secret.
+                  - { name: LANDFLOW_CODE_RUNNER_URL, value: "http://landflow-code-runner:7300" }
+                  - name: LANDFLOW_CODE_RUNNER_SECRET
+                    valueFrom: { secretKeyRef: { name: landflow-host, key: code-runner-secret } }
+                  # The LiteLLM gateway container on this Mac (compose.infra.yml profile llm-gateway, 127.0.0.1:54100), with its
+                  # development master key; it routes to the Mac's Ollama.
+                  - { name: LANDFLOW_LLM_GATEWAY_URL, value: "http://host.docker.internal:54100" }
+                  - name: LANDFLOW_LLM_GATEWAY_KEY
+                    valueFrom: { secretKeyRef: { name: landflow-host, key: llm-gateway-key } }
+                  - name: LANDFLOW_LLM_GATEWAY_ADMIN_KEY
+                    valueFrom: { secretKeyRef: { name: landflow-host, key: llm-gateway-key } }

@@ -9,7 +9,7 @@
    "name": "landflow-sdk-python",
    "version": "0.1.0"
   },
-  "description": "Notion, Airtable, GitHub, Jira, HubSpot, Stripe and RSS: actions, live pickers, polling triggers and GitHub and Stripe webhook triggers.",
+  "description": "Notion, Airtable, GitHub, Jira, HubSpot, Stripe and RSS: actions, live pickers, polling triggers (Notion pages, GitHub, RSS) and GitHub and Stripe webhook triggers.",
   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ibGYtcHJvZC1iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNhNzhiZmEiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNmQyOGQ5Ii8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0idXJsKCNsZi1wcm9kLWJnKSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSIxMSIgeT0iMTIiIHdpZHRoPSI3IiBoZWlnaHQ9IjciIHJ4PSIyIi8+CiAgICA8cmVjdCB4PSIxMSIgeT0iMjkiIHdpZHRoPSI3IiBoZWlnaHQ9IjciIHJ4PSIyIi8+CiAgICA8cGF0aCBkPSJNMjMgMTUuNWgxNE0yMyAzMi41aDE0TTIzIDI0aDEwIi8+CiAgICA8cGF0aCBkPSJtMTIuNSAyNC4yIDIgMiA0LTQuMiIvPgogIDwvZz4KPC9zdmc+Cg==",
   "color": "#7c3aed",
   "author": "Landflow"
@@ -18,14 +18,14 @@
   {
    "name": "notion",
    "displayName": "Notion",
-   "description": "Create and query Notion database pages, get, archive and search pages, append blocks, upload files from binary data",
+   "description": "Create and query Notion database pages, get, archive and search pages, read edited pages and their text, list users, comment, append blocks, upload files from binary data",
    "version": 1,
    "kind": "action",
    "idempotent": false,
    "categories": [
     "Productivity"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB4PSI1IiB5PSI1IiB3aWR0aD0iMzgiIGhlaWdodD0iMzgiIHJ4PSI5IiBmaWxsPSIjZmZmIiBzdHJva2U9IiMwMDAwMDAiIHN0cm9rZS13aWR0aD0iMyIvPgogIDxwYXRoIGZpbGw9IiMwMDAwMDAiIGQ9Ik0xNiAxNGg0LjZsOC40IDEyLjZWMTRoMy45djIwaC00LjZsLTguNC0xMi42VjM0SDE2WiIvPgo8L3N2Zz4K",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNjgiPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik0xNi4wOTIgMTEuNTM4TDE2NC4wOS42MDhjMTguMTc5LTEuNTYgMjIuODUtLjUwOCAzNC4yOCA3LjgwMWw0Ny4yNDMgMzMuMjgyQzI1My40MDYgNDcuNDE0IDI1NiA0OC45NzUgMjU2IDU1LjIwN3YxODIuNTI3YzAgMTEuNDM5LTQuMTU1IDE4LjIwNS0xOC42OTYgMTkuMjRMNjUuNDQgMjY3LjM3OGMtMTAuOTEzLjUxNy0xNi4xMS0xLjA0My0yMS44MjUtOC4zMjdMOC44MjYgMjEzLjgxNEMyLjU4NiAyMDUuNDg3IDAgMTk5LjI1NCAwIDE5MS45N1YyOS43MjZjMC05LjM1MiA0LjE1NS0xNy4xNTMgMTYuMDkyLTE4LjE4OCIvPjxwYXRoIGQ9Ik0xNjQuMDkuNjA4TDE2LjA5MiAxMS41MzhDNC4xNTUgMTIuNTczIDAgMjAuMzc0IDAgMjkuNzI2djE2Mi4yNDVjMCA3LjI4NCAyLjU4NSAxMy41MTYgOC44MjYgMjEuODQzbDM0Ljc4OSA0NS4yMzdjNS43MTUgNy4yODQgMTAuOTEyIDguODQ0IDIxLjgyNSA4LjMyN2wxNzEuODY0LTEwLjQwNGMxNC41MzItMS4wMzUgMTguNjk2LTcuODAxIDE4LjY5Ni0xOS4yNFY1NS4yMDdjMC01LjkxMS0yLjMzNi03LjYxNC05LjIxLTEyLjY2bC0xLjE4NS0uODU2TDE5OC4zNyA4LjQwOUMxODYuOTQuMSAxODIuMjctLjk1MiAxNjQuMDkuNjA4TTY5LjMyNyA1Mi4yMmMtMTQuMDMzLjk0NS0xNy4yMTYgMS4xNTktMjUuMTg2LTUuMzIzTDIzLjg3NiAzMC43NzhjLTIuMDYtMi4wODYtMS4wMjYtNC42OSA0LjE2My01LjIwN2wxNDIuMjc0LTEwLjM5NWMxMS45NDctMS4wNDMgMTguMTcgMy4xMiAyMi44NDIgNi43NThsMjQuNDAxIDE3LjY4YzEuMDQzLjUyNSAzLjYzOCAzLjYzNy41MTcgMy42MzdMNzEuMTQ2IDUyLjA5NXptLTE2LjM2IDE4My45NTRWODEuMjIyYzAtNi43NjcgMi4wNzctOS44ODcgOC4zLTEwLjQxM0wyMzAuMDIgNjAuOTNjNS43MjQtLjUxNyA4LjMxIDMuMTIgOC4zMSA5Ljg3OXYxNTMuOTE3YzAgNi43NjctMS4wNDQgMTIuNDktMTAuMzg3IDEzLjAwOGwtMTYxLjQ4NyA5LjM2MWMtOS4zNDMuNTE3LTEzLjQ4OS0yLjU5NC0xMy40ODktMTAuOTIxTTIxMi4zNzcgODkuNTNjMS4wMzQgNC42ODEgMCA5LjM2Mi00LjY4MSA5Ljg5N2wtNy43ODMgMS41NDJ2MTE0LjQwNGMtNi43NTggMy42MzctMTIuOTgxIDUuNzE1LTE4LjE4IDUuNzE1Yy04LjMwOCAwLTEwLjM4Ni0yLjYwNC0xNi42MDktMTAuMzk2bC01MC44OTgtODAuMDc5djc3LjQ3NmwxNi4xIDMuNjQ2czAgOS4zNjItMTIuOTg5IDkuMzYybC0zNS44MTQgMi4wNzdjLTEuMDQzLTIuMDg2IDAtNy4yODQgMy42My04LjMxOGw5LjM1MS0yLjU5NVYxMDkuODIzbC0xMi45OC0xLjA1MmMtMS4wNDQtNC42OCAxLjU1LTExLjQzOSA4LjgyNi0xMS45NjVsMzguNDI2LTIuNTg1bDUyLjk1OCA4MS4xMTN2LTcxLjc2bC0xMy40OTgtMS41NTJjLTEuMDQzLTUuNzMzIDMuMTExLTkuODk2IDguMy0xMC40MDR6Ii8+PC9zdmc+Cjwvc3ZnPgo=",
    "color": "#000000",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://developers.notion.com/reference/intro",
@@ -64,7 +64,7 @@
     }
    ],
    "usableAsTool": true,
-   "toolDescription": "Work with Notion. Pick `resource` (databasePage, page, block) and `operation`: create a database page (`databaseId`, `title`), query a database (`databaseId`, optional `filterJson`), get or archive a page (`pageId`), search pages (`text`), or append paragraphs to a page (`blockId`, `text`). Files uploaded from binary data on the item: block `appendFile` adds an image, video, audio, PDF or file block; page `attachFile` adds to a Files property.",
+   "toolDescription": "Work with Notion. Pick `resource` (databasePage, page, block) and `operation`: create a database page (`databaseId`, `title`), query a database (`databaseId`, optional `filterJson`), get or archive a page (`pageId`), search pages (`text`), list pages edited since a time (page `changedSince`, `since`, optional `roots`), read a page's whole text (page `getContent`, `pageId`), list users with email (user `getAll`), comment on a page (comment `create`, `commentPageId`, `commentText`), or append paragraphs to a page (`blockId`, `text`). Files uploaded from binary data on the item: block `appendFile` adds an image, video, audio, PDF or file block; page `attachFile` adds to a Files property.",
    "keywords": [
     "notion",
     "wiki",
@@ -104,12 +104,20 @@
        "value": "block"
       },
       {
+       "name": "Comment",
+       "value": "comment"
+      },
+      {
        "name": "Database Page",
        "value": "databasePage"
       },
       {
        "name": "Page",
        "value": "page"
+      },
+      {
+       "name": "User",
+       "value": "user"
       }
      ]
     },
@@ -144,6 +152,49 @@
      "displayName": "Operation",
      "type": "options",
      "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "comment"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "action": "Comment on a page or reply in a discussion"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getAll",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "user"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "action": "Get many users with their email",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
      "default": "get",
      "displayOptions": {
       "show": {
@@ -168,6 +219,211 @@
        "value": "get",
        "action": "Get a page",
        "idempotent": true
+      },
+      {
+       "name": "Get Content",
+       "value": "getContent",
+       "action": "Get a page's whole text as an activity item",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         },
+         "text": {
+          "type": "string",
+          "description": "The page's text, nested blocks included"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw",
+         "text"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "Get Many Changed Since",
+       "value": "changedSince",
+       "action": "Get pages edited since a time, as activity items",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "additionalProperties": false
+       }
       },
       {
        "name": "Search",
@@ -444,7 +700,8 @@
        "operation": [
         "archive",
         "attachFile",
-        "get"
+        "get",
+        "getContent"
        ]
       }
      }
@@ -556,6 +813,220 @@
        ]
       }
      ]
+    },
+    {
+     "name": "since",
+     "displayName": "Since",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-11-12T08:00:00Z",
+     "description": "Pages edited on or after this ISO time (empty: 24 hours ago); pass the last item's cursor to continue",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ],
+       "operation": [
+        "changedSince"
+       ]
+      }
+     }
+    },
+    {
+     "name": "roots",
+     "displayName": "Roots",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "rows": 2
+     },
+     "description": "Pages or databases to watch, as links or ids separated by commas or new lines: only pages anywhere below them. Empty: every page shared with the integration.",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ],
+       "operation": [
+        "changedSince"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ],
+       "operation": [
+        "changedSince"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "description": "Max number of results to return",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ],
+       "operation": [
+        "changedSince"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "activityOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "includeText",
+       "displayName": "Read Page Text",
+       "type": "boolean",
+       "default": true,
+       "description": "Whether the summary includes the start of the page's text (one more call per page)"
+      },
+      {
+       "name": "customerParent",
+       "displayName": "Customer Parent Title",
+       "type": "string",
+       "default": "Customers",
+       "description": "A page under <this page>/<name>/… is about the customer <name> (customerHint)"
+      },
+      {
+       "name": "initiativeParent",
+       "displayName": "Initiative Parent Title",
+       "type": "string",
+       "default": "Projects",
+       "description": "A page under <this page>/<name>/… belongs to the initiative <name> (initiativeHint)"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "page"
+       ],
+       "operation": [
+        "changedSince",
+        "getContent"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "user"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 100,
+     "typeOptions": {
+      "minValue": 1
+     },
+     "description": "Max number of results to return",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "user"
+       ],
+       "operation": [
+        "getAll"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "commentPageId",
+     "displayName": "Page",
+     "type": "string",
+     "default": "",
+     "placeholder": "https://www.notion.so/My-page-0123456789abcdef0123456789abcdef",
+     "description": "Page id or URL to comment on (ignored when replying in a discussion)",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "comment"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "commentText",
+     "displayName": "Comment",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "typeOptions": {
+      "rows": 3
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "comment"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "discussionId",
+     "displayName": "Discussion ID",
+     "type": "string",
+     "default": "",
+     "description": "Reply in this discussion thread instead of starting one on the page",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "comment"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
     },
     {
      "name": "simplify",
@@ -735,6 +1206,230 @@
    ]
   },
   {
+   "name": "notionTrigger",
+   "displayName": "Notion Trigger",
+   "description": "Starts the workflow when pages are created or edited in Notion (under chosen pages or databases), each as an activity item",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "poll",
+   "categories": [
+    "Productivity"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNjgiPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik0xNi4wOTIgMTEuNTM4TDE2NC4wOS42MDhjMTguMTc5LTEuNTYgMjIuODUtLjUwOCAzNC4yOCA3LjgwMWw0Ny4yNDMgMzMuMjgyQzI1My40MDYgNDcuNDE0IDI1NiA0OC45NzUgMjU2IDU1LjIwN3YxODIuNTI3YzAgMTEuNDM5LTQuMTU1IDE4LjIwNS0xOC42OTYgMTkuMjRMNjUuNDQgMjY3LjM3OGMtMTAuOTEzLjUxNy0xNi4xMS0xLjA0My0yMS44MjUtOC4zMjdMOC44MjYgMjEzLjgxNEMyLjU4NiAyMDUuNDg3IDAgMTk5LjI1NCAwIDE5MS45N1YyOS43MjZjMC05LjM1MiA0LjE1NS0xNy4xNTMgMTYuMDkyLTE4LjE4OCIvPjxwYXRoIGQ9Ik0xNjQuMDkuNjA4TDE2LjA5MiAxMS41MzhDNC4xNTUgMTIuNTczIDAgMjAuMzc0IDAgMjkuNzI2djE2Mi4yNDVjMCA3LjI4NCAyLjU4NSAxMy41MTYgOC44MjYgMjEuODQzbDM0Ljc4OSA0NS4yMzdjNS43MTUgNy4yODQgMTAuOTEyIDguODQ0IDIxLjgyNSA4LjMyN2wxNzEuODY0LTEwLjQwNGMxNC41MzItMS4wMzUgMTguNjk2LTcuODAxIDE4LjY5Ni0xOS4yNFY1NS4yMDdjMC01LjkxMS0yLjMzNi03LjYxNC05LjIxLTEyLjY2bC0xLjE4NS0uODU2TDE5OC4zNyA4LjQwOUMxODYuOTQuMSAxODIuMjctLjk1MiAxNjQuMDkuNjA4TTY5LjMyNyA1Mi4yMmMtMTQuMDMzLjk0NS0xNy4yMTYgMS4xNTktMjUuMTg2LTUuMzIzTDIzLjg3NiAzMC43NzhjLTIuMDYtMi4wODYtMS4wMjYtNC42OSA0LjE2My01LjIwN2wxNDIuMjc0LTEwLjM5NWMxMS45NDctMS4wNDMgMTguMTcgMy4xMiAyMi44NDIgNi43NThsMjQuNDAxIDE3LjY4YzEuMDQzLjUyNSAzLjYzOCAzLjYzNy41MTcgMy42MzdMNzEuMTQ2IDUyLjA5NXptLTE2LjM2IDE4My45NTRWODEuMjIyYzAtNi43NjcgMi4wNzctOS44ODcgOC4zLTEwLjQxM0wyMzAuMDIgNjAuOTNjNS43MjQtLjUxNyA4LjMxIDMuMTIgOC4zMSA5Ljg3OXYxNTMuOTE3YzAgNi43NjctMS4wNDQgMTIuNDktMTAuMzg3IDEzLjAwOGwtMTYxLjQ4NyA5LjM2MWMtOS4zNDMuNTE3LTEzLjQ4OS0yLjU5NC0xMy40ODktMTAuOTIxTTIxMi4zNzcgODkuNTNjMS4wMzQgNC42ODEgMCA5LjM2Mi00LjY4MSA5Ljg5N2wtNy43ODMgMS41NDJ2MTE0LjQwNGMtNi43NTggMy42MzctMTIuOTgxIDUuNzE1LTE4LjE4IDUuNzE1Yy04LjMwOCAwLTEwLjM4Ni0yLjYwNC0xNi42MDktMTAuMzk2bC01MC44OTgtODAuMDc5djc3LjQ3NmwxNi4xIDMuNjQ2czAgOS4zNjItMTIuOTg5IDkuMzYybC0zNS44MTQgMi4wNzdjLTEuMDQzLTIuMDg2IDAtNy4yODQgMy42My04LjMxOGw5LjM1MS0yLjU5NVYxMDkuODIzbC0xMi45OC0xLjA1MmMtMS4wNDQtNC42OCAxLjU1LTExLjQzOSA4LjgyNi0xMS45NjVsMzguNDI2LTIuNTg1bDUyLjk1OCA4MS4xMTN2LTcxLjc2bC0xMy40OTgtMS41NTJjLTEuMDQzLTUuNzMzIDMuMTExLTkuODk2IDguMy0xMC40MDR6Ii8+PC9zdmc+Cjwvc3ZnPgo=",
+   "color": "#000000",
+   "documentationUrl": "https://developers.notion.com/reference/post-search",
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "notionApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "accessToken"
+       ]
+      }
+     }
+    },
+    {
+     "name": "notionOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ],
+   "keywords": [
+    "notion",
+    "page edited",
+    "page updated",
+    "wiki",
+    "activity",
+    "poll"
+   ],
+   "outputSchema": {
+    "type": "object",
+    "properties": {
+     "source": {
+      "type": "string",
+      "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+     },
+     "sourceId": {
+      "type": "string",
+      "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+     },
+     "url": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Where a person opens it"
+     },
+     "actorEmail": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+     },
+     "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When it happened, ISO 8601 in UTC with milliseconds"
+     },
+     "kind": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+      "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+     },
+     "title": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "One line: the document, ticket or meeting title, or the channel and first words"
+     },
+     "summary": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "The text, whitespace collapsed, at most 600 characters"
+     },
+     "teamHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+     },
+     "initiativeHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The project or initiative it seems to belong to, when there is one"
+     },
+     "customerHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+     },
+     "raw": {
+      "type": "object",
+      "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+     },
+     "cursor": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+     }
+    },
+    "required": [
+     "source",
+     "sourceId",
+     "url",
+     "actorEmail",
+     "occurredAt",
+     "kind",
+     "title",
+     "summary",
+     "teamHint",
+     "initiativeHint",
+     "customerHint",
+     "raw"
+    ],
+    "additionalProperties": false
+   },
+   "properties": [
+    {
+     "name": "pollInterval",
+     "displayName": "Poll Interval (seconds)",
+     "type": "number",
+     "default": 300,
+     "description": "How often to check for new events while the workflow is active",
+     "typeOptions": {
+      "minValue": 10
+     },
+     "noDataExpression": true
+    },
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "accessToken",
+     "options": [
+      {
+       "name": "Internal Integration Secret",
+       "value": "accessToken"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Connect with the service; the token is renewed for you"
+      }
+     ]
+    },
+    {
+     "name": "pollNotice",
+     "type": "notice",
+     "default": "",
+     "displayName": "The first poll only records the time; later polls output each page edited since, once per edit. Executing the node in the editor returns the 5 pages edited last."
+    },
+    {
+     "name": "roots",
+     "displayName": "Roots",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "rows": 2
+     },
+     "placeholder": "https://www.notion.so/Team-wiki-0123456789abcdef0123456789abcdef",
+     "description": "Pages or databases to watch, as links or ids separated by commas or new lines: only pages anywhere below them. Empty: every page shared with the integration."
+    },
+    {
+     "name": "activityOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "includeText",
+       "displayName": "Read Page Text",
+       "type": "boolean",
+       "default": true,
+       "description": "Whether the summary includes the start of the page's text (one more call per page)"
+      },
+      {
+       "name": "customerParent",
+       "displayName": "Customer Parent Title",
+       "type": "string",
+       "default": "Customers",
+       "description": "A page under <this page>/<name>/… is about the customer <name> (customerHint)"
+      },
+      {
+       "name": "initiativeParent",
+       "displayName": "Initiative Parent Title",
+       "type": "string",
+       "default": "Projects",
+       "description": "A page under <this page>/<name>/… belongs to the initiative <name> (initiativeHint)"
+      }
+     ]
+    }
+   ]
+  },
+  {
    "name": "airtable",
    "displayName": "Airtable",
    "description": "Create, upsert, get, search, update and delete Airtable records; upload and download attachments",
@@ -745,7 +1440,7 @@
     "Data & Storage",
     "Productivity"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzE4QkZGRiIvPgogIDxyZWN0IHg9IjEwIiB5PSIxMiIgd2lkdGg9IjI4IiBoZWlnaHQ9IjI0IiByeD0iMy41IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMi42Ii8+CiAgPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTExLjMgMTMuM2gyNS40djYuMkgxMS4zeiIvPgogIDxwYXRoIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjIiIGQ9Ik0xMCAyNy41aDI4TTIxIDE5LjVWMzYiLz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyMTUiPjxwYXRoIGZpbGw9IiNmZmJmMDAiIGQ9Ik0xMTQuMjU5IDIuNzAxTDE4Ljg2IDQyLjE3NmMtNS4zMDUgMi4xOTUtNS4yNSA5LjczLjA4OSAxMS44NDdsOTUuNzk3IDM3Ljk4OWEzNS41NCAzNS41NCAwIDAgMCAyNi4yMDggMGw5NS43OTktMzcuOTljNS4zMzctMi4xMTUgNS4zOTMtOS42NS4wODYtMTEuODQ2TDE0MS40NDIgMi43YTM1LjU1IDM1LjU1IDAgMCAwLTI3LjE4MyAwIi8+PHBhdGggZmlsbD0iIzI2YjVmOCIgZD0iTTEzNi4zNSAxMTIuNzU3djk0LjkwMmMwIDQuNTE0IDQuNTUgNy42MDUgOC43NDYgNS45NDJsMTA2Ljc0OC00MS40MzVhNi4zOSA2LjM5IDAgMCAwIDQuMDM1LTUuOTQxVjcxLjMyMmMwLTQuNTE0LTQuNTUxLTcuNjA0LTguNzQ3LTUuOTQxbC0xMDYuNzQ4IDQxLjQzNGE2LjM5IDYuMzkgMCAwIDAtNC4wMzUgNS45NDIiLz48cGF0aCBmaWxsPSIjZWQzMDQ5IiBkPSJtMTExLjQyMyAxMTcuNjU0bC0zMS42OCAxNS4yOTZsLTMuMjE3IDEuNTU1TDkuNjUgMTY2LjU0OEM1LjQxMSAxNjguNTkzIDAgMTY1LjUwNCAwIDE2MC43OTVWNzEuNzJjMC0xLjcwNC44NzQtMy4xNzUgMi4wNDYtNC4yODNhNy4zIDcuMyAwIDAgMSAxLjYxOC0xLjIxM2MxLjU5OC0uOTU5IDMuODc4LTEuMjE1IDUuODE2LS40NDhsMTAxLjQxIDQwLjE4YzUuMTU1IDIuMDQ1IDUuNTYgOS4yNjguNTMzIDExLjY5NyIvPjxwYXRoIGZpbGwtb3BhY2l0eT0iLjI1IiBkPSJtMTExLjQyMyAxMTcuNjU0bC0zMS42OCAxNS4yOTZMMi4wNDUgNjcuNDM4YTcuMyA3LjMgMCAwIDEgMS42MTgtMS4yMTNjMS41OTgtLjk1OSAzLjg3OC0xLjIxNSA1LjgxNi0uNDQ4bDEwMS40MSA0MC4xOGM1LjE1NSAyLjA0NSA1LjU2IDkuMjY4LjUzMyAxMS42OTciLz48L3N2Zz4KPC9zdmc+Cg==",
    "color": "#18BFFF",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://airtable.com/developers/web/api/introduction",
@@ -1348,7 +2043,7 @@
    "categories": [
     "Development"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzI0MjkyRiIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCI+CiAgICA8Y2lyY2xlIGN4PSIxNyIgY3k9IjEzLjUiIHI9IjMuNSIvPgogICAgPGNpcmNsZSBjeD0iMTciIGN5PSIzNC41IiByPSIzLjUiLz4KICAgIDxjaXJjbGUgY3g9IjMxIiBjeT0iMTkuNSIgcj0iMy41Ii8+CiAgICA8cGF0aCBkPSJNMTcgMTd2MTRNMzEgMjNjMCA1LTUuNSA2LjUtMTEgOSIvPgogIDwvZz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTAiPjxwYXRoIGZpbGw9IiMxNjE2MTQiIGQ9Ik0xMjguMDAxIDBDNTcuMzE3IDAgMCA1Ny4zMDcgMCAxMjguMDAxYzAgNTYuNTU0IDM2LjY3NiAxMDQuNTM1IDg3LjUzNSAxMjEuNDZjNi4zOTcgMS4xODUgOC43NDYtMi43NzcgOC43NDYtNi4xNThjMC0zLjA1Mi0uMTItMTMuMTM1LS4xNzQtMjMuODNjLTM1LjYxIDcuNzQyLTQzLjEyNC0xNS4xMDMtNDMuMTI0LTE1LjEwM2MtNS44MjMtMTQuNzk1LTE0LjIxMy0xOC43My0xNC4yMTMtMTguNzNjLTExLjYxMy03Ljk0NC44NzYtNy43OC44NzYtNy43OGMxMi44NTMuOTAyIDE5LjYyMSAxMy4xOSAxOS42MjEgMTMuMTljMTEuNDE3IDE5LjU2OCAyOS45NDUgMTMuOTExIDM3LjI0OSAxMC42NGMxLjE0OS04LjI3MiA0LjQ2Ni0xMy45MiA4LjEyNy0xNy4xMTZjLTI4LjQzMS0zLjIzNi01OC4zMTgtMTQuMjEyLTU4LjMxOC02My4yNThjMC0xMy45NzUgNS0yNS4zOTQgMTMuMTg4LTM0LjM1OGMtMS4zMjktMy4yMjQtNS43MS0xNi4yNDIgMS4yNC0zMy44NzRjMCAwIDEwLjc0OS0zLjQ0IDM1LjIxIDEzLjEyMWMxMC4yMS0yLjgzNiAyMS4xNi00LjI1OCAzMi4wMzgtNC4zMDdjMTAuODc4LjA0OSAyMS44MzcgMS40NyAzMi4wNjYgNC4zMDdjMjQuNDMxLTE2LjU2IDM1LjE2NS0xMy4xMiAzNS4xNjUtMTMuMTJjNi45NjcgMTcuNjMgMi41ODQgMzAuNjUgMS4yNTUgMzMuODczYzguMjA3IDguOTY0IDEzLjE3MyAyMC4zODMgMTMuMTczIDM0LjM1OGMwIDQ5LjE2My0yOS45NDQgNTkuOTg4LTU4LjQ0NyA2My4xNTdjNC41OTEgMy45NzIgOC42ODIgMTEuNzYyIDguNjgyIDIzLjcwNGMwIDE3LjEyNi0uMTQ4IDMwLjkxLS4xNDggMzUuMTI2YzAgMy40MDcgMi4zMDQgNy4zOTggOC43OTIgNi4xNEMyMTkuMzcgMjMyLjUgMjU2IDE4NC41MzcgMjU2IDEyOC4wMDJDMjU2IDU3LjMwNyAxOTguNjkxIDAgMTI4LjAwMSAwbS04MC4wNiAxODIuMzRjLS4yODIuNjM2LTEuMjgzLjgyNy0yLjE5NC4zOWMtLjkyOS0uNDE3LTEuNDUtMS4yODQtMS4xNS0xLjkyMmMuMjc2LS42NTUgMS4yNzktLjgzOCAyLjIwNS0uMzk5Yy45My40MTggMS40NiAxLjI5MyAxLjEzOSAxLjkzMW02LjI5NiA1LjYxOGMtLjYxLjU2Ni0xLjgwNC4zMDMtMi42MTQtLjU5MWMtLjgzNy0uODkyLS45OTQtMi4wODYtLjM3NS0yLjY2Yy42My0uNTY2IDEuNzg3LS4zMDEgMi42MjYuNTkxYy44MzguOTAzIDEgMi4wODguMzYzIDIuNjZtNC4zMiA3LjE4OGMtLjc4NS41NDUtMi4wNjcuMDM0LTIuODYtMS4xMDRjLS43ODQtMS4xMzgtLjc4NC0yLjUwMy4wMTctMy4wNWMuNzk1LS41NDcgMi4wNTgtLjA1NSAyLjg2MSAxLjA3NWMuNzgyIDEuMTU3Ljc4MiAyLjUyMi0uMDE5IDMuMDhtNy4zMDQgOC4zMjVjLS43MDEuNzc0LTIuMTk2LjU2Ni0zLjI5LS40OWMtMS4xMTktMS4wMzItMS40My0yLjQ5Ni0uNzI2LTMuMjdjLjcxLS43NzYgMi4yMTMtLjU1OCAzLjMxNS40OWMxLjExIDEuMDMgMS40NSAyLjUwNS43MDEgMy4yN205LjQ0MiAyLjgxYy0uMzEgMS4wMDMtMS43NSAxLjQ1OS0zLjE5OSAxLjAzM2MtMS40NDgtLjQzOS0yLjM5NS0xLjYxMy0yLjEwMy0yLjYyNmMuMzAxLTEuMDEgMS43NDctMS40ODQgMy4yMDctMS4wMjhjMS40NDYuNDM2IDIuMzk2IDEuNjAyIDIuMDk1IDIuNjIybTEwLjc0NCAxLjE5M2MuMDM2IDEuMDU1LTEuMTkzIDEuOTMtMi43MTUgMS45NWMtMS41My4wMzQtMi43NjktLjgyLTIuNzg2LTEuODZjMC0xLjA2NSAxLjIwMi0xLjkzMiAyLjczMy0xLjk1OGMxLjUyMi0uMDMgMi43NjguODE4IDIuNzY4IDEuODY4bTEwLjU1NS0uNDA1Yy4xODIgMS4wMy0uODc1IDIuMDg4LTIuMzg3IDIuMzdjLTEuNDg1LjI3MS0yLjg2MS0uMzY1LTMuMDUtMS4zODZjLS4xODQtMS4wNTYuODkzLTIuMTE0IDIuMzc2LTIuMzg3YzEuNTE0LS4yNjMgMi44NjguMzU2IDMuMDYxIDEuNDAzIi8+PC9zdmc+Cjwvc3ZnPgo=",
    "color": "#24292F",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://docs.github.com/en/rest",
@@ -2178,7 +2873,7 @@
    "categories": [
     "Development"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzI0MjkyRiIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCI+CiAgICA8Y2lyY2xlIGN4PSIxNyIgY3k9IjEzLjUiIHI9IjMuNSIvPgogICAgPGNpcmNsZSBjeD0iMTciIGN5PSIzNC41IiByPSIzLjUiLz4KICAgIDxjaXJjbGUgY3g9IjMxIiBjeT0iMTkuNSIgcj0iMy41Ii8+CiAgICA8cGF0aCBkPSJNMTcgMTd2MTRNMzEgMjNjMCA1LTUuNSA2LjUtMTEgOSIvPgogIDwvZz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTAiPjxwYXRoIGZpbGw9IiMxNjE2MTQiIGQ9Ik0xMjguMDAxIDBDNTcuMzE3IDAgMCA1Ny4zMDcgMCAxMjguMDAxYzAgNTYuNTU0IDM2LjY3NiAxMDQuNTM1IDg3LjUzNSAxMjEuNDZjNi4zOTcgMS4xODUgOC43NDYtMi43NzcgOC43NDYtNi4xNThjMC0zLjA1Mi0uMTItMTMuMTM1LS4xNzQtMjMuODNjLTM1LjYxIDcuNzQyLTQzLjEyNC0xNS4xMDMtNDMuMTI0LTE1LjEwM2MtNS44MjMtMTQuNzk1LTE0LjIxMy0xOC43My0xNC4yMTMtMTguNzNjLTExLjYxMy03Ljk0NC44NzYtNy43OC44NzYtNy43OGMxMi44NTMuOTAyIDE5LjYyMSAxMy4xOSAxOS42MjEgMTMuMTljMTEuNDE3IDE5LjU2OCAyOS45NDUgMTMuOTExIDM3LjI0OSAxMC42NGMxLjE0OS04LjI3MiA0LjQ2Ni0xMy45MiA4LjEyNy0xNy4xMTZjLTI4LjQzMS0zLjIzNi01OC4zMTgtMTQuMjEyLTU4LjMxOC02My4yNThjMC0xMy45NzUgNS0yNS4zOTQgMTMuMTg4LTM0LjM1OGMtMS4zMjktMy4yMjQtNS43MS0xNi4yNDIgMS4yNC0zMy44NzRjMCAwIDEwLjc0OS0zLjQ0IDM1LjIxIDEzLjEyMWMxMC4yMS0yLjgzNiAyMS4xNi00LjI1OCAzMi4wMzgtNC4zMDdjMTAuODc4LjA0OSAyMS44MzcgMS40NyAzMi4wNjYgNC4zMDdjMjQuNDMxLTE2LjU2IDM1LjE2NS0xMy4xMiAzNS4xNjUtMTMuMTJjNi45NjcgMTcuNjMgMi41ODQgMzAuNjUgMS4yNTUgMzMuODczYzguMjA3IDguOTY0IDEzLjE3MyAyMC4zODMgMTMuMTczIDM0LjM1OGMwIDQ5LjE2My0yOS45NDQgNTkuOTg4LTU4LjQ0NyA2My4xNTdjNC41OTEgMy45NzIgOC42ODIgMTEuNzYyIDguNjgyIDIzLjcwNGMwIDE3LjEyNi0uMTQ4IDMwLjkxLS4xNDggMzUuMTI2YzAgMy40MDcgMi4zMDQgNy4zOTggOC43OTIgNi4xNEMyMTkuMzcgMjMyLjUgMjU2IDE4NC41MzcgMjU2IDEyOC4wMDJDMjU2IDU3LjMwNyAxOTguNjkxIDAgMTI4LjAwMSAwbS04MC4wNiAxODIuMzRjLS4yODIuNjM2LTEuMjgzLjgyNy0yLjE5NC4zOWMtLjkyOS0uNDE3LTEuNDUtMS4yODQtMS4xNS0xLjkyMmMuMjc2LS42NTUgMS4yNzktLjgzOCAyLjIwNS0uMzk5Yy45My40MTggMS40NiAxLjI5MyAxLjEzOSAxLjkzMW02LjI5NiA1LjYxOGMtLjYxLjU2Ni0xLjgwNC4zMDMtMi42MTQtLjU5MWMtLjgzNy0uODkyLS45OTQtMi4wODYtLjM3NS0yLjY2Yy42My0uNTY2IDEuNzg3LS4zMDEgMi42MjYuNTkxYy44MzguOTAzIDEgMi4wODguMzYzIDIuNjZtNC4zMiA3LjE4OGMtLjc4NS41NDUtMi4wNjcuMDM0LTIuODYtMS4xMDRjLS43ODQtMS4xMzgtLjc4NC0yLjUwMy4wMTctMy4wNWMuNzk1LS41NDcgMi4wNTgtLjA1NSAyLjg2MSAxLjA3NWMuNzgyIDEuMTU3Ljc4MiAyLjUyMi0uMDE5IDMuMDhtNy4zMDQgOC4zMjVjLS43MDEuNzc0LTIuMTk2LjU2Ni0zLjI5LS40OWMtMS4xMTktMS4wMzItMS40My0yLjQ5Ni0uNzI2LTMuMjdjLjcxLS43NzYgMi4yMTMtLjU1OCAzLjMxNS40OWMxLjExIDEuMDMgMS40NSAyLjUwNS43MDEgMy4yN205LjQ0MiAyLjgxYy0uMzEgMS4wMDMtMS43NSAxLjQ1OS0zLjE5OSAxLjAzM2MtMS40NDgtLjQzOS0yLjM5NS0xLjYxMy0yLjEwMy0yLjYyNmMuMzAxLTEuMDEgMS43NDctMS40ODQgMy4yMDctMS4wMjhjMS40NDYuNDM2IDIuMzk2IDEuNjAyIDIuMDk1IDIuNjIybTEwLjc0NCAxLjE5M2MuMDM2IDEuMDU1LTEuMTkzIDEuOTMtMi43MTUgMS45NWMtMS41My4wMzQtMi43NjktLjgyLTIuNzg2LTEuODZjMC0xLjA2NSAxLjIwMi0xLjkzMiAyLjczMy0xLjk1OGMxLjUyMi0uMDMgMi43NjguODE4IDIuNzY4IDEuODY4bTEwLjU1NS0uNDA1Yy4xODIgMS4wMy0uODc1IDIuMDg4LTIuMzg3IDIuMzdjLTEuNDg1LjI3MS0yLjg2MS0uMzY1LTMuMDUtMS4zODZjLS4xODQtMS4wNTYuODkzLTIuMTE0IDIuMzc2LTIuMzg3YzEuNTE0LS4yNjMgMi44NjguMzU2IDMuMDYxIDEuNDAzIi8+PC9zdmc+Cjwvc3ZnPgo=",
    "color": "#24292F",
    "subtitle": "{{event}}",
    "documentationUrl": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
@@ -2349,7 +3044,7 @@
    "categories": [
     "Development"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzI0MjkyRiIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCI+CiAgICA8Y2lyY2xlIGN4PSIxNyIgY3k9IjEzLjUiIHI9IjMuNSIvPgogICAgPGNpcmNsZSBjeD0iMTciIGN5PSIzNC41IiByPSIzLjUiLz4KICAgIDxjaXJjbGUgY3g9IjMxIiBjeT0iMTkuNSIgcj0iMy41Ii8+CiAgICA8cGF0aCBkPSJNMTcgMTd2MTRNMzEgMjNjMCA1LTUuNSA2LjUtMTEgOSIvPgogIDwvZz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTAiPjxwYXRoIGZpbGw9IiMxNjE2MTQiIGQ9Ik0xMjguMDAxIDBDNTcuMzE3IDAgMCA1Ny4zMDcgMCAxMjguMDAxYzAgNTYuNTU0IDM2LjY3NiAxMDQuNTM1IDg3LjUzNSAxMjEuNDZjNi4zOTcgMS4xODUgOC43NDYtMi43NzcgOC43NDYtNi4xNThjMC0zLjA1Mi0uMTItMTMuMTM1LS4xNzQtMjMuODNjLTM1LjYxIDcuNzQyLTQzLjEyNC0xNS4xMDMtNDMuMTI0LTE1LjEwM2MtNS44MjMtMTQuNzk1LTE0LjIxMy0xOC43My0xNC4yMTMtMTguNzNjLTExLjYxMy03Ljk0NC44NzYtNy43OC44NzYtNy43OGMxMi44NTMuOTAyIDE5LjYyMSAxMy4xOSAxOS42MjEgMTMuMTljMTEuNDE3IDE5LjU2OCAyOS45NDUgMTMuOTExIDM3LjI0OSAxMC42NGMxLjE0OS04LjI3MiA0LjQ2Ni0xMy45MiA4LjEyNy0xNy4xMTZjLTI4LjQzMS0zLjIzNi01OC4zMTgtMTQuMjEyLTU4LjMxOC02My4yNThjMC0xMy45NzUgNS0yNS4zOTQgMTMuMTg4LTM0LjM1OGMtMS4zMjktMy4yMjQtNS43MS0xNi4yNDIgMS4yNC0zMy44NzRjMCAwIDEwLjc0OS0zLjQ0IDM1LjIxIDEzLjEyMWMxMC4yMS0yLjgzNiAyMS4xNi00LjI1OCAzMi4wMzgtNC4zMDdjMTAuODc4LjA0OSAyMS44MzcgMS40NyAzMi4wNjYgNC4zMDdjMjQuNDMxLTE2LjU2IDM1LjE2NS0xMy4xMiAzNS4xNjUtMTMuMTJjNi45NjcgMTcuNjMgMi41ODQgMzAuNjUgMS4yNTUgMzMuODczYzguMjA3IDguOTY0IDEzLjE3MyAyMC4zODMgMTMuMTczIDM0LjM1OGMwIDQ5LjE2My0yOS45NDQgNTkuOTg4LTU4LjQ0NyA2My4xNTdjNC41OTEgMy45NzIgOC42ODIgMTEuNzYyIDguNjgyIDIzLjcwNGMwIDE3LjEyNi0uMTQ4IDMwLjkxLS4xNDggMzUuMTI2YzAgMy40MDcgMi4zMDQgNy4zOTggOC43OTIgNi4xNEMyMTkuMzcgMjMyLjUgMjU2IDE4NC41MzcgMjU2IDEyOC4wMDJDMjU2IDU3LjMwNyAxOTguNjkxIDAgMTI4LjAwMSAwbS04MC4wNiAxODIuMzRjLS4yODIuNjM2LTEuMjgzLjgyNy0yLjE5NC4zOWMtLjkyOS0uNDE3LTEuNDUtMS4yODQtMS4xNS0xLjkyMmMuMjc2LS42NTUgMS4yNzktLjgzOCAyLjIwNS0uMzk5Yy45My40MTggMS40NiAxLjI5MyAxLjEzOSAxLjkzMW02LjI5NiA1LjYxOGMtLjYxLjU2Ni0xLjgwNC4zMDMtMi42MTQtLjU5MWMtLjgzNy0uODkyLS45OTQtMi4wODYtLjM3NS0yLjY2Yy42My0uNTY2IDEuNzg3LS4zMDEgMi42MjYuNTkxYy44MzguOTAzIDEgMi4wODguMzYzIDIuNjZtNC4zMiA3LjE4OGMtLjc4NS41NDUtMi4wNjcuMDM0LTIuODYtMS4xMDRjLS43ODQtMS4xMzgtLjc4NC0yLjUwMy4wMTctMy4wNWMuNzk1LS41NDcgMi4wNTgtLjA1NSAyLjg2MSAxLjA3NWMuNzgyIDEuMTU3Ljc4MiAyLjUyMi0uMDE5IDMuMDhtNy4zMDQgOC4zMjVjLS43MDEuNzc0LTIuMTk2LjU2Ni0zLjI5LS40OWMtMS4xMTktMS4wMzItMS40My0yLjQ5Ni0uNzI2LTMuMjdjLjcxLS43NzYgMi4yMTMtLjU1OCAzLjMxNS40OWMxLjExIDEuMDMgMS40NSAyLjUwNS43MDEgMy4yN205LjQ0MiAyLjgxYy0uMzEgMS4wMDMtMS43NSAxLjQ1OS0zLjE5OSAxLjAzM2MtMS40NDgtLjQzOS0yLjM5NS0xLjYxMy0yLjEwMy0yLjYyNmMuMzAxLTEuMDEgMS43NDctMS40ODQgMy4yMDctMS4wMjhjMS40NDYuNDM2IDIuMzk2IDEuNjAyIDIuMDk1IDIuNjIybTEwLjc0NCAxLjE5M2MuMDM2IDEuMDU1LTEuMTkzIDEuOTMtMi43MTUgMS45NWMtMS41My4wMzQtMi43NjktLjgyLTIuNzg2LTEuODZjMC0xLjA2NSAxLjIwMi0xLjkzMiAyLjczMy0xLjk1OGMxLjUyMi0uMDMgMi43NjguODE4IDIuNzY4IDEuODY4bTEwLjU1NS0uNDA1Yy4xODIgMS4wMy0uODc1IDIuMDg4LTIuMzg3IDIuMzdjLTEuNDg1LjI3MS0yLjg2MS0uMzY1LTMuMDUtMS4zODZjLS4xODQtMS4wNTYuODkzLTIuMTE0IDIuMzc2LTIuMzg3YzEuNTE0LS4yNjMgMi44NjguMzU2IDMuMDYxIDEuNDAzIi8+PC9zdmc+Cjwvc3ZnPgo=",
    "color": "#24292F",
    "subtitle": "{{events}}",
    "documentationUrl": "https://docs.github.com/en/webhooks/webhook-events-and-payloads",
@@ -2641,7 +3336,7 @@
    "categories": [
     "Finance"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzYzNUJGRiIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSIxMSIgeT0iMTUiIHdpZHRoPSIyNiIgaGVpZ2h0PSIxOCIgcng9IjMiLz4KICAgIDxwYXRoIGQ9Ik0xMSAyMmgyNk0xNiAyOGg2Ii8+CiAgPC9nPgo8L3N2Zz4K",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIFNpbXBsZSBJY29ucyAxNi4zNi4wLCBDQzAtMS4wIC0tPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSIjNjM1QkZGIi8+CiAgPHN2ZyB4PSIxMSIgeT0iMTEiIHdpZHRoPSIyNiIgaGVpZ2h0PSIyNiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTMuOTc2IDkuMTVjLTIuMTcyLS44MDYtMy4zNTYtMS40MjYtMy4zNTYtMi40MDkgMC0uODMxLjY4My0xLjMwNSAxLjkwMS0xLjMwNSAyLjIyNyAwIDQuNTE1Ljg1OCA2LjA5IDEuNjMxbC44OS01LjQ5NEMxOC4yNTIuOTc1IDE1LjY5NyAwIDEyLjE2NSAwIDkuNjY3IDAgNy41ODkuNjU0IDYuMTA0IDEuODcyIDQuNTYgMy4xNDcgMy43NTcgNC45OTIgMy43NTcgNy4yMThjMCA0LjAzOSAyLjQ2NyA1Ljc2IDYuNDc2IDcuMjE5IDIuNTg1LjkyIDMuNDQ1IDEuNTc0IDMuNDQ1IDIuNTgzIDAgLjk4LS44NCAxLjU0NS0yLjM1NCAxLjU0NS0xLjg3NSAwLTQuOTY1LS45MjEtNi45OS0yLjEwOWwtLjkgNS41NTVDNS4xNzUgMjIuOTkgOC4zODUgMjQgMTEuNzE0IDI0YzIuNjQxIDAgNC44NDMtLjYyNCA2LjMyOC0xLjgxMyAxLjY2NC0xLjMwNSAyLjUyNS0zLjIzNiAyLjUyNS01LjczMiAwLTQuMTI4LTIuNTI0LTUuODUxLTYuNTk0LTcuMzA1aC4wMDN6Ii8+PC9zdmc+Cjwvc3ZnPgo=",
    "color": "#635BFF",
    "subtitle": "{{events}}",
    "documentationUrl": "https://docs.stripe.com/webhooks",
@@ -2850,7 +3545,7 @@
     "Development",
     "Productivity"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzAwNTJDQyIvPgogIDxwYXRoIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzLjIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGQ9Ik0yNCAxMC41IDM3LjUgMjQgMjQgMzcuNSAxMC41IDI0WiIvPgogIDxwYXRoIGZpbGw9IiNmZmYiIGQ9Im0yNCAxOC41IDUuNSA1LjUtNS41IDUuNS01LjUtNS41WiIvPgo8L3N2Zz4K",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIEljb25pZnkgbG9nb3Mgc2V0LCBHaWwgQmFyYmFyYSwgQ0MwLTEuMCAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiNmZmYiIHN0cm9rZT0iI2U0ZTRlNyIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8c3ZnIHg9IjkiIHk9IjkiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHU0JJN29iYUMiIHgxPSI5OC4wMzElIiB4Mj0iNTguODg4JSIgeTE9Ii4xNjElIiB5Mj0iNDAuNzY2JSI+PHN0b3Agb2Zmc2V0PSIxOCUiIHN0b3AtY29sb3I9IiMwMDUyY2MiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMyNjg0ZmYiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHSGlmWmxiekUiIHgxPSIxMDAuNjY1JSIgeDI9IjU1LjQwMiUiIHkxPSIuNDU1JSIgeTI9IjQ0LjcyNyUiPjxzdG9wIG9mZnNldD0iMTglIiBzdG9wLWNvbG9yPSIjMDA1MmNjIi8+PHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMjY4NGZmIi8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHBhdGggZmlsbD0iIzI2ODRmZiIgZD0iTTI0NC42NTggMEgxMjEuNzA3YTU1LjUgNTUuNSAwIDAgMCA1NS41MDIgNTUuNTAyaDIyLjY0OVY3Ny4zN2MuMDIgMzAuNjI1IDI0Ljg0MSA1NS40NDcgNTUuNDY2IDU1LjQ2N1YxMC42NjZDMjU1LjMyNCA0Ljc3NyAyNTAuNTUgMCAyNDQuNjU4IDAiLz48cGF0aCBmaWxsPSJ1cmwoI1NWR1NCSTdvYmFDKSIgZD0iTTE4My44MjIgNjEuMjYySDYwLjg3MmMuMDE5IDMwLjYyNSAyNC44NCA1NS40NDcgNTUuNDY2IDU1LjQ2N2gyMi42NDl2MjEuOTM4Yy4wMzkgMzAuNjI1IDI0Ljg3NyA1NS40MyA1NS41MDIgNTUuNDNWNzEuOTNjMC01Ljg5MS00Ljc3Ni0xMC42NjctMTAuNjY3LTEwLjY2NyIvPjxwYXRoIGZpbGw9InVybCgjU1ZHSGlmWmxiekUpIiBkPSJNMTIyLjk1MSAxMjIuNDg5SDBjMCAzMC42NTMgMjQuODUgNTUuNTAyIDU1LjUwMiA1NS41MDJoMjIuNzJ2MjEuODY3Yy4wMiAzMC41OTcgMjQuNzk4IDU1LjQwOCA1NS4zOTYgNTUuNDY2VjEzMy4xNTZjMC01Ljg5MS00Ljc3Ni0xMC42NjctMTAuNjY3LTEwLjY2NyIvPjwvc3ZnPgo8L3N2Zz4K",
    "color": "#0052CC",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/",
@@ -3522,7 +4217,7 @@
     "Sales",
     "Marketing"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0ZGN0E1OSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCI+CiAgICA8Y2lyY2xlIGN4PSIyNy41IiBjeT0iMjcuNSIgcj0iNS41Ii8+CiAgICA8cGF0aCBkPSJNMjcuNSAyMlYxNC41TTIzIDI0LjVsLTctNC41TTIzLjUgMzEuNWwtNiA1Ii8+CiAgPC9nPgogIDxnIGZpbGw9IiNmZmYiPgogICAgPGNpcmNsZSBjeD0iMjcuNSIgY3k9IjEyIiByPSIzIi8+CiAgICA8Y2lyY2xlIGN4PSIxNCIgY3k9IjE4LjgiIHI9IjMiLz4KICAgIDxjaXJjbGUgY3g9IjE1LjUiIGN5PSIzOCIgcj0iMyIvPgogIDwvZz4KPC9zdmc+Cg==",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIFNpbXBsZSBJY29ucyAxNi4zNi4wLCBDQzAtMS4wIC0tPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSIjRkY3QTU5Ii8+CiAgPHN2ZyB4PSIxMSIgeT0iMTEiIHdpZHRoPSIyNiIgaGVpZ2h0PSIyNiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTguMTY0IDcuOTNWNS4wODRhMi4xOTggMi4xOTggMCAwMDEuMjY3LTEuOTc4di0uMDY3QTIuMiAyLjIgMCAwMDE3LjIzOC44NDVoLS4wNjdhMi4yIDIuMiAwIDAwLTIuMTkzIDIuMTkzdi4wNjdhMi4xOTYgMi4xOTYgMCAwMDEuMjUyIDEuOTczbC4wMTMuMDA2djIuODUyYTYuMjIgNi4yMiAwIDAwLTIuOTY5IDEuMzFsLjAxMi0uMDEtNy44MjgtNi4wOTVBMi40OTcgMi40OTcgMCAxMDQuMyA0LjY1NmwtLjAxMi4wMDYgNy42OTcgNS45OTFhNi4xNzYgNi4xNzYgMCAwMC0xLjAzOCAzLjQ0NmMwIDEuMzQzLjQyNSAyLjU4OCAxLjE0NyAzLjYwN2wtLjAxMy0uMDItMi4zNDIgMi4zNDNhMS45NjggMS45NjggMCAwMC0uNTgtLjA5NWgtLjAwMmEyLjAzMyAyLjAzMyAwIDEwMi4wMzMgMi4wMzMgMS45NzggMS45NzggMCAwMC0uMS0uNTk1bC4wMDUuMDE0IDIuMzE3LTIuMzE3YTYuMjQ3IDYuMjQ3IDAgMTA0Ljc4Mi0xMS4xMzRsLS4wMzYtLjAwNXptLS45NjQgOS4zNzhhMy4yMDYgMy4yMDYgMCAxMTMuMjE1LTMuMjA3di4wMDJhMy4yMDYgMy4yMDYgMCAwMS0zLjIwNyAzLjIwN3oiLz48L3N2Zz4KPC9zdmc+Cg==",
    "color": "#FF7A59",
    "subtitle": "{{operation}}: {{resource}}",
    "documentationUrl": "https://developers.hubspot.com/docs/api/crm/understanding-the-crm",
@@ -4379,7 +5074,7 @@
    "categories": [
     "Utility"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0YyNjUyMiIvPgogIDxjaXJjbGUgY3g9IjE1LjUiIGN5PSIzMi41IiByPSIzLjQiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBkPSJNMTMgMjIuNWExMi41IDEyLjUgMCAwIDEgMTIuNSAxMi41TTEzIDEzYTIyIDIyIDAgMCAxIDIyIDIyIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIFNpbXBsZSBJY29ucyAxNi4zNi4wLCBDQzAtMS4wIC0tPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSIjRkZBNTAwIi8+CiAgPHN2ZyB4PSIxMSIgeT0iMTEiIHdpZHRoPSIyNiIgaGVpZ2h0PSIyNiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTkuMTk5IDI0QzE5LjE5OSAxMy40NjcgMTAuNTMzIDQuOCAwIDQuOFYwYzEzLjE2NSAwIDI0IDEwLjgzNSAyNCAyNGgtNC44MDF6TTMuMjkxIDE3LjQxNWMxLjgxNCAwIDMuMjkzIDEuNDc5IDMuMjkzIDMuMjk1IDAgMS44MTMtMS40ODUgMy4yOS0zLjMwMSAzLjI5QzEuNDcgMjQgMCAyMi41MjYgMCAyMC43MXMxLjQ3NS0zLjI5NCAzLjI5MS0zLjI5NXpNMTUuOTA5IDI0aC00LjY2NWMwLTYuMTY5LTUuMDc1LTExLjI0NS0xMS4yNDQtMTEuMjQ1VjguMDljOC43MjcgMCAxNS45MDkgNy4xODQgMTUuOTA5IDE1LjkxeiIvPjwvc3ZnPgo8L3N2Zz4K",
    "color": "#F26522",
    "subtitle": "{{url}}",
    "documentationUrl": "https://www.rssboard.org/rss-specification",
@@ -4466,7 +5161,7 @@
    "categories": [
     "Utility"
    ],
-   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI0YyNjUyMiIvPgogIDxjaXJjbGUgY3g9IjE1LjUiIGN5PSIzMi41IiByPSIzLjQiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBkPSJNMTMgMjIuNWExMi41IDEyLjUgMCAwIDEgMTIuNSAxMi41TTEzIDEzYTIyIDIyIDAgMCAxIDIyIDIyIi8+Cjwvc3ZnPgo=",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIFNpbXBsZSBJY29ucyAxNi4zNi4wLCBDQzAtMS4wIC0tPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSIjRkZBNTAwIi8+CiAgPHN2ZyB4PSIxMSIgeT0iMTEiIHdpZHRoPSIyNiIgaGVpZ2h0PSIyNiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTkuMTk5IDI0QzE5LjE5OSAxMy40NjcgMTAuNTMzIDQuOCAwIDQuOFYwYzEzLjE2NSAwIDI0IDEwLjgzNSAyNCAyNGgtNC44MDF6TTMuMjkxIDE3LjQxNWMxLjgxNCAwIDMuMjkzIDEuNDc5IDMuMjkzIDMuMjk1IDAgMS44MTMtMS40ODUgMy4yOS0zLjMwMSAzLjI5QzEuNDcgMjQgMCAyMi41MjYgMCAyMC43MXMxLjQ3NS0zLjI5NCAzLjI5MS0zLjI5NXpNMTUuOTA5IDI0aC00LjY2NWMwLTYuMTY5LTUuMDc1LTExLjI0NS0xMS4yNDQtMTEuMjQ1VjguMDljOC43MjcgMCAxNS45MDkgNy4xODQgMTUuOTA5IDE1LjkxeiIvPjwvc3ZnPgo8L3N2Zz4K",
    "color": "#F26522",
    "subtitle": "{{feedUrl}}",
    "documentationUrl": "https://www.rssboard.org/rss-specification",
@@ -5036,5 +5731,9 @@
    ],
    "testable": true
   }
- ]
+ ],
+ "transports": [
+  "http"
+ ],
+ "maxConcurrency": 8
 }

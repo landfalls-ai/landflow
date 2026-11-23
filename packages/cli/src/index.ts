@@ -17,9 +17,13 @@ import { debugCommands } from './commands/debug';
 import { debugNodeCommands } from './commands/debug-node';
 import { debugTokenCommands } from './commands/debug-token';
 import { envCommands } from './commands/env';
+import { harnessCommands } from './commands/harness';
+import { practicesCommands } from './commands/practices';
 import { runCommands } from './commands/runs';
+import { spendCommands } from './commands/spend';
 import { syncCommands } from './commands/sync';
 import { transferCommands } from './commands/transfer';
+import { workCommands } from './commands/work';
 import { workflowCommands } from './commands/workflows';
 import { configPath, resolveConnection } from './config';
 import { CliError, EXIT } from './errors';
@@ -29,7 +33,7 @@ export type { Io } from './command';
 export { EXIT } from './errors';
 export { VERSION } from './version';
 
-export const COMMANDS: Command[] = [...authCommands, ...workflowCommands, ...runCommands, ...transferCommands, ...dataCommands, ...syncCommands, ...envCommands, ...auditCommands, ...debugCommands, ...debugTokenCommands, ...debugNodeCommands];
+export const COMMANDS: Command[] = [...authCommands, ...workflowCommands, ...runCommands, ...transferCommands, ...dataCommands, ...syncCommands, ...envCommands, ...auditCommands, ...debugCommands, ...debugTokenCommands, ...workCommands, ...practicesCommands, ...spendCommands, ...harnessCommands, ...debugNodeCommands];
 
 const GLOBAL_FLAGS: FlagSpecs = {
   json: { type: 'boolean', description: 'Print one JSON document (stable shapes; errors too)' },
@@ -48,6 +52,10 @@ const GROUPS: Record<string, string> = {
   'source-control': 'The host’s own Git repository (Settings → Source control)',
   env: 'Environments: promote between environments’ branches, pull this one',
   claude: 'Set up a local Claude Code for this host (.mcp.json and a skill)',
+  work: 'Record your day’s work in the company brain',
+  practices: 'The practices your admins approved: list, show, check a change, learn from a checkout',
+  harness: 'The coding harnesses on this machine: which are installed',
+  spend: 'Your own AI spend: today, this month, by model, your caps',
   audit: 'The audit log: verify its hash chain and signed heads, with or without the host',
 };
 

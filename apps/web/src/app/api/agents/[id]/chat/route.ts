@@ -3,7 +3,13 @@ import { z } from 'zod';
 import { agentEventStream } from '@/lib/server/agents/http';
 import { isRunning, newSession, runAgent } from '@/lib/server/agents/runtime';
 import { agentStore } from '@/lib/server/agents/store';
+import { currentActorId } from '@/lib/server/auth/context';
+import { assistantScope, runInUsageScope } from '@/lib/server/ai-usage'; // AG15:
 import { error, handler, parseBody } from '@/lib/server/http';
+import { canContinueSession, sessionProjectId } from '@/lib/server/agents/session-scope';
+import { agentAvailableIn, projectRole } from '@/lib/server/projects/access';
+import { getProject } from '@/lib/server/projects/store';
+import { routeActor } from '@/lib/server/projects/http';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -11,13 +17,31 @@ type Ctx = { params: Promise<{ id: string }> };
 export const POST = handler(async (request: Request, { params }: Ctx) => {
   const agent = agentStore.get((await params).id);
   if (!agent) return error('Agent not found', 404);
-  const body = await parseBody(request, z.object({ message: z.string().trim().min(1).max(100_000), sessionId: z.string().optional() }));
+  const body = await parseBody(request, z.object({ message: z.string().trim().min(1).max(100_000), sessionId: z.string().optional(), projectId: z.string().max(200).optional() }));
   if (!body.ok) return body.response;
+  // "Test in project": the block is that project's. A project the person has no role in is not found, not forbidden.
+  const asked = body.data.projectId;
+  if (asked && (!getProject(asked) || !projectRole(routeActor(), asked))) return error('Project not found', 404);
+  // PC06: the agent must be available there (its home, a share to it, or all projects).
+  if (asked && !agentAvailableIn(agent.id, asked)) return error('This agent isn’t available in that project', 403);
+  // PC13: a session is continued only from its own project (agents/session-scope.ts), and never moves to another.
   let session = body.data.sessionId ? agentStore.getSession(body.data.sessionId) : undefined;
-  if (body.data.sessionId && (!session || session.agentId !== agent.id)) return error('Session not found', 404);
+  if (body.data.sessionId && (!session || session.agentId !== agent.id || !canContinueSession(routeActor(), session))) return error('Session not found', 404);
+  if (session && asked) {
+    const own = sessionProjectId(session);
+    if (own && asked !== own) return error(`This session belongs to project “${getProject(own)?.name ?? own}”: start a new session there`, 409);
+  }
   if (session && (isRunning(session.id) || session.status === 'running')) return error('This session is still answering — wait for the reply', 409);
   if (session?.status === 'awaiting_approval') return error('Approve or deny the pending tool calls first', 409);
-  session ??= newSession(agent, { source: 'test', userId: 'you', version: 'draft' });
+  // C09: the test chat's memory is the person's own (their user id), not one pool shared by every editor. A session someone else opened stays theirs: this run only reads and writes the memory of the person now chatting (`memoryUser`).
+  const chatter = currentActorId() ?? 'you';
+  session ??= newSession(agent, { source: 'test', userId: chatter, version: 'draft' });
   const start = session;
-  return agentEventStream((onEvent) => runAgent({ agent, session: start, message: body.data.message, onEvent, rootTrace: true }));
+  // A follow-up message stays in the project the test chat began in (a message that names another was refused above).
+  const projectId = session.messages.length ? (session.context?.projectId ?? asked) : asked;
+  // The person chatting: workflows the agent's tools run are theirs (agents/tools.ts, ToolCaller).
+  const by = currentActorId();
+  // AG15: the test chat wrote no surface before (its calls fell under "workflow and agent runs"); now `agent-test`.
+  const testScope = assistantScope({ surface: 'agent-test', agentId: agent.id, ...(by && { userId: by }) });
+  return agentEventStream((onEvent) => runInUsageScope(testScope, () => runAgent({ agent, session: start, message: body.data.message, onEvent, rootTrace: true, memoryUser: chatter, ...(projectId && { context: { caller: 'chat', agentId: agent.id, projectId } }), ...(by && { caller: { startedBy: by } }) })));
 });

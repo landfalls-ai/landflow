@@ -95,6 +95,7 @@ export async function gradeRun(target: string, run: GradedRun, options: { model?
   const toolsLine = run.tools?.length ? `\n\n(Tools the agent called: ${run.tools.join(', ')})` : '';
   const userFeedback = feedbackOf(run);
   const feedbackLine = userFeedback ? `\n\n(The person rated this reply thumbs ${userFeedback.rating}${userFeedback.comment ? `: "${clip(userFeedback.comment, 500)}"` : ''}. Weigh that, but grade the reply against the rubric.)` : '';
+  // SP02: grading a run (an agent session or a node's run) is a judge call.
   const result = await judge(model, 'rubric', { rubric: config.rubric, question: clip(run.input) + toolsLine + feedbackLine, actual: clip(run.output) }, options.signal);
   const now = Date.now();
   const score: OnlineEvalScore = {
@@ -205,9 +206,13 @@ export async function gradeNodeExecution(record: ExecutionRecord, nodeId: string
 const DAY_MS = 86_400_000;
 const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
 
-export function onlineReport(target: string, limit = 50): OnlineEvalReport {
+/**
+ * `scoreVisible` (PC13): an agent's scores carry each graded reply and its rating comment, so the viewer sees only those of
+ * the sessions they may read (the totals and the daily trend stay the agent's own counts).
+ */
+export function onlineReport(target: string, limit = 50, scoreVisible?: (score: OnlineEvalScore) => boolean): OnlineEvalReport {
   const config = db.getOnlineConfig(target);
-  const scores = db.listScores(target, Math.max(limit, 20));
+  const scores = scoreVisible ? db.listScores(target, 500).filter(scoreVisible) : db.listScores(target, Math.max(limit, 20));
   const totals = db.scoreTotals(target);
   const since = new Date(Date.now() - 30 * DAY_MS).toISOString().slice(0, 10);
   const recent = scores.slice(0, 10).map((s) => s.score);
@@ -255,11 +260,11 @@ export const gradingIdle = () => queue.tail;
 /** The execution record once it is saved (the finished event comes just before the save). */
 async function loadRecord(executionId: string): Promise<ExecutionRecord | undefined> {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const saved = store.getExecution(executionId);
+    const saved = await store.loadExecution(executionId);
     if (saved && saved.status !== 'running') return saved;
     await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
   }
-  return store.getExecution(executionId);
+  return store.loadExecution(executionId);
 }
 
 /** Queue a sampled grading of a finished agent session turn. */

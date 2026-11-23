@@ -13,6 +13,7 @@
  */
 import { can, type Role } from '../../shared/auth';
 import {
+  ALL_PROJECTS,
   FULL_ACCESS,
   personalProjectId,
   projectRoleCan,
@@ -26,9 +27,11 @@ import {
   type ResourceKind,
   type ResourceOwnership,
 } from '../../shared/projects';
+import { isLockedWorkflow } from '../singleton';
 import { authDb } from '../auth/db';
 import { AuthError } from '../auth/errors';
 import {
+  allShares,
   defaultProjectId,
   ensurePersonalProject,
   getProject,
@@ -47,8 +50,11 @@ export interface Actor {
   role: Role;
 }
 
-/** Owners and admins: every project, every resource. */
-export const isInstanceAdmin = (actor: Actor | undefined): boolean => can(actor, 'projects:manage');
+/**
+ * Owners and admins: every project, every resource. The built-in role, not `can(…, 'projects:manage')`: a custom role
+ * (C32) never makes its holder an instance admin, whatever else it grants.
+ */
+export const isInstanceAdmin = (actor: Actor | undefined): boolean => actor?.role === 'owner' || actor?.role === 'admin';
 
 /**
  * `actor`'s role in `projectId`: admin for the instance owner and admins, else their membership's role (none when
@@ -68,19 +74,30 @@ export function visibleProjectIds(actor: Actor): Set<string> | undefined {
   return new Set([personalProjectId(actor.id), ...membershipsOf(actor.id).map((m) => m.projectId)]);
 }
 
+/** The access a home role and a list of shares give, with `roleIn` saying the actor's role in a project. */
+function accessFrom(home: string | undefined, homeShares: Array<{ projectId: string; role: string }>, roleIn: (projectId: string | undefined) => ProjectRole | undefined): ResourceAccess | undefined {
+  const homeRole = roleIn(home);
+  let access: ResourceAccess | undefined = homeRole && { role: homeRole, home: true };
+  for (const share of homeShares) {
+    // PC06: an "All projects" share gives every signed-in member use of the resource.
+    if (share.projectId === ALL_PROJECTS) {
+      access = strongerAccess(access, { role: 'user', home: false });
+      continue;
+    }
+    const role = roleIn(share.projectId);
+    if (!role) continue;
+    access = strongerAccess(access, { role: share.role === 'user' ? 'user' : weakerRole<ResourceAccess['role']>(role, share.role as ProjectRole), home: false });
+  }
+  return access;
+}
+
 /** `actor`'s access to one resource (undefined: none, it is invisible to them). */
 export function resourceAccess(actor: Actor | undefined, kind: ResourceKind, id: string): ResourceAccess | undefined {
   if (!actor) return undefined;
   if (isInstanceAdmin(actor)) return FULL_ACCESS;
-  const home = homeProjectId(kind, id);
-  const homeRole = projectRole(actor, home);
-  let access: ResourceAccess | undefined = homeRole && { role: homeRole, home: true };
-  for (const share of shares(kind, id)) {
-    const role = projectRole(actor, share.projectId);
-    if (!role) continue;
-    access = strongerAccess(access, { role: share.role === 'user' ? 'user' : weakerRole<ResourceAccess['role']>(role, share.role), home: false });
-  }
-  return access;
+  const access = accessFrom(homeProjectId(kind, id), shares(kind, id), (projectId) => projectRole(actor, projectId));
+  // The installed access flows decide who gets access: everyone but an instance admin only sees them, whatever their project role.
+  return access && kind === 'workflow' && isLockedWorkflow(id) ? { ...access, role: weakerRole(access.role, 'viewer') } : access;
 }
 
 /** Whether `actor` may do `action` with a resource. */
@@ -153,7 +170,7 @@ export function visibleIds(actor: Actor, kind: ResourceKind, ids: Iterable<strin
   const shared = new Set(
     authDb()
       .all<{ resource_id: string; project_id: string }>('SELECT resource_id, project_id FROM resource_shares WHERE kind = ?', kind)
-      .filter((row) => projects.has(row.project_id))
+      .filter((row) => row.project_id === ALL_PROJECTS || projects.has(row.project_id)) // PC06: '*' is seen by everyone
       .map((row) => row.resource_id),
   );
   for (const id of ids) {
@@ -178,12 +195,18 @@ export function withOwnership<T extends { id: string }>(actor: Actor, kind: Reso
   const fallback = defaultProjectId();
   const projects = new Map(listProjects().map((p) => [p.id, p]));
   const visible = visibleIds(actor, kind, items.map((item) => item.id));
+  // One query per kind for the shares and one for the memberships, not one per item (an N+1 once reads go to Postgres).
+  const allShared = allShares(kind);
+  const admin = isInstanceAdmin(actor);
+  const roles = admin ? undefined : new Map(membershipsOf(actor.id).map((m) => [m.projectId, m.role]));
+  const roleIn = (id: string | undefined): ProjectRole | undefined => (!id ? undefined : admin || id === personalProjectId(actor.id) ? 'admin' : roles?.get(id));
   const out: Array<T & { ownership: ResourceOwnership }> = [];
   for (const item of items) {
     if (visible && !visible.has(item.id)) continue;
     const home = homes.get(item.id) ?? fallback ?? '';
-    if (projectId && home !== projectId && !shares(kind, item.id).some((s) => s.projectId === projectId)) continue;
-    const access = resourceAccess(actor, kind, item.id) ?? FULL_ACCESS;
+    const itemShares = allShared.get(item.id) ?? [];
+    if (projectId && home !== projectId && !itemShares.some((s) => s.projectId === projectId || s.projectId === ALL_PROJECTS)) continue;
+    const access = (admin ? FULL_ACCESS : accessFrom(homes.get(item.id) ?? fallback, itemShares, roleIn)) ?? FULL_ACCESS;
     const project = projects.get(home);
     out.push({ ...item, ownership: { projectId: home, projectName: project?.name ?? 'Default', projectType: project?.type ?? 'personal', access, shared: !access.home } });
   }
@@ -241,4 +264,26 @@ export function usableCredentialIds(projectId: string | undefined, ids: Iterable
   const usable = new Set<string>();
   for (const id of ids) if ((homes.get(id) ?? fallback) === projectId || shared.has(id)) usable.add(id);
   return usable;
+}
+
+// ---- agents across projects (PC06) ------------------------------------------------------------------------
+
+/** Whether an agent is available in a project: its home, a share to that project, or an "All projects" share. One query. */
+export function agentAvailableIn(agentId: string, projectId: string): boolean {
+  const home = homeProjectId('agent', agentId);
+  if (home === projectId) return true;
+  return Boolean(
+    authDb().get<{ n: number }>('SELECT 1 AS n FROM resource_shares WHERE kind = ? AND resource_id = ? AND project_id IN (?, ?)', 'agent', agentId, projectId, ALL_PROJECTS),
+  );
+}
+
+/** Ids of the agents available in a project (home, shared to it, or to all), from two queries. Agents without a row belong to the default project (pass `ids` to include them). */
+export function availableAgentIds(projectId: string, ids?: Iterable<string>): Set<string> {
+  const homes = homeProjects('agent');
+  const fallback = defaultProjectId();
+  const out = new Set<string>();
+  for (const [id, home] of homes) if (home === projectId) out.add(id);
+  for (const row of authDb().all<{ resource_id: string }>('SELECT resource_id FROM resource_shares WHERE kind = ? AND project_id IN (?, ?)', 'agent', projectId, ALL_PROJECTS)) out.add(row.resource_id);
+  if (ids && fallback === projectId) for (const id of ids) if (!homes.has(id)) out.add(id);
+  return out;
 }

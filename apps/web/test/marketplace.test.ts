@@ -17,11 +17,20 @@ import { clearTreeCache, readerFor } from '@/lib/server/marketplace/reader';
 import { linkGoSdk, portFree } from '@/lib/server/marketplace/node-plugins';
 import { corePlugin } from '@/lib/server/nodes';
 import { registry } from '@/lib/server/plugins/registry';
-import { marketplace } from '@/lib/server/marketplace/service';
+import { MarketplaceError, marketplace } from '@/lib/server/marketplace/service';
 import { parseMarketplaceInput, resolveSource } from '@/lib/server/marketplace/sources';
 import { marketplaceStore } from '@/lib/server/marketplace/store';
 import { localTemplates } from '@/lib/server/templates/store';
 import type { ExploreResult, InstallConfirmation, InstallResult } from '@/lib/shared/marketplace';
+
+// Its own data directory, set before the imports above run: in the shared one (vitest.config.ts) another file's
+// marketplace state (the fetched Anthropic catalog, other marketplaces) made the list and explore tests flaky.
+await vi.hoisted(async () => {
+  const { mkdtempSync: makeDir } = await import('node:fs');
+  const { tmpdir: tmp } = await import('node:os');
+  const { join: joinPath } = await import('node:path');
+  process.env.LANDFLOW_DATA_DIR = makeDir(joinPath(tmp(), 'landflow-marketplace-'));
+});
 
 describe('frontmatter', () => {
   it('reads Claude Code agent files', () => {
@@ -475,6 +484,21 @@ replace example.com/other => ../other
     const loaded = await loadPlugin(readerFor({ kind: 'local', root, path: 'echo' }), { name: 'echo-nodes' });
     expect(loaded.nodePlugin).toEqual({ id: 'echo-nodes', runtime: 'node', start: ['tsx', 'main.ts'] });
     expect(() => readerFor({ kind: 'local', root, path: '../..' })).toThrow(/escapes/);
+  });
+
+  it('answers a local plugin whose directory is gone with 422, without the host path', async () => {
+    const other = mkdtempSync(join(tmpdir(), 'landflow-mkt-ghost-'));
+    mkdirSync(join(other, '.claude-plugin'));
+    writeFileSync(join(other, '.claude-plugin/marketplace.json'), JSON.stringify({ name: 'ghost-fixture', plugins: [{ name: 'ghost', source: './ghost' }] }));
+    const added = await marketplace.add(other);
+    try {
+      const caught = await marketplace.detail(added.id, 'ghost').then(() => undefined, (error: unknown) => error);
+      expect(caught).toBeInstanceOf(MarketplaceError);
+      expect((caught as InstanceType<typeof MarketplaceError>).status).toBe(422);
+      expect((caught as Error).message).not.toContain(other);
+    } finally {
+      marketplace.remove(added.id);
+    }
   });
 
   it('downloads, links the SDK, runs, and stops the plugin on uninstall', { timeout: 60_000 }, async () => {

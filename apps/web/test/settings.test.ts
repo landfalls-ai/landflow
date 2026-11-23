@@ -14,6 +14,9 @@ const previousDir = process.env.LANDFLOW_DATA_DIR;
 process.env.LANDFLOW_DATA_DIR = dataDir;
 
 const { store } = await import('@/lib/server/store');
+// The store only emits finished executions; retention subscribes through the reactions.
+const { ensureExecutionReactions } = await import('@/lib/server/execution-reactions');
+ensureExecutionReactions();
 const settings = await import('@/lib/server/settings');
 const { DEFAULT_MAX_EXECUTIONS, SettingsFile, SettingsTable, getSettings, hostTimeZone, pruneExecutions, settingsPatchSchema, staleExecutionIds, updateSettings } = settings;
 
@@ -122,7 +125,13 @@ describe('staleExecutionIds', () => {
 });
 
 describe('retention in the store', () => {
+  const previousEvery = process.env.LANDFLOW_RETENTION_EVERY;
+  afterAll(() => {
+    if (previousEvery === undefined) delete process.env.LANDFLOW_RETENTION_EVERY;
+    else process.env.LANDFLOW_RETENTION_EVERY = previousEvery;
+  });
   beforeEach(() => {
+    process.env.LANDFLOW_RETENTION_EVERY = '1';
     clearExecutions();
     updateSettings({ executions: { maxCount: 300, maxAgeDays: 0 } });
   });

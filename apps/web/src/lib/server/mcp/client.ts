@@ -12,6 +12,9 @@ import { Client, ProtocolError, SdkHttpError, SSEClientTransport, StreamableHTTP
 import type { JsonObject } from '@landflow/protocol';
 import { toToolName, type AgentTool } from '@landflow/engine';
 import { mcpUrlBlocked } from '../governance/policy';
+import { blockedText } from '../../shared/mcp-policy';
+import { checkMcpCall } from './policy-check';
+import { safeFetch } from '../net/safe-fetch';
 import { singleton } from '../singleton';
 
 export type McpTransport = 'httpStreamable' | 'sse';
@@ -142,10 +145,13 @@ function describe(error: unknown, endpoint: McpEndpoint): McpClientError {
 async function connect(endpoint: McpEndpoint): Promise<Client> {
   const url = new URL(endpoint.url);
   const requestInit: RequestInit = { headers: endpoint.headers ?? {} };
+  // Remote MCP servers go through the outbound policy (net/safe-fetch.ts) and the governance MCP list on every redirect
+  // hop, not only the first URL; tests inject their own fetch.
+  const guarded = endpoint.fetch ?? (((input, init) => safeFetch(input as string | URL | Request, init, { hostCheck: (hopUrl) => mcpUrlBlocked(hopUrl.href) })) as typeof fetch);
   const transport =
     endpoint.transport === 'sse'
-      ? new SSEClientTransport(url, { requestInit, ...(endpoint.fetch && { fetch: endpoint.fetch }) })
-      : new StreamableHTTPClientTransport(url, { requestInit, ...(endpoint.fetch && { fetch: endpoint.fetch }) });
+      ? new SSEClientTransport(url, { requestInit, fetch: guarded })
+      : new StreamableHTTPClientTransport(url, { requestInit, fetch: guarded });
   // `auto`: probe with `server/discover` (2026-07-28) and fall back to the `initialize` handshake of older servers.
   const client = new Client(CLIENT_INFO, { versionNegotiation: { mode: 'auto' } });
   try {
@@ -256,7 +262,16 @@ async function listTools(endpoint: McpEndpoint): Promise<Tool[]> {
 }
 
 /** Call one tool; the raw MCP result (an error result is returned, not thrown; a JSON-RPC error about the call becomes one too). */
-export const callMcpTool = (endpoint: McpEndpoint, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult> => withReauth(endpoint, () => callTool(endpoint, name, args, signal));
+export async function callMcpTool(endpoint: McpEndpoint, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult> {
+  // C14: the admin's policy hooks decide before the call leaves, once (not again on a re-sign-in retry). A deny is a tool
+  // result the model reads, marked so the MCP Client node can fail with it as it is.
+  const verdict = await checkMcpCall({ method: 'tools/call', serverUrl: endpoint.url, tool: name, args }, undefined, signal);
+  if (verdict.decision === 'deny') return { isError: true, content: [{ type: 'text', text: blockedText(verdict.hook, verdict.reason) }], _meta: { [POLICY_BLOCK_META]: true } };
+  return withReauth(endpoint, () => callTool(endpoint, name, args, signal));
+}
+
+/** `_meta` key on the result of a call a policy hook blocked. */
+export const POLICY_BLOCK_META = 'landflow/policyBlocked';
 
 async function callTool(endpoint: McpEndpoint, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult> {
   try {
@@ -343,6 +358,7 @@ export function agentToolsFrom(endpoint: McpEndpoint, tools: Tool[]): AgentTool[
     name: toToolName(tool.name),
     description: tool.description || tool.title || tool.annotations?.title || `The “${tool.name}” tool of an MCP server`,
     inputSchema: toolSchema(tool),
+    ...(tool.annotations?.readOnlyHint === true && { readOnlyHint: true }),
     invoke: async (input, signal) => toolOutput(await callMcpTool(endpoint, tool.name, input, signal)),
   }));
 }
@@ -376,6 +392,12 @@ async function allPages<T>(endpoint: McpEndpoint, page: (client: Client, cursor?
   });
 }
 
+/** C14: a resource read or a prompt a policy hook denies throws its reason (the tool wrappers hand it to the model). */
+async function policyGate(subject: Parameters<typeof checkMcpCall>[0]) {
+  const verdict = await checkMcpCall(subject);
+  if (verdict.decision === 'deny') throw new McpClientError(blockedText(verdict.hook, verdict.reason), 403);
+}
+
 const timeoutOf = (endpoint: McpEndpoint) => ({ timeout: endpoint.timeoutMs ?? DEFAULT_TIMEOUT_MS });
 
 /** The resources a server lists (a server without the capability answers with an empty list). */
@@ -397,6 +419,7 @@ export async function listMcpResourceTemplates(endpoint: McpEndpoint): Promise<J
 /** One resource's contents: text as it is, binary as its size (the bytes would swamp a model or an item). */
 export async function readMcpResource(endpoint: McpEndpoint, uri: string): Promise<JsonObject[]> {
   if (!uri.trim()) throw new McpClientError('Enter the resource URI');
+  await policyGate({ method: 'resources/read', serverUrl: endpoint.url, uri, args: { uri } });
   return withReauth(endpoint, async () => {
     try {
       const result = await withMcpClient(endpoint, (client) => client.readResource({ uri }, timeoutOf(endpoint)));
@@ -419,6 +442,7 @@ export async function listMcpPrompts(endpoint: McpEndpoint): Promise<JsonObject[
 /** A prompt with its arguments filled in: the description and its messages (text as it is). */
 export async function getMcpPrompt(endpoint: McpEndpoint, name: string, args: Record<string, string> = {}): Promise<JsonObject> {
   if (!name.trim()) throw new McpClientError('Enter the prompt name');
+  await policyGate({ method: 'prompts/get', serverUrl: endpoint.url, prompt: name, args });
   return withReauth(endpoint, async () => {
     try {
       const result = await withMcpClient(endpoint, (client) => client.getPrompt({ name, arguments: args }, timeoutOf(endpoint)));
@@ -452,15 +476,16 @@ export function resourceAndPromptTools(endpoint: McpEndpoint, extras: ReadonlyAr
   const tools: AgentTool[] = [];
   if (extras.includes('resources')) {
     tools.push(
-      { name: 'list_resources', description: 'List the resources (documents, files, data) this MCP server offers: each with a uri, a name and a description. Read one with read_resource.', inputSchema: { type: 'object', properties: {} }, invoke: async () => ({ resources: await listMcpResources(endpoint), templates: await listMcpResourceTemplates(endpoint).catch(() => []) }) },
-      { name: 'read_resource', description: 'Read a resource of this MCP server by its uri (from list_resources, or a URI template filled in).', inputSchema: { type: 'object', properties: { uri: { type: 'string', description: 'The resource URI' } }, required: ['uri'] }, invoke: async (input) => ({ contents: await readMcpResource(endpoint, String(input.uri ?? '')) }) },
+      { name: 'list_resources', readOnlyHint: true, description: 'List the resources (documents, files, data) this MCP server offers: each with a uri, a name and a description. Read one with read_resource.', inputSchema: { type: 'object', properties: {} }, invoke: async () => ({ resources: await listMcpResources(endpoint), templates: await listMcpResourceTemplates(endpoint).catch(() => []) }) },
+      { name: 'read_resource', readOnlyHint: true, description: 'Read a resource of this MCP server by its uri (from list_resources, or a URI template filled in).', inputSchema: { type: 'object', properties: { uri: { type: 'string', description: 'The resource URI' } }, required: ['uri'] }, invoke: async (input) => ({ contents: await readMcpResource(endpoint, String(input.uri ?? '')) }) },
     );
   }
   if (extras.includes('prompts')) {
     tools.push(
-      { name: 'list_prompts', description: 'List the prompt templates this MCP server offers, with their arguments. Use one with get_prompt.', inputSchema: { type: 'object', properties: {} }, invoke: async () => ({ prompts: await listMcpPrompts(endpoint) }) },
+      { name: 'list_prompts', readOnlyHint: true, description: 'List the prompt templates this MCP server offers, with their arguments. Use one with get_prompt.', inputSchema: { type: 'object', properties: {} }, invoke: async () => ({ prompts: await listMcpPrompts(endpoint) }) },
       {
         name: 'get_prompt',
+        readOnlyHint: true,
         description: 'Get a prompt template of this MCP server with its arguments filled in: answers with the prompt messages to follow.',
         inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The prompt name' }, arguments: { type: 'object', description: 'The prompt arguments, name to string value', additionalProperties: { type: 'string' } } }, required: ['name'] },
         invoke: async (input) => promptText(await getMcpPrompt(endpoint, String(input.name ?? ''), stringRecord(input.arguments))),

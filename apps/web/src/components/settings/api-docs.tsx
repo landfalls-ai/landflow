@@ -1,6 +1,6 @@
 'use client';
 /**
- * Settings → API: the public API from /api/openapi.json (lib/server/openapi.ts). How to authenticate with an API
+ * API reference (Developers page): the public API from /api/openapi.json (lib/server/openapi.ts). How to authenticate with an API
  * key, a curl example built from this page's origin, the document itself to open or download, and every endpoint
  * by area with its method, path and the API key scope it needs; a row opens its parameters, body and responses.
  */
@@ -11,6 +11,7 @@ import { api } from '@/lib/client/api';
 import { Card } from '@/components/shell/page-header';
 import { Badge, Chip, type Tone } from '@/components/ui/badge';
 import { CopyButton } from '@/components/ui/copy-button';
+import { HelpTip } from '@/components/ui/help-tip';
 import { Input, SectionLabel } from '@/components/ui/inputs';
 
 const METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const;
@@ -174,7 +175,8 @@ function EndpointRow({ endpoint, open, onToggle }: { endpoint: Endpoint; open: b
   );
 }
 
-export function ApiDocs() {
+/** `onLoaded` runs once the OpenAPI document has rendered (the page is then its full height). */
+export function ApiDocs({ onLoaded }: { onLoaded?: () => void } = {}) {
   const [doc, setDoc] = useState<OpenApiDoc>();
   const [error, setError] = useState<string>();
   const [origin, setOrigin] = useState('http://localhost:3000');
@@ -187,6 +189,12 @@ export function ApiDocs() {
       .then(setDoc)
       .catch((e: Error) => setError(e.message));
   }, []);
+  const loaded = Boolean(doc);
+  useEffect(() => {
+    if (loaded) onLoaded?.();
+    // Once, when the document arrives: a new onLoaded on a later render is not a new load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
 
   const groups = useMemo(() => {
     if (!doc) return [];
@@ -224,15 +232,17 @@ export function ApiDocs() {
           </div>
         </div>
         <p className="text-[13px] leading-relaxed text-t2">
-          Build, run and inspect workflows from scripts, CI and coding agents. Create a key in Settings → API keys and send it as{' '}
-          <span className="font-mono text-[12px] text-t1">Authorization: Bearer lf_…</span> or <span className="font-mono text-[12px] text-t1">X-Landflow-API-Key: lf_…</span>. A key
-          acts as you, limited to its scopes (<span className="font-mono text-[12px] text-t1">admin</span> includes all of them); each endpoint below names the scope it needs.
-          The OpenAPI 3.1 document works with code generators and API clients.
+          Build, run and inspect workflows from scripts, CI and coding agents with an API key.
+          <HelpTip label="How to authenticate" className="ml-1 align-middle">
+            Create a key in Settings → API keys and send it as <span className="font-mono text-[12px] text-t1">Authorization: Bearer lf_…</span> or{' '}
+            <span className="font-mono text-[12px] text-t1">X-Landflow-API-Key: lf_…</span>. A key acts as you, limited to its scopes (<span className="font-mono text-[12px] text-t1">admin</span> includes all of them); each
+            endpoint below names the scope it needs. The OpenAPI 3.1 document works with code generators and API clients.
+          </HelpTip>
         </p>
         <Snippet label="List workflows" text={list} />
         <Snippet label="Start a workflow" text={execute} />
         <p className="text-[12px] text-t3">
-          Set <span className="font-mono">LANDFLOW_API_KEY</span> to your key first. Errors are JSON <span className="font-mono">{'{ "error": "…" }'}</span>.
+          Set <span className="font-mono">LANDFLOW_API_KEY</span> to your key first; errors are JSON.
         </p>
       </Card>
 

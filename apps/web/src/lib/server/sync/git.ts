@@ -26,11 +26,12 @@ import { hasSecretReference } from '@landflow/engine';
 import { credentials as vault } from '../credentials/vault';
 import { database, dataDir } from '../db';
 import { resolveSecretFields } from '../secrets/resolve';
-import { singleton } from '../singleton';
+import { singleton, singletonKeys } from '../singleton';
 import { store } from '../store';
 import { readSyncDir, writeSyncDir } from './files';
 import { MANIFEST_FILE, WORKFLOWS_DIR, WORKFLOW_SUFFIX, entityKey, isManagedPath, isSafePath, renderState } from './format';
 import { applySync, currentState, exportState, restoreWorkflow, workflowKeys, type PlanOptions } from './index';
+import { HttpError } from '../errors';
 
 const SETTINGS_KEY = 'source_control';
 const GIT_TIMEOUT_MS = Number(process.env.LANDFLOW_GIT_TIMEOUT_MS) || 120_000;
@@ -40,13 +41,13 @@ const TOKEN_FIELDS = ['token', 'accessToken', 'password', 'apiKey', 'value', 'ke
 const SSH_KEY_FIELDS = ['privateKey', 'sshPrivateKey', 'sshKey', 'key'];
 const PEM_PRIVATE_KEY = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/;
 
-export class SourceControlError extends Error {
+export class SourceControlError extends HttpError {
+  static readonly errorName: string = 'SourceControlError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
-    this.name = 'SourceControlError';
+    super(message, status, { expose: true });
   }
 }
 
@@ -416,7 +417,7 @@ export function git(args: string[], options: { cwd: string; auth?: GitAuth }): P
 }
 
 /** One source-control operation at a time. */
-const queue = singleton('source-control-queue', () => ({ tail: Promise.resolve() as Promise<unknown> }));
+const queue = singleton(singletonKeys.sourceControlQueue, () => ({ tail: Promise.resolve() as Promise<unknown> }));
 function exclusive<T>(fn: () => Promise<T>): Promise<T> {
   const run = queue.tail.then(fn, fn);
   queue.tail = run.catch(() => undefined);

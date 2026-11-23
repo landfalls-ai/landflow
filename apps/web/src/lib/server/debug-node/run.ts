@@ -22,11 +22,12 @@ import { authDb } from '../auth/db';
 import { DEBUG_RUN_SCOPE, recordDebugUse, verifyDebugToken, type DebugTokenRecord } from '../auth/debug-tokens';
 import { redactorFor } from '../mcp/debug-tools';
 import { liveExecution } from '../runner';
+import { envNumber } from '../config';
 import { store } from '../store';
 import { variables } from '../variables';
 import { checkPluginUrl, getDebugNodeSettings } from './settings';
 
-const TIMEOUT_MS = Number(process.env.LANDFLOW_DEBUG_NODE_TIMEOUT_MS ?? 30_000);
+const TIMEOUT_MS = envNumber('LANDFLOW_DEBUG_NODE_TIMEOUT_MS', { fallback: 30_000, min: 1000 });
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_ITEMS_RETURNED = 50;
 
@@ -100,7 +101,7 @@ export async function runDebugNode(token: string | undefined, input: DebugNodeRe
   const url = checkPluginUrl(input.pluginUrl ?? '');
   if (!url.ok) return denied(403, 'plugin url', url.reason, { pluginUrl: String(input.pluginUrl).slice(0, 200) });
 
-  const record = liveExecution(grant.executionId) ?? store.getExecution(grant.executionId);
+  const record = liveExecution(grant.executionId) ?? (await store.loadExecution(grant.executionId));
   if (!record || record.workflowId !== grant.workflowId) return denied(404, 'execution gone', `Execution ${grant.executionId} not found`);
   const workflow: Workflow | undefined = record.workflow ?? store.getWorkflow(record.workflowId);
   const node = workflow?.nodes.find((n) => n.id === grant.nodeId);

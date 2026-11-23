@@ -28,6 +28,9 @@ host and for plugins.
 | `LANDFLOW_LOG_SPANS` | `true` | write one log line per finished span (see §3) |
 | `LANDFLOW_LOG_OTLP` | `true` | host: with an OTLP endpoint, also export every log line (but the `span.end` lines) as an OTel log record (see §3) |
 | `LANDFLOW_METRICS_PROMETHEUS` | `true` | serve Prometheus text: host `GET /api/metrics`, plugins `GET /metrics` on their HTTP port |
+| `LANDFLOW_TRACE_SLOW_READ_MS` | `1000` | host: a read-only API request (`GET`) keeps its trace only when it takes at least this long or ends in a 5xx; the rest are dropped with their child spans (§2). `0` keeps every read |
+| `LANDFLOW_DB_SLOW_MS` | `50` | host: a database call at least this slow gets a `db.query` span (§4); every call is timed in `landflow.db.query.duration` whatever this says |
+| `LANDFLOW_METRICS_WORKFLOW_LABEL` | `false` | host: `true` puts `landflow.workflow.id` back on three counters (§5); one series per workflow, so off by default |
 | `LANDFLOW_TRACE_URL` | – | host UI only: link template for a trace, e.g. `http://localhost:16686/trace/{traceId}` (Jaeger) or a Grafana Tempo URL |
 | `NEXT_OTEL_FETCH_DISABLED` | host: `1` | Next.js' own `fetch` spans stay off: the host already opens `plugin.rpc` and `gen_ai.chat` client spans for its outbound calls. Set `0` to get them back |
 
@@ -57,11 +60,20 @@ that link.
 **No spans** for health checks, heartbeats, manifest polling or the SSE event stream: they would
 drown the useful traces. They are counted in metrics instead. On the host, a request is traced
 when it is an API request that changes something (`POST`, `PUT`, `PATCH`, `DELETE`) or any
-webhook request. Read-only API requests (`GET`/`HEAD`/`OPTIONS`, which the UI polls), pages and
-assets, `/api/events`, `/api/health`, `/api/metrics` and `/api/plugins/announce` get no trace.
-Their server spans are still recorded but not sampled, so they still count in
-`http.server.request.duration`. An announce that (re-)registers a plugin starts its own
-`registry.register` trace.
+webhook request. Pages and assets, `/api/events`, `/api/health*`, `/api/metrics` and
+`/api/plugins/announce` get no trace; their server spans are still recorded but not sampled, so
+they still count in `http.server.request.duration`. An announce that (re-)registers a plugin
+starts its own `registry.register` trace.
+
+**Read-only API requests** (`GET`/`HEAD`/`OPTIONS`, which the UI polls) are sampled when they
+end: the trace is kept, whole, when the request took at least `LANDFLOW_TRACE_SLOW_READ_MS`
+(default 1000) or ended in a 5xx, and dropped otherwise. The host holds a read's finished spans
+(at most 500) until its server span ends, so a slow read still shows its database and plugin spans. A descendant
+still open when the read ends follows the verdict; once the read and its descendants have ended the read is freed, so a
+span started later under its context is exported on its own. A read in flight for over five minutes, or the oldest past
+5,000 in flight, is forgotten and its spans export on their own. Only the spans that descend from the read's server span are held; other spans of a
+trace the read joined through a `traceparent` (a plugin fetching a binary during a run) export as usual. A kept
+server span carries `landflow.trace.deferred_read`. Before this, no read was ever traced, so a slow `GET` was invisible.
 
 ## 3. Logs
 
@@ -80,13 +92,45 @@ With `LANDFLOW_LOG_SPANS=true` (the default) every finished span is also written
 - `level` is `error` for spans with error status, plus an `error` field holding the message.
 - Field names: `ts`, `level`, `service`, `msg`, `trace_id`, `span_id`, then attributes flattened
   with their OTel names. `pretty` format prints `HH:MM:SS level service msg (trace=…/span=…) k=v`.
+- **Joining lines to requests** (host): a line written while an API request runs also carries `request_id` (the
+  `X-Request-Id`, taken from the request or generated), `http.route` (the route pattern), `user.id` and, for an API
+  key, `landflow.api_key.id` (the key's id, never the key). The last two appear once the guard has let the request in.
+  The same ids are attributes of the active span (inside a Next.js request this may be the route handler's span rather than the root request span, so the root's `span.end` line need not carry `landflow.request_id`; check in your backend) (`landflow.request_id`, `http.route`, `enduser.id`,
+  `landflow.api_key.id`), and `/api` responses carry a W3C `traceparent` header whenever a span is active, so a support
+  case that starts from an `X-Request-Id` or a trace id finds every line. Lines outside a request (schedules, triggers,
+  workers) have none of these. Reads are not always sampled: a `traceparent` with flags `00` names a trace the
+  backend may not have.
 - **Never log** credential values, `Authorization` headers or item payloads. Log counts and ids. The
-  host and the SDKs redact attribute keys matching `/(token|secret|password|authorization|api[-_]?key|cookie)/i`
+  host redacts (the SDKs keep their narrower list) attribute keys matching `token`, `secret`, `password`, `authorization`, `api[-_]?key`,
+  `cookie`, `private[-_]?key`, `passphrase`, `signature`, `connection[-_]?string`, `session[-_]?(token|secret|cookie)`,
+  a name ending in `dsn`, and a key named exactly `credentials` (case-insensitive; names ending in `url`, `uri`,
+  `endpoint`, `host`, `type` or `algorithm` are kept, as are ids of keys, tokens and sessions, such as `landflow.api_key.id` and `apiKeyId` (`secretId` is redacted), and `session` and `sessionId`: agent session ids are needed to
+  debug a conversation)
   when the value is a string (numbers and booleans such as `gen_ai.usage.input_tokens` are kept), in
-  log fields and span attributes alike. The SDKs also replace the credential values of the current
+  log fields and span attributes alike. The host also scrubs secret-shaped *values* from every string it logs, error
+  messages and stacks included, wherever they appear: `Bearer <token>`, Landflow API keys (`lf_…`), provider keys
+  (`sk-…` including `sk-ant-…`, GitHub `ghp_`/`github_pat_`, Slack `xox…-`), URL userinfo
+  (`scheme://user:password@host` becomes `scheme://[redacted]@host`) and PEM private key blocks. Credential values
+  a node was handed (password-typed fields, secret fields, fields whose name says secret) are remembered for the process
+  and replaced like `$secrets` values in logs, results and stored runs (the most recent 5000, least recently used out). Credential values shorter than 12 characters are not remembered (a weak password such as `postgres` would rewrite unrelated
+  node output). The SDKs also replace the credential values of the current
   request wherever they appear (messages, URLs, errors).
 - Node logs (`ctx.logger.*` / `ExecuteResponse.logs`) are also written to the process log with the
   trace context, besides being returned to the host.
+- **Exception fingerprint.** Every error line made from an `Error` carries `exception.fingerprint`: 12 hex characters of
+  a hash of the exception type and the top three in-repo frames (function and file, with line and column numbers and the
+  checkout path stripped; `node:` and `node_modules` frames skipped). The same bug groups across releases and machines,
+  two call sites don't, in development and from source. In the shipped host image (Next standalone, minified chunks
+  with a content hash in the name, no source maps) the frames are minified, so the key is the chunk's source-path
+  words with the hash stripped: the group survives a rebuild (the exception type is a literal per class there too: every `HttpError` subclass's
+  `errorName` and the transport errors' `name`, never a minified class name) but is coarser: by exception type and chunk name words, which many chunks share (about 100 chunks are named `apps_web_src_lib_server`). Exact
+  call-site grouping there needs server source maps with `--enable-source-maps` (a follow-up: `next.config.ts` and
+  the host Dockerfile are outside this change). Spans failed through the host's `failSpan` (plugin RPC, triggers,
+  A2A, MCP, `withSpan`) carry the same attribute on their `exception` event (`exception.type`,
+  `exception.message`, `exception.stacktrace`, `exception.fingerprint`); workflow and node spans (engine), the
+  `db.query` span and SDK spans do not. So a Loki query such as
+  `{service_name="landflow-host"} | json | exception_fingerprint="3f2a9c0d41be"` and a Tempo search find the same group.
+  A thrown non-`Error` gets a fingerprint from its type alone, which groups all of them.
 - **Over OTLP** (host): with `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) set and
   `LANDFLOW_LOG_OTLP` on (the default), every line is also an OTel log record (scope `landflow-host.log`, the message as
   the body, the fields as attributes, the active trace and span ids), so a backend such as Loki links each line to its
@@ -107,9 +151,11 @@ conventions.
 | `workflow.execute` | internal | `landflow.workflow.id`, `landflow.workflow.name`, `landflow.execution.id`, `landflow.execution.mode`, `landflow.execution.status` (also `waiting`), `landflow.execution.debug`, `landflow.execution.rerun_of`, `landflow.execution.rerun_scope` · a run that stops to wait: `landflow.wait.node`, `landflow.wait.resume` (`time`/`webhook`/`form`/`subworkflow`), `landflow.wait.until` · a resumed run (one more `workflow.execute` span per resume, see below): `landflow.execution.resume_of` (the execution id it continues), `landflow.execution.resume_kind` (`time`/`webhook`/`form`/`timeout`/`subworkflow`, or `restart` for a run continued from its checkpoint after a restart, which also sets `landflow.execution.resumed_after_restart=true` and `landflow.checkpoint.step`, the step id it continued after) · events `debugger.paused` (`landflow.node.name`, `landflow.debugger.reason`) / `debugger.resumed` (`landflow.debugger.command`) · error status on a failed run |
 | `node.execute {node type}` | internal | `landflow.node.id`, `landflow.node.name`, `landflow.node.type`, `landflow.plugin.id`, `landflow.transport` (`in-process`/`http`/`grpc`), `landflow.node.source` (`main`/`ai_tool`/`ai_languageModel`/`ai_memory`/`ai_embedding`/`ai_document`/`ai_textSplitter`/`ai_retriever`/`ai_reranker`), `landflow.execution.id`, `landflow.items.in`, `landflow.items.out`, `landflow.node.status` (`success`/`error`/`canceled`/`waiting`), `landflow.node.reused`, `landflow.node.pinned`, `landflow.node.disabled` · the node that suspends the run: `landflow.node.status=waiting`, `landflow.wait.resume`, `landflow.wait.until`; when the run resumes, that node's result is a short `node.execute` span with `landflow.node.resumed=true` and `landflow.wait.resume_kind` · an `exception` event per failed attempt (with `retryOnFail`), error status when the node fails |
 | `plugin.rpc {Method}` (`Execute`, `LoadOptions`, `TestCredentials`, `GetManifest`) | client | `rpc.system` (`grpc`/`http`), `rpc.service=landflow.plugin.v1.PluginService`, `rpc.method`, `server.address`, `server.port`, `landflow.plugin.id` |
-| `gen_ai.chat {model}` | client | OTel GenAI conventions: `gen_ai.system` (`anthropic`/`ollama`/`openai`), `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons`, `landflow.ai.cost_usd` (estimated, when the call ran in an execution or agent run; [§8](#token-and-cost-tracking)) |
+| `gen_ai.chat {model}` | client | OTel GenAI conventions: `gen_ai.system` (`anthropic`/`ollama`/`openai`), `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons`, `landflow.ai.cost_usd` (estimated, when the call ran in an execution or agent run; [§8](#8-token-and-cost-tracking)), and, only when set, `landflow.ai.purpose` (why the call was made, [llm-gateway.md](llm-gateway.md#what-each-call-was-for)), `landflow.ai.iteration` (the agent loop's step, from 1) and `landflow.node.id` (the workflow node the call ran under, even with a sub-node or tool in between) and `landflow.ai.usage_id` (the `ai_usage` row the call was recorded as, set on the call's own span once the row is written, also when the call took over a row the spend import had read first; never on a plugin node's span). No prompt text is ever a span attribute |
 | `gen_ai.embeddings {model}` | client | same conventions with `gen_ai.operation.name=embeddings`: `gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.embeddings.dimension.count`. Counts in the `landflow.ai.*` metrics like chat (input tokens only) |
+| `db.query` | internal | Only for a slow call (`LANDFLOW_DB_SLOW_MS`, default 50 ms) or a Postgres `direct()` call (always): `db.system` (`sqlite`, `postgres-mirror` for the in-memory copy Postgres mode reads from, or `postgresql` for `direct()`), `db.operation` (`select`/`insert`/`upsert`/`delete`/`direct`), `db.query.summary` (the first 60 characters of the SQL with string and number literals stripped; `direct()` has none). Child of the active span, backdated to when the call started |
 | `vector_store.insert {store}`, `vector_store.query {store}` | client (child of the vector store's `node.execute`, or of `execute_tool` for an agent knowledge base) | RAG ([Retrieval](features/ai.md#retrieval-rag)): `landflow.vector_store` (`memory`/`sqlite`/`pgvector`), `db.system.name` (`landflow.memory`/`sqlite`/`postgresql`), `db.collection.name` (the collection), `db.operation.name` (`insert`/`query`), `landflow.retrieval.documents` (written or returned); query: `landflow.retrieval.mode` (`vector`/`hybrid`), `landflow.retrieval.top_k`, `landflow.retrieval.filtered`. The query is embedded just before, by the embeddings sub-node (`node.execute`, `landflow.node.source=ai_embedding`, with its `gen_ai.embeddings` child; a knowledge base embeds directly). Document text never reaches span attributes |
+| `vector_store.replace {store}` | client | A document's chunks swapped in one step (folder indexing, the Notion walk, Upsert by Key; [chunk diffing](features/ai.md#retrieval-rag)): `landflow.vector_store`, `db.collection.name`, `landflow.retrieval.documents` (chunks written) |
 | `retrieval.rerank` | internal | `landflow.rerank.method` (`llm`), `gen_ai.request.model`, `landflow.rerank.documents` (candidates), `landflow.retrieval.top_k`; the judge's call is a `gen_ai.chat` child |
 | `guardrails.check` | internal (child of the Guardrails node's `node.execute`, one per item) | `landflow.guardrails.mode` (`check`/`sanitize`), `landflow.guardrails.checks` (the checks that ran), `landflow.guardrails.passed`, `landflow.guardrails.violations` (count), `landflow.guardrails.failed` (the checks that found something); model checks are `gen_ai.chat` children. Matched values never reach spans |
 | `trigger.fire` | internal (root for schedule/poll/error/retry; child of the HTTP span for manual runs, webhooks, forms, MCP Server Trigger calls and chat) | `landflow.trigger.source` (`manual`/`webhook`/`form`/`mcp`/`schedule`/`poll`/`chat`/`error`/`retry`/`usage`), `landflow.workflow.id`, `landflow.node.name`; `landflow.trigger.test=true` (on the span and the `landflow.trigger.fires` metric) for a call to a test URL (`/api/webhook-test/…`, `/form-test/…`, `/mcp-test/…`), which is otherwise traced exactly like the production call (those URLs are sampled like webhooks: any method, form and MCP POSTs). `error`: an error workflow started for a failed execution, as its own trace; `retry`: an automatic retry of a failed execution (a manual Retry runs under its request's span); `usage`: an On Usage Event trigger started by the [second brain](second-brain.md)'s ledger |
@@ -119,7 +165,7 @@ conventions.
 
 | `invoke_agent {agent name}` | internal (root for schedule, Telegram and Slack runs; child of the HTTP span for the test chat; child of `execute_tool` for a sub-agent) | OTel GenAI agent conventions: `gen_ai.operation.name=invoke_agent`, `gen_ai.agent.id`, `gen_ai.agent.name`, `gen_ai.conversation.id` (the session), `gen_ai.system`, `gen_ai.request.model`, `landflow.agent.source` (`test`/`schedule`/`telegram`/`slack`/`workflow`/`agent`), `landflow.agent.version` (`draft` or N), `landflow.agent.end_reason` |
 | `execute_tool {tool name}` | internal (child of `invoke_agent`) | `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type=function`, `landflow.agent.tool.kind` (`node`/`workflow`/`agent`/`skill`/`memory`/`a2a`), plus the agent attributes; contains the node's spans, a workflow's `workflow.execute`, a sub-agent's `invoke_agent` or a remote agent's client `invoke_agent` |
-| `assistant.suggest {node type}`, `assistant.chat` | internal (child of the request span) | The editor assistant ([assistant.md](assistant.md)). `landflow.assistant.request` (`suggest`/`chat`), `landflow.workflow.id`, `gen_ai.request.model`; suggest: `landflow.node.type`, `landflow.assistant.suggestions`, `landflow.outcome=skipped` for a node not worth a model call; chat: `landflow.assistant.turns`, `landflow.assistant.steps` and an `assistant.tool` event per tool call (`gen_ai.tool.name`, `landflow.outcome`). The model calls are `gen_ai.chat` children |
+| `assistant.suggest {node type}`, `assistant.chat`, `assistant.architect` | internal (child of the request span) | The editor assistant and the Agent architect ([assistant.md](assistant.md)). `landflow.assistant.request` (`suggest`/`chat`/`architect`); a streamed reply that ends in an `error` event marks its span failed with `landflow.outcome=error` and `landflow.error.kind` (`model`/`cap`/`stalled`/`internal`); `landflow.workflow.id`, `gen_ai.request.model`; suggest: `landflow.node.type`, `landflow.assistant.suggestions`, `landflow.outcome=skipped` for a node not worth a model call; chat: `landflow.assistant.turns`, `landflow.assistant.steps` and an `assistant.tool` event per tool call (`gen_ai.tool.name`, `landflow.outcome`). The model calls are `gen_ai.chat` children |
 
 A tool call by an AI agent is a `node.execute` span with `landflow.node.source=ai_tool`, a child
 of the agent's span, so the trace shows agent → model → tool → plugin → external API. Sub-nodes
@@ -194,12 +240,58 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.node.runs` | counter | `landflow.node.type`, `landflow.plugin.id`, `landflow.transport`, `landflow.node.status` (`success`/`error`), `landflow.node.source` |
 | `landflow.node.duration` | histogram (ms) | same |
 | `landflow.node.items` | counter | `landflow.node.type`, `landflow.plugin.id`, `landflow.direction` (`in`/`out`) |
-| `landflow.trigger.fires` | counter | `landflow.workflow.id`, `landflow.trigger.source` |
+| `landflow.trigger.fires` | counter | `landflow.trigger.source`, `landflow.workflow.id` only with `LANDFLOW_METRICS_WORKFLOW_LABEL=true` |
 | `landflow.poll.runs` | counter | `landflow.node.type`, `landflow.poll.result` (`items`/`empty`/`error`) |
 | `landflow.poll.duration` | histogram (ms) | `landflow.node.type` |
-| `landflow.schedule.lag` | histogram (ms) | `landflow.workflow.id`: how late a scheduled run started |
-| `landflow.webhook.requests` | counter | `landflow.workflow.id`, `http.response.status_code` |
-| `landflow.runtime.events` | counter | `landflow.runtime.event`: `deduplicated` (a trigger call repeated an idempotency key), `skipped` (no free concurrency slot, or a full queue), `queued`, `recovered` (continued after a restart), `recovery_failed`, `retry_scheduled`, `retried` (a retry started), `stopped` (by Stop all); `landflow.workflow.id` (not on `stopped`) |
+| `landflow.schedule.lag` | histogram (ms) | none: how late a scheduled run started (the workflow id is on the `trigger.fire` span) |
+| `landflow.webhook.requests` | counter | `http.response.status_code`, `landflow.workflow.id` only with `LANDFLOW_METRICS_WORKFLOW_LABEL=true` |
+| `landflow.runtime.events` | counter | `landflow.runtime.event`: `deduplicated` (a trigger call repeated an idempotency key), `skipped` (no free concurrency slot, or a full queue), `queued`, `recovered` (continued after a restart), `recovery_failed`, `retry_scheduled`, `retried` (a retry started), `stopped` (by Stop all); `landflow.workflow.id` only with `LANDFLOW_METRICS_WORKFLOW_LABEL=true` |
+
+### Saturation, database and security (host)
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.runtime.event_loop.delay` | gauge (ms) | `landflow.quantile` (`p50`, `p99`, `max`): event-loop delay since the last collection (a 20 ms `monitorEventLoopDelay` sampler, read and reset at most once a second) |
+| `landflow.runtime.event_loop.utilization` | gauge (0 to 1) | share of time the loop was busy since the last collection |
+| `landflow.runtime.memory` | gauge (bytes) | `landflow.memory.type` (`heap_used`, `heap_total`, `rss`) |
+| `landflow.runtime.gc.duration` | histogram (ms) | `landflow.gc.kind` (`minor`, `major`, `incremental`, `weakcb`) |
+| `landflow.db.query.duration` | histogram (ms) | `db.operation` (`select`/`insert`/`upsert`/`delete`/`direct`); SQL text is never a label. Buckets from 0.1 ms. Every `all`/`get`/write of the store (SQLite, and Postgres mode's in-memory copy) and every Postgres `direct()` call. Slow ones also get a `db.query` span (§4). Cost with the metrics SDK on: about 0.15 µs a call (a primary-key read of the in-memory copy goes from 0.65 to 0.8 µs; the SDK's attribute lookup, not the timing, is most of it); with metrics off, about 50 ns. The Databases plugin has a metric of the same name with its own attributes; they differ by `service.name` |
+| `landflow.auth.sign_in_failures` | counter | none: wrong password or unknown user |
+| `landflow.auth.limited` | counter | `landflow.limiter` (`email`, `ip`, `form`): attempts a sign-in or form rate limiter refused |
+| `landflow.sse.connections` | up-down counter | `http.route` (the route template, such as `/api/workflows/:id/run`; never a request path, so no ids; `other` for a stream that names no route): open Server-Sent Events streams |
+| `landflow.harness.events` | counter | `harness` (a registry id), `outcome` (`applied`, `late`, `limited`, `refused`): hook events taken by `POST /api/harness/:harness/hooks`; `late` arrived older than the session's last applied event and changed nothing |
+| `landflow.harness.unknown_events` | counter | `harness`: events whose name the registry entry does not list (stored, status unchanged) |
+| `landflow.harness.blocked` | counter | `kind` (`usage_limit`, `credits_depleted`, `unknown`), `harness` (`a2a` on the A2A path; `codex` for the CLI watch): one per entry into Blocked (`lib/server/a2a/blocked.ts`, scope `landflow-harness`) |
+| `landflow.audit.write_failures` | counter | `action` (the event's, `api.request` for the generic request layer): audit events that could not be stored ([fail-closed mode](features/audit-and-governance.md#reliability-and-fail-closed-mode)) |
+| `landflow.audit.outbox.delivery_failures` | counter | `destination`: failed deliveries to a SIEM destination |
+| `landflow.audit.outbox.depth` | gauge | audit events queued for SIEM destinations and not yet delivered (the shared outbox; every host reports it, also with `LANDFLOW_AUDIT_OUTBOX=off`) |
+| `landflow.audit.outbox.oldest_age` | gauge (s) | age of the oldest undelivered outbox row |
+| `landflow.outbox.backlog` | gauge | `topic` (`subscription`): run events waiting to be delivered to [event subscriptions](features/event-subscriptions.md) (the leader reports it with every host's view of the table; never a subscription id) |
+| `landflow.outbox.oldest_age_s` | gauge (s) | `topic`: age of the oldest waiting run event |
+| `landflow.outbox.delivered` | counter | `topic`, `outcome` (`delivered`, `failed`, `dead` given up after 72 h, `gone` a 410, `enqueue_failed` a run's events could not be written with its save, counted on the process that saved): delivery attempts of run events |
+
+**Breaking change for dashboards:** `landflow.workflow.id` is no longer a label on `landflow.schedule.lag` (a
+histogram), `landflow.trigger.fires`, `landflow.webhook.requests` and `landflow.runtime.events`: one series per
+workflow (times every bucket on a histogram) grows with the workflows. Group by workflow from traces, or set
+`LANDFLOW_METRICS_WORKFLOW_LABEL=true` to get it back on the three counters (never on the histogram).
+
+### Postgres write queue (host, `LANDFLOW_DB=postgres`)
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.db.write_queue.batches` | gauge | write batches not yet applied on Postgres |
+| `landflow.db.write_queue.oldest_age` | gauge (s) | age of the oldest of them |
+| `landflow.db.write_blocked` | gauge | 1 while Postgres rejects a batch and the store refuses writes (`StoreUnavailableError`) |
+| `landflow.db.write_rejections` | counter | batches Postgres rejected with a non-connection error |
+| `landflow.db.write_retries` | counter | retries of a blocked batch |
+
+See [postgres-write-queue.md](features/postgres-write-queue.md); `Database.writeHealth()` reports the same state.
+
+In queue mode each process also reports how far its copy trails the others:
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `landflow.db.replication.lag` | gauge (s) | time between another process sending a change notice (just before its commit) and this process applying it, as of the last notice applied (not updated while none arrives); it compares the sender's clock with the receiver's, so skew between machines shows as lag (or is clamped to 0) |
 
 ### Services (host)
 
@@ -208,30 +300,37 @@ histograms in **milliseconds** with buckets `1, 5, 10, 25, 50, 100, 250, 500, 10
 | `landflow.plugin.rpc.duration` | histogram (ms) | `landflow.plugin.id`, `rpc.system`, `rpc.method`, `landflow.outcome` (`ok`/`error`/`timeout`) |
 | `landflow.plugins.online` | gauge | `landflow.plugin.language` |
 | `landflow.plugin.heartbeats` | counter | `landflow.plugin.id` |
-| `landflow.ai.requests` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.outcome` |
+| `landflow.process.errors` | counter | `kind` (`unhandled_rejection`, `uncaught_exception`, `service_start`) |
+| `landflow.ai.requests` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.ai.purpose`, `landflow.outcome` |
 | `landflow.ai.duration` | histogram (ms) | `gen_ai.system`, `gen_ai.request.model` |
-| `landflow.ai.tokens` | counter | `gen_ai.system`, `gen_ai.request.model`, `gen_ai.token.type` (`input`/`output`) |
-| `landflow.ai.cost` | counter (USD) | `gen_ai.system`, `gen_ai.request.model`: estimated cost by the price table ([§8](#token-and-cost-tracking)) |
+| `landflow.ai.tokens` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.ai.purpose`, `gen_ai.token.type`: `input` (the whole prompt, cached tokens included), `output`, `cache_read` and `cache_write` (parts of `input`, never added to it: hit rate is `cache_read / input`). The OTel GenAI conventions define only `input` and `output`; the cache types are Landflow's |
+| `landflow.ai.cost` | counter (USD) | `gen_ai.system`, `gen_ai.request.model`, `landflow.ai.purpose`: estimated cost by the price table ([§8](#8-token-and-cost-tracking)) |
 | `landflow.ai.caps_reached` | counter | `gen_ai.system`, `gen_ai.request.model`, `landflow.ai.cap.when` (`before`: a call refused, `after`: a call that went over) |
 | `landflow.retrieval.requests` | counter | `landflow.vector_store`, `db.operation.name` (`insert`/`query`), `landflow.outcome` |
 | `landflow.retrieval.duration` | histogram (ms) | `landflow.vector_store`, `db.operation.name` |
 | `landflow.retrieval.documents` | counter | `landflow.vector_store`, `db.operation.name`: documents written or returned |
+| `landflow.rag.chunks` | counter | `landflow.outcome` (`reused` a chunk kept its vector, `embedded` a chunk sent to the model, `removed` a chunk of a file that left): what a re-index did |
 | `landflow.guardrails.checks` | counter | `landflow.guardrails.mode`, `landflow.guardrails.result` (`pass`/`fail`) |
 | `landflow.agent.runs` | counter | `gen_ai.agent.id`, `gen_ai.agent.name`, `landflow.agent.source`, `landflow.agent.end_reason` |
 | `landflow.agent.run.duration` | histogram (ms) | `gen_ai.agent.id`, `gen_ai.agent.name`, `landflow.agent.source` |
 | `landflow.agent.tool.calls` | counter | agent attributes, `gen_ai.tool.name`, `landflow.agent.tool.kind`, `landflow.outcome` |
 | `landflow.agent.tool.duration` | histogram (ms) | agent attributes, `gen_ai.tool.name`, `landflow.agent.tool.kind` |
+| `landflow.approval.tickets` | counter | `system` (`servicenow`/`webhook`), `outcome` (`opened`, `open_failed`, `closed`, `close_failed`, `skipped`): tickets of approval requests ([approval-inbox.md](approval-inbox.md#tickets)); no alert rule pages on it |
 | `landflow.agent.approvals` | counter | agent attributes, `gen_ai.tool.name`, `landflow.agent.approval.decision` (`approved`/`denied`) |
 | `landflow.agent.tokens` | counter | agent attributes, `gen_ai.token.type` (`input`/`output`) |
 | `landflow.a2a.calls` | counter | `gen_ai.agent.name` (the card's name), `rpc.method`, `landflow.a2a.caller` (`agent`/`node`), `a2a.task.state`, `landflow.outcome` |
 | `landflow.a2a.call.duration` | histogram (ms) | `gen_ai.agent.name`, `rpc.method`, `landflow.a2a.caller`: until the task settles or pauses |
 | `landflow.a2a.tokens` | counter | `gen_ai.agent.name`, `gen_ai.token.type`: what the remote agent reports using (kagent's usage extension) |
 | `landflow.a2a.tool.calls` | counter | `gen_ai.agent.name`, `gen_ai.tool.name`, `landflow.a2a.tool.status` (`success`/`error`/`awaiting_approval`): the remote agent's own tool calls |
-| `landflow.assistant.requests` | counter | `landflow.assistant.request` (`suggest`/`chat`), `landflow.outcome` (`ok`/`error`/`timeout`/`skipped`) |
+| `landflow.mcp.policy.decisions` | counter | `decision` (`allow`, `deny`, `failed_open`, `failed_closed`), `hook` (the hook's name): the outbound MCP calls an admin's [policy hook](features/audit-and-governance.md#mcp-policy-hooks) looked at |
+| `landflow.mcp.policy.store_errors` | counter | reads of the stored policy hooks that were unreadable or invalid (calls are blocked in production) |
+| `landflow.assistant.requests` | counter | `landflow.assistant.request` (`suggest`/`chat`/`architect`), `landflow.outcome` (`ok`/`error`/`timeout`/`skipped`) |
 | `landflow.assistant.duration` | histogram (ms) | `landflow.assistant.request` |
 | `landflow.assistant.suggestions` | counter | `landflow.assistant.kind` (`fix`/`param`/`data`/`next`, or `proposal` for a chat proposal): what the editor was shown |
 | `landflow.assistant.applied`, `landflow.assistant.dismissed` | counter | `landflow.assistant.kind`: reported by the editor (`POST /api/assistant/feedback`) |
 | `http.server.request.duration` | histogram (s) | standard: `http.request.method`, `http.route`, `http.response.status_code`. The host measures it from the Next.js request spans, untraced requests included |
+
+`landflow.ai.purpose` is one of the purposes in [llm-gateway.md](llm-gateway.md#what-each-call-was-for) or `none` when unset. No node, run, agent or person id is ever a metric attribute (cardinality). A plugin node's `model` record counts its tokens by `input` and `output` only (it reports no cache counts to the metric) and labels them `none`, so no series is unlabelled; it adds no `landflow.ai.cost` point.
 
 ### Plugins (every SDK, automatic)
 
@@ -357,9 +456,51 @@ Every process writes JSON logs with `trace_id`. To browse traces, run any OTLP b
   `http://localhost:9464/metrics`.
 - Prometheus scraping `http://localhost:3000/api/metrics` and each plugin's `http://host:port/metrics`.
 - On the OrbStack cluster, the `orbstack-observability` overlay runs Grafana with Tempo, Prometheus and Loki in
-  `landflow-dev`, points every Landflow process at it and ships the "Landflow · agent runs" dashboard
+  `landflow-dev`, points every Landflow process at it and ships the "Landflow · agent runs" and "Landflow · overview" dashboards and the alert rules ([below](#alerts-and-dashboard))
   ([deployment.md](deployment.md#telemetry-on-kubernetes)). kagent in the kind cluster exports there too
   ([a2a.md](a2a.md#kagent-next-to-landflow)).
+
+<a id="alerts-and-dashboard"></a>
+### Alert rules and the dashboard
+
+[`deploy/observability/prometheus-rules.yml`](../deploy/observability/prometheus-rules.yml) holds 14 Prometheus alerts
+over the metrics above; each has a `severity` label and a `runbook` annotation pointing here. Thresholds are starting
+points. `deploy/observability/landflow-dashboard.json` is the matching Grafana dashboard ("Landflow · overview": requests,
+runs, queue and workers, plugins, database, audit, runtime, AI). The `orbstack-observability` overlay loads both
+(`deploy/k8s/components/observability/` keeps copies, because kustomize can't read outside the component; a test checks
+they match, and that every metric the files name exists in the code); elsewhere, add the file to `rule_files:` and import
+the JSON. The local backend has no Alertmanager: alerts show under Prometheus -> Alerts and as the `ALERTS` series.
+
+The paging counters are created on their first error, so a series is born at 1 and `increase()` over it is 0; the
+rules and the dashboard panels add `m unless m offset 10m` to catch it. The same expression also fires once, for up to
+10 minutes, when an existing error series reappears after a gap of 5 minutes or more in ingestion (the LGTM pod or the
+collector was down). Check the rules with
+`docker run --rm -v "$PWD/deploy/observability:/r" --entrypoint /otel-lgtm/prometheus/promtool grafana/otel-lgtm:0.39.0 test rules /r/tests/prometheus-rules.test.yml`.
+
+| Alert | Fires when | First look |
+|---|---|---|
+| `LandflowHttp5xxRatioHigh` | over 5% of requests answer 5xx for 10 min | error lines grouped by `exception.fingerprint`; the traces of the failing route |
+| `LandflowRequestP95Slow` | p95 request duration over 2.5 s for 10 min | event-loop delay, database query p95, the slow traces |
+| `LandflowRateLimitRefusals` | over 1 refusal/s for 10 min | `landflow.ratelimit.refused{bucket}`; a client loop, or limits set too low (`LANDFLOW_RATE_LIMIT_API`/`_PUBLIC`) |
+| `LandflowScheduleLag` | schedule lag p95 over 30 s for 10 min | event-loop delay, concurrency limits, a stalled leader |
+| `LandflowQueueBacklog` | queue depth over 50 for 15 min | workers and their heartbeats (Settings -> Workers) |
+| `LandflowNoWorkers` | jobs queued and no worker heartbeat for 5 min | worker pods and their logs |
+| `LandflowPluginOffline` | a plugin language group has none online for 10 min | the plugin's logs; Plugins page |
+| `LandflowPostgresWritesBlocked` | `landflow.db.write_blocked` is 1 for 2 min | [postgres-write-queue.md](features/postgres-write-queue.md): Postgres reachable, batch rejected |
+| `LandflowPostgresWriteQueueOld` | oldest write batch over 60 s for 5 min | Postgres latency and connectivity |
+| `LandflowAuditWriteFailures` | any audit event could not be stored | [audit-and-governance.md](features/audit-and-governance.md#reliability-and-fail-closed-mode) |
+| `LandflowAuditOutboxOld` | oldest undelivered SIEM event over 15 min | the destination, Settings -> Audit log -> SIEM streaming |
+| `LandflowEventLoopDelay` | event-loop delay p99 over 200 ms for 10 min | a CPU-heavy node or a blocking call; GC panel |
+| `LandflowProcessErrors` | any unhandled rejection, uncaught exception or service start failure | the error line (`kind`) and its fingerprint |
+| `LandflowAiCacheHitRateDropped` | the Anthropic prompt-cache hit rate (`cache_read` / `input`) over 1 h is under half its 7-day average, for 30 min, and only while Anthropic input is over 100,000 tokens an hour; a cache that is lost completely (a restart whose new process has no `cache_read` series) counts as a 0% rate and fires; the 7-day average includes the dropped period, so a sustained drop lifts its own baseline and the alert clears itself after a few days | the dashboard's "AI" row; a prompt prefix that changed (a timestamp or an id near the top), a cache lifetime, a model or provider switch |
+
+The "AI" row has three panels: tokens a second by `gen_ai_token_type` (`input`, `output`, `cache_read`, `cache_write`),
+the Anthropic cache hit rate over 1 hour, and estimated cost over the last day by `landflow_ai_purpose`. Through the
+OTLP path into the LGTM pod the cost counter is `landflow_ai_cost_USD_total` (the unit `USD` is kept in the name); a
+direct scrape of `/api/metrics` lowercases the unit and names it `landflow_ai_cost_usd_total`, so a Prometheus that
+scrapes the host directly needs that spelling in the panel. The hit rate alert has a volume guard so a quiet hour of a few calls does not page.
+
+There is no metric for the age of the oldest queued job, so the queue alert watches depth; add one before alerting on age.
 
 <a id="token-and-cost-tracking"></a>
 
@@ -371,13 +512,19 @@ same `gen_ai.*` wrapper (`lib/server/telemetry/ai.ts`), which asks the current *
 (`lib/server/ai-usage/scope.ts`, an AsyncLocalStorage per execution segment and agent run) whether
 the call may start, then prices and records what it used.
 
-- **Prices** (`lib/server/ai-usage/prices.ts`): USD per million input and output tokens. Built-in
-  defaults are the Anthropic and OpenAI list prices; Ollama and other local models cost $0.
-  **Settings → AI prices** (`GET/PUT /api/settings/ai-prices`) overrides any model, Ollama
-  included. A model id matches exactly, else by the longest prefix (`claude-sonnet-4-6` prices
-  `claude-sonnet-4-6-20260101`); a `vendor/` prefix (OpenRouter style) is ignored, and an
-  OpenAI-compatible server's model falls back to the other providers' prices. Unknown models cost
-  $0. Costs are estimates: batch prices aren't modelled.
+**Insights → AI** (`/insights/ai`) shows this spend by project, agent, person, model and source, with the caps and how near each is, including calls imported from the LLM gateway's spend log ([llm-gateway.md](llm-gateway.md#the-ai-page)).
+
+- **Prices** (`lib/server/ai-usage/prices.ts`): USD per million input and output tokens. Built-in defaults are the
+  Anthropic and OpenAI list prices; Ollama and other local models cost $0. **Settings → AI prices** (`GET/PUT
+  /api/settings/ai-prices`) overrides any model, Ollama included. A model id matches exactly, else by the longest prefix
+  (`claude-sonnet-4-6` prices `claude-sonnet-4-6-20260101`); a `vendor/` prefix (OpenRouter style) is ignored, and an
+  OpenAI-compatible server's model falls back to the other providers' prices. Unknown models cost $0. Costs are
+  estimates: batch prices aren't modelled. **Local models** (Ollama through Landflow as `ollama`, or through the LLM
+  gateway, which logs `ollama_chat`) cost $0 until priced: **Settings → AI prices → Local models** (`GET
+  /api/settings/ai-prices/local`) lists each model seen in 30 days with its calls and tokens and an inline "Set a
+  price". One price (`ollama/<model>`) covers both provider names, never a hosted provider's or a built-in. A price
+  applies from the moment it is saved; recorded calls keep the cost they had (no repricing). There is no "equivalent
+  cost" for a local model.
 - **Cached tokens**: a price also has **cache read** and **cache write** columns (USD per million;
   Settings → AI prices). `inputTokens` is the whole prompt; the cached part is priced at the cache
   price and the rest at the input price. Anthropic: `cache_read_input_tokens` and
@@ -388,12 +535,20 @@ the call may start, then prices and records what it used.
   `gen_ai.usage.cache_read.input_tokens` and `gen_ai.usage.cache_creation.input_tokens`.
 - **Storage**: one row per call in `ai_usage` (migration 400: time, day in the instance time zone,
   execution, workflow, agent, session, provider, model, operation, tokens, cost; migration 1821 adds
-  `cache_read_tokens`, `cache_write_tokens`, `user_id` (who started the run) and `credential_id`), kept
-  `AI_USAGE_RETENTION_DAYS` (default 400). An execution record carries its own totals per model
+  `cache_read_tokens`, `cache_write_tokens`, `user_id` (who started the run) and `credential_id`; migration 2900 adds `node_id`, `span_id`, `purpose`, `iteration`, `caller_agent_id`, `duration_ms` and `stop_reason`, see [what each call was for](llm-gateway.md#what-each-call-was-for)), kept
+  `LANDFLOW_AI_USAGE_RETENTION_DAYS` (default 400; the old `AI_USAGE_RETENTION_DAYS` still works). An execution record carries its own totals per model
   (`aiUsage`), earlier segments included when it resumed after a wait; sub-executions keep their
-  own. Calls outside executions and agents (the editor assistant, the AI builder) aren't counted.
+  own. Calls outside executions and agents (the editor assistant, the AI builder) are counted too, through the assistant's own scope, with the `surface` (Spotlight, the Agent architect or the brain) in the row. The `ai.call` ledger event's `attrs` also carry `purpose`, `nodeId`, `sessionId`, `iteration` and `usageId` when set, next to the keys it always had.
+- **Daily rollup** (SP08, migration 2902): `ai_usage_daily` holds one row per day and combination of project, goal,
+  agent, workflow, user, credential, surface, purpose, provider, model, source and runtime (`''` for none) with the
+  summed tokens, cost, calls and distinct runs. The leader's "AI spend rollup" service rewrites today, yesterday, every
+  day a late spend import marked dirty (the `meta` key `ai_spend_dirty_days`) and every day since its last pass (the
+  `meta` key `ai_spend_rolled_through`, capped at the retention, so a host that was off for days loses nothing) every 10
+  minutes, a week of days at a time with the event loop free between the steps (`runRollupInBatches`), through `delete`
+  and `upsert` calls in one transaction per day (a day's dirty mark is removed in the same transaction, and the same synchronous read, as its rewrite, so a throw or a kill keeps it and a mark a late import sets during a pause survives for the next pass; stopping or restarting the service ends a pass in flight between steps, and only the newest start arms the next one), and prunes it at `LANDFLOW_AI_USAGE_RETENTION_DAYS` like `ai_usage`
+  itself. The AI page reads it for the days before yesterday ([llm-gateway.md](llm-gateway.md#the-ai-page)).
 - **Where it shows**: the execution view (tokens, cost and calls per model), Insights (a cost
-  column and the period's total), an agent's Settings tab (today and this month), and
+  column and the period's total), an agent's Abilities → Guardrails (today and this month), and
   `GET /api/insights/ai-usage` (totals, per model, per day; `group=workflow|agent`).
 - **Caps** stop spending:
 
@@ -402,7 +557,7 @@ the call may start, then prices and records what it used.
   | Max tokens / max cost per execution | Workflow settings → AI usage limits | the execution, its earlier segments and its sub-workflows |
   | Max tokens / max cost per day | Workflow settings → AI usage limits | every execution of the workflow today |
   | Daily token limit, daily and monthly cost limit | Agent → Settings | every run of the agent (sessions, schedules, channels, Run an Agent) |
-  | Tokens or cost per day or month, per model credential | Settings → AI prices → AI usage caps (`GET/PUT /api/settings/ai-caps`) | every call made with the credential, by any workflow or agent |
+  | Tokens or cost per day or month, per model credential | Settings → AI caps (`GET/PUT /api/settings/ai-caps`) | every call made with the credential, by any workflow or agent |
   | Tokens or cost per day or month, per user, or one cap for every user | the same | every run the user started (a manual run, an agent session); runs without a user, such as triggers, aren't counted |
 
   A call is refused before it starts once a cap is reached, and a call that takes the total over a
@@ -412,10 +567,22 @@ the call may start, then prices and records what it used.
   ends with the reason `budget` and that notice. Each refusal or stop counts in
   `landflow.ai.caps_reached`. The credential and user caps read the same message form: *AI usage cap
   reached: credential “Team OpenAI” today used 2,200 tokens of its 1,500 tokens limit (Settings → AI
-  prices → AI usage caps)*; a zero or empty limit means no cap.
+  caps)*; a zero or empty limit means no cap. A cost alert for these caps links to `/settings#ai-caps`.
 - **AI usage of plugin nodes**: a remote plugin node that returns a `model` record ([protocol.md](protocol.md), `ctx.model`) is counted like the models node: priced, one `ai_usage` row (Insights, `ExecutionRecord.aiUsage`, the per-credential and per-user caps through the credential tag on the request, the `ai.call` ledger event) and the `landflow.ai.tokens` metric (`ai-usage/plugin.ts`, `withAiUsage`). A call over a cap fails the node and run with the same `UsageCapError`; a node with `meterAiUsage` is refused before it runs once a cap is reached. Several records in one response are all counted before the error is thrown. The record's span in Run Trace has `costUsd` from the same price table (overrides included); an unpriced model is $0 with a `costNote`, and a capped call keeps its span. Ollama's cache-read tokens are provider-reported, not an artefact.
+- **Approval alerts**: a *Runs* alert rule with the event **Waits for your approval** (`approval`; Settings → Alerts) sends one
+  message per approval request and rule through its channels (Slack, a signed webhook, Telegram, Teams, Discord, email) when a
+  run nobody watches pauses at a tool that asks first, from the alerts ticker on the leader. It names the tool, agent, workflow,
+  destination, expiry and a Needs you link, never a parameter value; a rule without the event hears nothing
+  ([approval-inbox.md](approval-inbox.md#nudges)).
 - **Cost alerts**: an alert rule of kind *AI cost* (Settings → Alerts, a threshold percent, default
   80) sends a message through its channels when a workflow, agent, credential or user cap reaches the
   threshold, once per cap per period (day or month; `alert_state`, migration 1820), checked when usage
   is recorded and by the alerts ticker on the leader. Per-execution caps aren't watched (they have
-  no period).
+  no period). The same rule also sends a forecast over a monthly cap and unusual spend of a day (two switches, and the
+  option that leaves agent and model spikes to Landledger): [llm-gateway.md](llm-gateway.md#forecasts-and-unusual-spend).
+
+## Health probes
+
+`GET /api/health/live` (no I/O) and `GET /api/health/ready` (boot, draining, database, write queue, schema, Valkey in
+queue mode) are the probes; a failing readiness check is logged as `readiness check failed` with the check name and
+reason, while the public body carries only names and timings. The audit outbox is not a readiness check on purpose (a slow SIEM must not take a host out of rotation): its health is in the `landflow.audit.outbox.*` gauges, the `LandflowAuditOutboxOld` alert and `GET /api/settings/audit`. Details: [Deployment, Probes](deployment.md#probes).

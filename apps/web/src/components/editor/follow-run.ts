@@ -12,6 +12,7 @@ import { duration } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
 import type { NodeProgress } from '@/lib/client/node-progress';
 import type { ExecutionRecord } from '@/lib/shared/types';
+import { spotlightOwnsRun } from './assistant';
 import { useEditor } from './store';
 
 /** Runs the editor started itself, which it picks up again: not production runs, and not debug runs (they stop with the page). */
@@ -31,7 +32,7 @@ export function useFollowRun() {
   const reload = useCallback(() => {
     const id = useEditor.getState().following;
     if (!id) return;
-    api<{ execution: ExecutionRecord; progress?: Record<string, NodeProgress> }>(`/api/executions/${id}`)
+    api<{ execution: ExecutionRecord; progress?: Record<string, NodeProgress> }>(`/api/executions/${id}`, { background: true })
       .then(({ execution, progress = {} }) => {
         const state = useEditor.getState();
         if (state.following !== id) return;
@@ -40,7 +41,9 @@ export function useFollowRun() {
         if (execution.status === 'running') state.attachRun(execution, latest(progress, state.progress), Boolean(state.viewing));
         else {
           state.loadExecution(execution, Boolean(state.viewing));
-          if (execution.status === 'success') toast.success(`Workflow succeeded in ${duration(execution.durationMs)}`);
+          if (spotlightOwnsRun()) {
+            // No toast.
+          } else if (execution.status === 'success') toast.success(`Workflow succeeded in ${duration(execution.durationMs)}`);
           else if (execution.status === 'canceled') toast('Workflow stopped');
           else if (execution.status === 'error') toast.error(`Workflow failed${execution.error?.message ? `: ${execution.error.message}` : ''}`);
         }

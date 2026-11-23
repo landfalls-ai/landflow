@@ -11,14 +11,17 @@
  *   One session per user and Slack channel; `/<command> new` starts over.
  * - Interactivity: POST /api/slack/interactions. The approval buttons of AI Agent nodes (workflow executions)
  *   and of agents answering in Slack. Checked against every Slack credential's signing secret; the
- *   credential that verifies must be the one that posted the buttons.
+ *   credential that verifies must be the one that posted the buttons. Also a mirrored suggestion's buttons
+ *   (brain/audience.ts).
  *
  * Tools that need approval pause the agent and post Approve / Reject buttons in the thread; the click decides
  * (lib/server/agents/runtime.ts `decide`) and the run continues.
  */
+import { asAuthor } from '../agents/author';
 import type { JsonObject } from '@landflow/protocol';
 import { approvalSubject, type Agent, type AgentChannel } from '../../shared/agents';
 import { allowed } from '../agents/triggers';
+import { handleProposalClick, PROPOSAL_ACTION_PREFIX } from '../brain/audience';
 import { decide, newSession, runAgent, type RunResult } from '../agents/runtime';
 import { agentStore } from '../agents/store';
 import { ApprovalError, decideApproval, pendingApproval } from '../approvals';
@@ -29,6 +32,10 @@ import { logger } from '../telemetry';
 import {
   APPROVE_ACTION,
   approvalBlocks,
+  EDIT_ACTION,
+  EDIT_MODAL,
+  editModal,
+  slackCall,
   decidedBlocks,
   escape,
   inBackground,
@@ -141,6 +148,8 @@ async function answer(agent: Agent, version: number, channel: AgentChannel, cred
     return;
   }
   session ??= newSession(agent, { source: 'slack', userId: `slack:${event.user}`, version, conversationKey: key, title: text.slice(0, 80) });
+  // A thread is shared: this message's author is who memory recalls for and writes to, not whoever opened the thread (C09).
+  session = asAuthor(session, `slack:${event.user}`);
   const result = await runAgent({ agent, session, message: text, approvals: 'ask', rootTrace: true });
   await deliver(agent, channel, threadPost(credential, chat, threadTs), chat, threadTs, result);
 }
@@ -266,6 +275,9 @@ interface InteractionPayload {
   message?: { ts?: string; thread_ts?: string };
   actions?: Array<{ action_id?: string; value?: string }>;
   response_url?: string;
+  trigger_id?: string;
+  /** A submitted modal (Ask a Person's Edit). */
+  view?: { callback_id?: string; private_metadata?: string; state?: { values?: Record<string, Record<string, { value?: string | null }>> } };
 }
 
 /** POST /api/slack/interactions */
@@ -282,12 +294,26 @@ export async function handleSlackInteraction(request: Request): Promise<Response
   } catch {
     return error('Expected a form body with a payload', 400);
   }
+  if (payload.type === 'view_submission') return submitEdit(payload, verifiedBy);
   if (payload.type !== 'block_actions') return new Response(null, { status: 200 });
-  const action = payload.actions?.find((a) => a.action_id === APPROVE_ACTION || a.action_id === REJECT_ACTION);
+  // A suggestion's buttons (a mirrored suggestion, lib/server/brain/audience.ts).
+  const mirrored = payload.actions?.find((a) => a.action_id?.startsWith(PROPOSAL_ACTION_PREFIX));
+  if (mirrored?.action_id) {
+    inBackground(
+      () => handleProposalClick({ actionId: mirrored.action_id!, value: mirrored.value, slackUser: payload.user?.id, responseUrl: payload.response_url, verifiedBy }),
+      (caught) => logger.warn('slack suggestion click failed', { error: (caught as Error).message }),
+    );
+    return new Response(null, { status: 200 });
+  }
+  const action = payload.actions?.find((a) => a.action_id === APPROVE_ACTION || a.action_id === REJECT_ACTION || a.action_id === EDIT_ACTION);
   const target = parseTarget(action?.value);
   if (!action || !target) return new Response(null, { status: 200 });
-  const approved = action.action_id === APPROVE_ACTION;
   const user = payload.user?.id;
+  if (action.action_id === EDIT_ACTION) {
+    if (target.t === 'wf') inBackground(() => openEditor(target, payload.trigger_id, user, verifiedBy), (caught) => logger.warn('slack edit failed', { error: (caught as Error).message }));
+    return new Response(null, { status: 200 });
+  }
+  const approved = action.action_id === APPROVE_ACTION;
   const chat = payload.container?.channel_id ?? payload.channel?.id;
   const ts = payload.container?.message_ts ?? payload.message?.ts;
   inBackground(
@@ -297,9 +323,52 @@ export async function handleSlackInteraction(request: Request): Promise<Response
   return new Response(null, { status: 200 });
 }
 
+/** The Slack credential of the node an Ask a Person request belongs to, if the click was signed by that app. */
+async function confirmCredential(target: Extract<ApprovalTarget, { t: 'wf' }>, verifiedBy: Set<string>) {
+  const record = await store.loadExecution(target.e);
+  const approval = pendingApproval(record);
+  const node = record?.workflow?.nodes.find((n) => n.id === approval?.nodeId || n.name === approval?.nodeName);
+  const ref = slackRefOf(node?.credentials)?.ref;
+  if (!approval?.confirm || !ref) return undefined;
+  if (!verifiedBy.has(ref.id)) throw new Error('The edit was signed by another Slack app than the one that asked');
+  return { credential: await slackCredentialFor(ref), approval };
+}
+
+/** Edit: a modal with the draft, opened with the click's trigger id (valid for three seconds). */
+async function openEditor(target: Extract<ApprovalTarget, { t: 'wf' }>, triggerId: string | undefined, user: string | undefined, verifiedBy: Set<string>) {
+  if (!triggerId) return;
+  const found = await confirmCredential(target, verifiedBy);
+  if (!found || found.approval.decisions?.[target.c]) return;
+  const allowed = found.approval.confirm!.approvers;
+  if (user && allowed?.length && !allowed.some((a) => a.toLowerCase() === user.toLowerCase())) return;
+  const text = found.approval.calls.find((c) => c.id === target.c)?.input?.text;
+  await slackCall(found.credential, 'views.open', { trigger_id: triggerId, view: editModal({ text: typeof text === 'string' ? text : '', meta: JSON.stringify(target) }) });
+}
+
+/** A submitted Edit modal: approve with the person's text and comment. An empty text keeps the modal open with the error. */
+async function submitEdit(payload: InteractionPayload, verifiedBy: Set<string>): Promise<Response> {
+  if (payload.view?.callback_id !== EDIT_MODAL) return new Response(null, { status: 200 });
+  const target = parseTarget(payload.view.private_metadata);
+  if (target?.t !== 'wf') return new Response(null, { status: 200 });
+  const values = payload.view.state?.values ?? {};
+  const text = values.text?.text?.value ?? '';
+  const comment = values.comment?.comment?.value?.trim();
+  if (!text.trim()) return json({ response_action: 'errors', errors: { text: 'The text can’t be empty.' } });
+  const user = payload.user?.id;
+  inBackground(
+    async () => {
+      if (!(await confirmCredential(target, verifiedBy))) return;
+      const outcome = await decideApproval(target.e, target.c, true, { ...(user && { slackUser: user }), text, ...(comment && { comment }) });
+      logger.info('slack edit decided', { 'landflow.execution.id': target.e, 'landflow.approval.status': outcome.status });
+    },
+    (caught) => logger.warn(caught instanceof ApprovalError ? 'slack edit refused' : 'slack edit failed', { 'landflow.execution.id': target.e, error: (caught as Error).message }),
+  );
+  return new Response(null, { status: 200 });
+}
+
 async function decideWorkflow(target: Extract<ApprovalTarget, { t: 'wf' }>, approved: boolean, user: string | undefined, verifiedBy: Set<string>) {
   // The credential that verified the click must be the node's (one Slack app can't decide another's approvals).
-  const record = store.getExecution(target.e);
+  const record = await store.loadExecution(target.e);
   const approval = pendingApproval(record) ?? (record?.wait?.data?.approval as { nodeName?: string; nodeId?: string } | undefined);
   const node = record?.workflow?.nodes.find((n) => n.id === approval?.nodeId || n.name === approval?.nodeName);
   const ref = slackRefOf(node?.credentials)?.ref;

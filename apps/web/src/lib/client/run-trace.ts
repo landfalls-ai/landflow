@@ -3,11 +3,12 @@
  * Run Trace on the client: the journal of one execution, live (`useRunJournal`), what needs a person across runs
  * (`useNeedsYou`), and the two things a person can do from the trace: settle a failed check, decide a tool approval.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { JournalEvent, RunActor } from '../shared/run-trace';
 import { foldJournal, type RunModel } from '../shared/run-trace-model';
 import { api, streamEvents } from './api';
 import { useLiveEvents } from './live';
+import type { InboxItemFields } from '../shared/approval-inbox'; // AP03:
 
 /** `GET /api/executions/:id/events` */
 export interface JournalPage {
@@ -49,7 +50,7 @@ export function useRunJournal(executionId: string | undefined): RunJournal {
     loadingMore.current = true;
     try {
       for (;;) {
-        const page = await api<JournalPage>(`/api/executions/${executionId}/events?after=${last.current}&limit=${PAGE}`);
+        const page = await api<JournalPage>(`/api/executions/${executionId}/events?after=${last.current}&limit=${PAGE}`, { background: true });
         append(page.events);
         if (!page.more || !page.events.length) break;
       }
@@ -92,12 +93,12 @@ export function useRunJournal(executionId: string | undefined): RunJournal {
 }
 
 /** One thing waiting for a person (`GET /api/runs/needs-you`). */
-export interface NeedsYouRow {
+export interface NeedsYouRow extends Partial<InboxItemFields> /* AP03: an approval that is an inbox request carries its fields */ {
   executionId: string;
   workflowId: string;
   workflowName: string;
   /** `gate`: a Run report waits for someone to accept its failed checks or send the work back. */
-  kind: 'approval' | 'form' | 'question' | 'gate' | 'check';
+  kind: 'approval' | 'form' | 'question' | 'gate' | 'check' | 'budget' | 'task' | 'spend' | 'trust'; // PC15: budget; PC20: task; SP23: spend; C27: trust
   title: string;
   detail?: string;
   actor?: RunActor;
@@ -105,24 +106,75 @@ export interface NeedsYouRow {
   member?: string;
   spanId?: string;
   since: string;
+  // PC15: a project budget item (BudgetNeedsYouFields in lib/shared/project-budget.ts); its run fields are ''.
+  projectId?: string;
+  incidentId?: string;
+  incidentKind?: 'warn' | 'stop';
+  /** Where the row opens, instead of its run. */
+  href?: string;
+  canRaise?: boolean;
+  canResume?: boolean;
+  // PC20: a project task item (TaskNeedsYouFields in lib/shared/project-tasks.ts); its run fields are ''. `href` opens the task, or the agent's session while it waits.
+  taskId?: string;
+  taskRunId?: string;
+  taskRunStatus?: 'requested' | 'waiting';
+  canDecide?: boolean;
+  // SP23: a spend item (a forecast over a cap, or unusual AI spend); `href` opens the AI page at the day.
+  flagId?: string;
+  flagKind?: 'anomaly' | 'forecast';
+  canAcknowledge?: boolean;
+  // C27: a trust item (an agent's MCP tools held for review; TrustNeedsYouFields in lib/shared/trust.ts); its run fields are ''. `href` opens the agent page, where the review sheet is.
+  agentId?: string;
+  heldCount?: number;
+}
+
+/** Acknowledge a spend flag (POST /api/insights/ai/flags/:id/ack): it leaves Needs you for everyone. */
+export const acknowledgeSpendFlag = (flagId: string) => api<{ id: string }>(`/api/insights/ai/flags/${encodeURIComponent(flagId)}/ack`, { method: 'POST' });
+
+/** Approve or deny a task's requested run (POST /api/task-runs/:runId, session only); a 409 carries its message. */
+export const decideTaskRun = (runId: string, decision: 'approve' | 'deny') => api<{ run: { id: string; status: string } }>(`/api/task-runs/${encodeURIComponent(runId)}`, { method: 'POST', json: { decision } });
+
+/**
+ * One list for every component that shows it (Home's tile, the rail's badge, the runs page): requests asked for in the
+ * same tick share one `GET /api/runs/needs-you`, and an older answer never replaces a newer one.
+ */
+const needsYouStore = { items: undefined as NeedsYouRow[] | undefined, listeners: new Set<() => void>(), scheduled: false, seq: 0 };
+
+export const refreshNeedsYou = () => loadNeedsYou();
+
+function loadNeedsYou() {
+  if (needsYouStore.scheduled) return;
+  needsYouStore.scheduled = true;
+  setTimeout(() => {
+    needsYouStore.scheduled = false;
+    const mine = ++needsYouStore.seq;
+    const settle = (items: NeedsYouRow[]) => {
+      if (mine !== needsYouStore.seq) return;
+      needsYouStore.items = items;
+      for (const listener of needsYouStore.listeners) listener();
+    };
+    api<{ items: NeedsYouRow[] }>('/api/runs/needs-you')
+      .then((r) => settle(r.items))
+      .catch(() => settle(needsYouStore.items ?? []));
+  }, 0);
+}
+
+function subscribeNeedsYou(listener: () => void) {
+  needsYouStore.listeners.add(listener);
+  return () => needsYouStore.listeners.delete(listener);
 }
 
 export function useNeedsYou(): {
   items: NeedsYouRow[] | undefined;
   refresh: () => void;
 } {
-  const [items, setItems] = useState<NeedsYouRow[]>();
-  const refresh = useCallback(() => {
-    api<{ items: NeedsYouRow[] }>('/api/runs/needs-you')
-      .then((r) => setItems(r.items))
-      .catch(() => setItems((current) => current ?? []));
-  }, []);
-  useEffect(refresh, [refresh]);
-  // A run waiting or finishing changes the list.
+  const items = useSyncExternalStore(subscribeNeedsYou, () => needsYouStore.items, () => undefined);
+  useEffect(loadNeedsYou, []);
+  // A run starting to wait, resuming or finishing changes the list.
   useLiveEvents((event) => {
-    if (event.channel === 'execution' && (event.event.type === 'execution.finished' || event.event.type === 'execution.resumed')) refresh();
+    if (event.channel === 'execution' && (event.event.type === 'execution.paused' || event.event.type === 'execution.finished' || event.event.type === 'execution.resumed')) loadNeedsYou();
   });
-  return { items, refresh };
+  return { items, refresh: loadNeedsYou };
 }
 
 /** Settle a failed check: accept it as is, or send it back for a fix. */
@@ -145,6 +197,11 @@ export function resolveCheck(
 /** Answer a Run report waiting on its failed checks: accept them as is, or send the work back (POST /api/executions/:id/gate). */
 export function decideGate(executionId: string, decision: 'accepted' | 'sent_back', note?: string) {
   return api<{ status: string }>(`/api/executions/${executionId}/gate`, { method: 'POST', json: { decision, ...(note && { note }) } });
+}
+
+/** Answer an Ask a Person node's request: approve (with the draft as the person edited it, and a note) or reject (POST /api/executions/:id/approvals). */
+export async function decideConfirm(executionId: string, decision: { approved: boolean; text?: string; comment?: string; choice?: string }, onEvent: (event: string, data: unknown) => void = () => {}): Promise<void> {
+  await streamEvents(`/api/executions/${executionId}/approvals`, { callId: 'confirm', ...decision }, onEvent);
 }
 
 /**

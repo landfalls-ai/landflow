@@ -16,8 +16,9 @@ import type { ExecutionRecord } from '../../shared/types';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { logger } from '../telemetry';
-import { checkCosts } from '../ai-usage/alerts';
+import { checkCosts, sweepProjectBudgets } from '../ai-usage/alerts';
 import { onUsageRecorded } from '../ai-usage/notify';
+import { alertChecks } from './extra-checks'; // AP01:
 import { bus } from '../bus';
 import { sendThrough } from './channels';
 import { digestNotice, noticeFor, testNotice, type AlertNotice } from './message';
@@ -138,9 +139,12 @@ export const alerts = singleton('alerts', () => {
       const checks: Array<[string, () => Promise<void>]> = [
         ['digests', () => sendDigests(now)],
         ['waiting runs', () => checkWaiting(now)],
+        ...alertChecks().map(([name, check]): [string, () => Promise<void>] => [name, () => check(now, send)]), // AP01: checks other features registered (approval requests)
         ['failure rates', () => checkFailureRates(now, send)],
         ['plugins', () => checkPlugins(now, send)],
         ['AI cost', () => checkCosts(now, send)],
+        // PC14: the project budgets' warnings and stops (their alerts are the cost alerts above)
+        ['project budgets', () => sweepProjectBudgets(now)],
       ];
       try {
         for (const [what, check] of checks) {

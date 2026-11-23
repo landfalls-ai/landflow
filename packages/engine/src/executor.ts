@@ -82,7 +82,7 @@ import { ExpressionError, ExpressionResolver, type ExpressionData } from './expr
 import { sharedRateLimiter } from './rate-limit';
 import { collectSecretReferences, secretParameterPaths, type SecretValues } from './secrets';
 import { engineMetrics, failSpan, recordedIds, SOURCE_ATTRIBUTE, startChild } from './telemetry';
-import { deriveToolSchema, withReason } from './tool-schema';
+import { deriveToolSchema, toolInputItem, withReason } from './tool-schema';
 import type {
   ExecuteWorkflowOptions,
   ExecutionEvent,
@@ -166,6 +166,15 @@ interface NodeTelemetry {
   transport?: string;
   source: RunSource;
 }
+
+/**
+ * Modes that ignore pin data: nobody tests a workflow in them. Pins are saved with the draft but are not part of a
+ * version's hash, so a pin someone added would otherwise change what a production run does without a new version.
+ */
+const PINLESS_MODES: ReadonlySet<string> = new Set(['trigger', 'poll', 'webhook', 'tool']);
+
+/** Whether a run in `mode` uses pin data (a run a person starts: manual, chat, MCP, a re-run) or runs every node. */
+export const pinsApply = (mode: string): boolean => !PINLESS_MODES.has(mode);
 
 const now = () => new Date().toISOString();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -949,7 +958,17 @@ class WorkflowRun {
       return outputs;
     }
 
-    const pinned = this.options.workflow.pinData?.[node.id];
+    // Pin data is test data for runs a person starts: a trigger, poll, webhook or an agent's tool call runs the node.
+    // AG01: items the run was given (a chat message, the run route's items) beat the start node's own pin.
+    // A bare seed (one empty item, no binary) is what callers invent when nobody gave input: it is not given items.
+    const seed = this.options.triggerItems;
+    const bareSeed = !!seed && seed.length === 1 && Object.keys(seed[0].json ?? {}).length === 0 && !seed[0].binary;
+    const givenItems = !!seed?.length && !bareSeed && this.options.startNodeId === node.id;
+    const pinWas = pinsApply(this.options.mode) ? this.options.workflow.pinData?.[node.id] : undefined;
+    const pinned = givenItems ? undefined : pinWas;
+    const givenNote: LogEntry | undefined = pinWas && givenItems
+      ? { level: 'info', message: this.options.mode === 'chat' ? 'Used the chat message, not the pinned sample' : 'Used the given items, not the pinned data' }
+      : undefined;
     if (pinned) {
       telemetry.span.setAttribute('landflow.node.pinned', true);
       const outputs = [pinned];
@@ -983,7 +1002,7 @@ class WorkflowRun {
           this.pendingWait = { request: wait, node, inputs: effectiveInputs, outputs: response.outputs, ...(response.logs && { logs: response.logs }), startedAt: started, askedAt: Date.now() };
           return response.outputs;
         }
-        const logs = throttled ? [throttled, ...(response.logs ?? [])] : response.logs;
+        const logs = throttled || givenNote ? [...(givenNote ? [givenNote] : []), ...(throttled ? [throttled] : []), ...(response.logs ?? [])] : response.logs; // AG01: givenNote
         finish({ status: 'success', inputs: effectiveInputs, outputs: response.outputs, ...(logs && { logs }) });
         return response.outputs;
       } catch (caught) {
@@ -1011,7 +1030,7 @@ class WorkflowRun {
         status: 'success',
         inputs: effectiveInputs,
         outputs,
-        logs: [{ level: 'warn', message: `Continued after error: ${error.message}` }],
+        logs: [...(givenNote ? [givenNote] : []), { level: 'warn', message: `Continued after error: ${error.message}` }],
       });
       return outputs;
     }
@@ -1019,6 +1038,7 @@ class WorkflowRun {
       status: 'error',
       inputs: effectiveInputs,
       outputs: [],
+      ...(givenNote && { logs: [givenNote] }),
       error: { message: error.message, ...(error.description && { description: error.description }) },
     });
     throw error;
@@ -1185,6 +1205,12 @@ class WorkflowRun {
     return view;
   }
 
+  /** The run's name for the host's dynamic secrets, when the host said this is a real run (`options.secretRun`). */
+  private secretRunExtras(): Pick<ContextExtras, 'secretRun'> {
+    const run = this.options.secretRun;
+    return run ? { secretRun: { executionId: this.options.executionId, ...(run.workflowId && { workflowId: run.workflowId }) } } : {};
+  }
+
   private async callExecute(
     node: WorkflowNode,
     resolved: ResolvedNodeType,
@@ -1208,6 +1234,7 @@ class WorkflowRun {
         else this.nodeState[node.id] = structuredClone(state);
       },
       getNodeOutputs: () => this.expressionOutputs(node),
+      ...this.secretRunExtras(),
       sendProgress: progress.send,
       onRecord: (record) => this.emitRecord(node, record),
       ...(this.options.streaming && {
@@ -1225,7 +1252,9 @@ class WorkflowRun {
       getInputConnectionData: <T>(type: SubNodeType, index?: number) => this.supplySubNodes(node, type, request.inputs[0] ?? [], index) as Promise<T[]>,
     };
     try {
-      const response = await this.raceAbort(context.with(spanContext, () => resolved.execute(request, extras)), limit);
+      // SP01: the host's hook knows the active node.
+      const run = () => resolved.execute(request, extras);
+      const response = await this.raceAbort(context.with(spanContext, () => (this.options.aroundNode ? this.options.aroundNode({ id: node.id, name: node.name, type: node.type, report: (record) => this.emitRecord(node, record) }, run) : run())), limit);
       this.emitRecords(node, response);
       return { response, ...(wait && { wait }) };
     } finally {
@@ -1300,6 +1329,7 @@ class WorkflowRun {
       if (resolved.supplyData) {
         const request = this.buildRequest(subNode, resolved, [rootItems], rootItems, undefined, undefined, await this.parameterSecrets(subNode, resolved));
         const extras: ContextExtras = {
+          ...this.secretRunExtras(),
           ...(this.signal && { signal: this.signal }),
           getInputConnectionData: <T>(subType: SubNodeType, subIndex?: number) =>
             this.supplySubNodes(subNode, subType, rootItems, subIndex, [...chain, subNode.id]) as Promise<T[]>,
@@ -1428,10 +1458,11 @@ class WorkflowRun {
   /** Any `usableAsTool` node (local or remote) becomes an AgentTool. */
   private nodeAsTool(root: WorkflowNode, subNode: WorkflowNode, resolved: ResolvedNodeType): AgentTool {
     const { descriptor } = resolved;
+    const inputSchema = descriptor.delegates ? withReason(deriveToolSchema(descriptor, subNode.parameters)) : deriveToolSchema(descriptor, subNode.parameters);
     return {
       name: toToolName(subNode.name),
       description: subNode.notes || descriptor.toolDescription || descriptor.description,
-      inputSchema: descriptor.delegates ? withReason(deriveToolSchema(descriptor, subNode.parameters)) : deriveToolSchema(descriptor, subNode.parameters),
+      inputSchema,
       nodeId: subNode.id,
       // The recorded input keeps a delegating node's `reason` (the journal says why the agent asked); the node never sees it.
       invoke: (given) =>
@@ -1439,12 +1470,14 @@ class WorkflowRun {
           const { reason: _reason, ...rest } = given;
           const input = descriptor.delegates ? rest : given;
           // Arguments become the item; same-named parameters are overridden; $fromAI() reads them.
-          const items: NodeItem[] = [{ json: input as JsonObject }];
+          // AG03: with the generated `item` argument, that is the item and the other arguments are the overrides.
+          const { json: itemJson, rest: input2 } = toolInputItem(inputSchema, input);
+          const items: NodeItem[] = [{ json: itemJson }];
           const overrides = Object.fromEntries(
-            Object.entries(input).filter(([key]) => descriptor.properties.some((p) => p.name === key)),
+            Object.entries(input2).filter(([key]) => descriptor.properties.some((p) => p.name === key)),
           );
           const secrets = await this.parameterSecrets(subNode, resolved);
-          const request = { ...this.buildRequest(subNode, resolved, [items], items, overrides, input, secrets), mode: 'tool' as const, idempotencyKey: this.stepKey(subNode, 'tool') };
+          const request = { ...this.buildRequest(subNode, resolved, [items], items, overrides, input2, secrets), mode: 'tool' as const, idempotencyKey: this.stepKey(subNode, 'tool') };
           const progress = this.progressSender(subNode, root.id);
           let response;
           try {
@@ -1500,7 +1533,8 @@ class WorkflowRun {
     });
     const base = { startedAt: new Date(started).toISOString(), source, inputs: [[input]], parentNodeId: root.id, ...(ids && { spanId: ids.spanId }) };
     try {
-      const { result, output } = await context.with(telemetry.context, work);
+      // SP01: the host's hook knows the active node.
+      const { result, output } = await context.with(telemetry.context, () => (this.options.aroundNode ? this.options.aroundNode({ id: subNode.id, name: subNode.name, type: subNode.type, report: (record) => this.emitRecord(subNode, record, root.id) }, work) : work()));
       const run: NodeRun = { ...base, durationMs: Date.now() - started, status: 'success', outputs: [[output]] };
       this.endNodeSpan(telemetry, run);
       this.record(subNode, run);

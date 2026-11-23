@@ -8,6 +8,7 @@ import type { SecurityView } from '@/lib/shared/auth';
 import { publicOrigin } from '@/lib/server/auth/cookies';
 import { metricsPublic } from '@/lib/server/auth/guard';
 import { smtpConfig } from '@/lib/server/auth/mail';
+import { mfaMode } from '@/lib/server/auth/mfa';
 import { discover, oidcConfig, redirectUri } from '@/lib/server/auth/oidc';
 import { samlSecurityView } from '@/lib/server/auth/saml';
 import { requireUser, sessionTtlHours } from '@/lib/server/auth';
@@ -43,10 +44,11 @@ export const GET = handler(async (request: Request) => {
     },
     smtp: { configured: Boolean(smtp), ...(smtp && { host: smtp.host, port: smtp.port, from: smtp.from }) },
     saml: await samlSecurityView(publicOrigin(request)),
+    mfa: { mode: mfaMode() },
     sessionHours: sessionTtlHours(),
     registrySecret: Boolean(process.env.LANDFLOW_REGISTRY_SECRET),
     metricsPublic: metricsPublic(),
-    scim: scimSecurityView(request),
+    scim: await scimSecurityView(request),
   };
   return json(view);
 });

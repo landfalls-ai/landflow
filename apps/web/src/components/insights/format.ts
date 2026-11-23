@@ -33,10 +33,20 @@ export function change(metric: keyof Pick<InsightsTotals, 'runs' | 'failed' | 'f
   const upIs: Trend = metric === 'timeSavedMinutes' ? 'good' : metric === 'runs' ? 'neutral' : 'bad';
   const direction = now > before ? 1 : now < before ? -1 : 0;
   const trend: Trend = direction === 0 || upIs === 'neutral' ? 'neutral' : (direction > 0) === (upIs === 'good') ? 'good' : 'bad';
-  let text: string;
-  if (metric === 'failureRate') text = `${trim(Math.abs(now - before) * 100)} pp`;
-  else if (!before) text = now ? 'new' : 'no change';
-  else text = `${trim((Math.abs(now - before) / before) * 100, Math.abs(now - before) / before < 0.1 ? 1 : 0)}%`;
-  if (direction === 0) text = 'no change';
+  const text = metric === 'failureRate' ? deltaText(now - before, before, true) : deltaText(now - before, before);
   return { direction, trend, text };
+}
+
+/** How far a number moved, or null when it did not: "12%", "new", or "2.5 pp" for a rate. */
+export function deltaText(diff: number, before = 0, points = false): string | null {
+  if (!diff) return null;
+  if (points) return `${trim(Math.abs(diff) * 100)} pp`;
+  if (!before) return 'new';
+  const ratio = Math.abs(diff) / Math.abs(before);
+  return `${trim(ratio * 100, ratio < 0.1 ? 1 : 0)}%`;
+}
+
+/** The agent layers card shows only when the response cache or the model router answered something. */
+export function showLayersCard(stats?: { requests: number; routed: number; cached: number }): boolean {
+  return Boolean(stats && stats.requests > 0 && (stats.cached > 0 || stats.routed > 0));
 }

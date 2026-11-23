@@ -12,6 +12,7 @@ import { ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NodeIcon } from '../ui/icon';
 import { STICKY_COLORS } from './sticky-note';
+import { plural } from '@/lib/client/format';
 
 /** Fill, border, label and swatch colours of palette entry `index`. */
 export function groupColors(index = 0) {
@@ -25,7 +26,6 @@ export function groupColors(index = 0) {
   };
 }
 
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 export interface GroupFrameViewProps {
   name: string;

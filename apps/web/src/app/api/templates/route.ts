@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { currentPrincipal } from '@/lib/server/auth/guard';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { projectRole } from '@/lib/server/projects';
-import { importTemplate, listTemplates, saveTemplate, saveTemplateSchema, TemplateError } from '@/lib/server/templates';
+import { importTemplate, listTemplates, saveTemplate, saveTemplateSchema } from '@/lib/server/templates';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,11 +44,6 @@ export const POST = handler(async (request: Request) => {
   if (!body.ok) return body.response;
   const user = currentPrincipal()?.user;
   const author = user?.name || user?.email;
-  try {
-    const template = 'data' in body.data ? importTemplate(body.data.data, author, user, body.data.projectId) : saveTemplate(body.data, author, user);
-    return json({ template }, 201);
-  } catch (caught) {
-    if (caught instanceof TemplateError) return error(caught.message, caught.status, caught.details);
-    throw caught;
-  }
+  const template = 'data' in body.data ? importTemplate(body.data.data, author, user, body.data.projectId) : saveTemplate(body.data, author, user);
+  return json({ template }, 201);
 });

@@ -5,6 +5,7 @@ import type { EditLockView } from './auth';
 import type { EvaluationRef } from './evaluations';
 import type { JournalEvent } from './run-trace';
 import type { ExecutionAiUsage } from './ai-usage';
+import type { HarnessSessionView } from './harness';
 
 export type { DebugCommand, ExecutionEvent, ExecutionResult, ExecutionWait, NodeRun, PauseReason, Transport, Workflow };
 export type { GroupComposite, StickyNote, WorkflowConnection, WorkflowGroup, WorkflowNode, WorkflowSettings } from '@landflow/engine';
@@ -119,8 +120,14 @@ export interface CredentialSummary {
   type: string;
   createdAt: string;
   updatedAt: string;
+  /** Who created it (absent: nobody recorded). */
+  createdBy?: string;
+  /** Who last changed its data (absent: nobody recorded, or a change with no person behind it). */
+  updatedBy?: string;
   /** Workflows with a node that references this credential. */
   usedBy: Array<{ workflowId: string; workflowName: string }>;
+  /** Agents whose tools, model or channels use it (added by `GET /api/credentials`, for the agents the caller sees). */
+  usedByAgents?: Array<{ agentId: string; agentName: string }>;
   /** At most `limit` calls per `intervalSeconds` across every node and run that uses it (lib/server/credentials/vault.ts). */
   rateLimit?: CredentialRateLimitSetting;
   /** OAuth2 credentials: whether they are connected, as whom, and until when (lib/shared/oauth2.ts). */
@@ -132,6 +139,8 @@ export interface CredentialDetail extends CredentialSummary {
   data: Record<string, unknown>;
   /** Secret fields that have a stored value. */
   secrets: string[];
+  /** The name of who last changed its data (`updatedBy`), on GET /api/credentials/:id. */
+  updatedByName?: string;
 }
 
 export type RegistryEvent =
@@ -190,8 +199,10 @@ export interface QueuedStart {
   worker?: boolean;
 }
 
-export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
+export interface ExecutionRecord extends Omit<ExecutionResult, 'status' | 'wait'> {
   status: ExecutionState;
+  /** Status `waiting`: what the run waits for; `signed`: its resume URLs carry a signature that resuming must present. */
+  wait?: ExecutionResult['wait'] & { signed?: boolean };
   workflowName: string;
   /** node id → display name at the time of the run. */
   nodeNames?: Record<string, string>;
@@ -211,6 +222,8 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   depth?: number;
   /** An error workflow run: the failed execution that started it. */
   errorOf?: string;
+  /** A metric's sub-workflow run: the suggestion it measures (lib/server/brain/effect.ts). */
+  metricOf?: string;
   /** What a Form node's completion step showed (the form's last page). */
   formCompletion?: FormCompletion;
   /** The workflow version the execution started on (absent: an unsaved editor draft, kept in `workflow`). */
@@ -221,6 +234,8 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   /** The failed execution this one retries, and which retry it is (1 = the first). */
   retryOf?: string;
   retryAttempt?: number;
+  /** That retry was started by the automatic retry timer, not by a person. */
+  retryAutomatic?: boolean;
   /** Set on a failed execution: the retry that followed it. */
   retriedBy?: string;
   /** Set on a failed execution: when its automatic retry starts. */
@@ -229,7 +244,10 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   resumedAfterRestart?: { at: string; stepId: string };
   /** The trigger call's Idempotency-Key. */
   idempotencyKey?: string;
-  /** A manual run: the user (id) who started it. */
+  /**
+   * The user (id) who started it, when a person did: a manual or chat run, an MCP or agent tool call, a re-run, a retry
+   * someone asked for, or a sub-workflow of one of those. Absent: a schedule, poll, webhook or other trigger started it.
+   */
   startedBy?: string;
   /** Status `queued`: how it starts once a slot frees. */
   queued?: QueuedStart;
@@ -243,6 +261,10 @@ export interface ExecutionRecord extends Omit<ExecutionResult, 'status'> {
   buffered?: { kind: 'debounce' | 'batch'; count: number };
   /** An MCP tool call on a plugin's MCP endpoint (lib/server/mcp/plugin-servers.ts): who called which tool. */
   mcp?: ExecutionMcpInfo;
+  /** AG23: an autonomous fix session's editor run: Run an Agent steps let Spotlight approve tool calls to given destinations (lib/server/agents/spotlight-approvals.ts). */
+  spotlightApprovals?: { userId: string; sessionId: string; destinations: string[] };
+  /** Wave ap1: the type of the trigger that started the run (its start node's, or the hosted chat's chat trigger when the run starts at a roster target). A Run an Agent step reads it: a hosted-chat or MCP-trigger run never waits in Needs you. */
+  triggerType?: string;
 }
 
 /** The MCP tool call behind an execution with mode `mcp` on a per-plugin endpoint (docs/transports.md). */
@@ -324,7 +346,9 @@ export type StreamEvent =
   | { channel: 'execution'; workflowId: string; event: ExecutionEvent; seq: number; at: string }
   | { channel: 'lock'; workflowId: string; lock: EditLockView | null; seq: number; at: string }
   /** New journal entries of an execution (Run Trace); `seq` here is the stream's, each event has its own. */
-  | { channel: 'journal'; workflowId: string; executionId: string; events: JournalEvent[]; seq: number; at: string };
+  | { channel: 'journal'; workflowId: string; executionId: string; events: JournalEvent[]; seq: number; at: string }
+  /** A harness session's status changed (C04); without `agentId` it is the viewer's own session. */
+  | { channel: 'harness'; ownerId?: string; agentId?: string; projectId?: string; session: HarnessSessionView; seq: number; at: string };
 
 /** A folder in the workflows list (GET /api/folders). Folders nest through `parentId`. */
 export interface Folder {
@@ -371,6 +395,8 @@ export interface WorkflowVersionSummary {
   diff?: VersionDiff;
   /** Set when this version was made by restoring an older one. */
   restoredFrom?: { id: string; number: number };
+  /** Set when the editor's autosave made it: the next autosave by the same person soon after replaces it instead of adding one. */
+  autosave?: { by: string };
 }
 
 /** GET /api/workflows/:id/versions/:versionId */

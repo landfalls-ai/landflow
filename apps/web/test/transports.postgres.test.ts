@@ -69,7 +69,7 @@ describe.skipIf(!enabled)('transport policy and connections on Postgres, two pro
     await main.flush();
     await until(() => expect(onWorker.get(created.id)?.secrets).toEqual({ password: 'pg-secret' }));
     const raw = await admin.query<{ secrets: string }>('SELECT secrets FROM transport_connections WHERE id = $1', [created.id]);
-    expect(raw.rows[0]?.secrets).toMatch(/^v1\./);
+    expect(raw.rows[0]?.secrets).toMatch(/^v[12]\./);
     expect(raw.rows[0]?.secrets).not.toContain('pg-secret');
     expect(onMain.delete(created.id)).toBe(true);
     await main.flush();

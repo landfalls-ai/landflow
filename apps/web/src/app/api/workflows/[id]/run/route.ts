@@ -15,12 +15,17 @@ import { context } from '@opentelemetry/api';
 import { z } from 'zod';
 import type { Workflow } from '@landflow/engine';
 import type { NodeItem } from '@landflow/protocol';
-import { error, handler, parseBody, sseHeaders } from '@/lib/server/http';
+import { error, handler, parseBody } from '@/lib/server/http';
+import { sseResponse } from '@/lib/server/sse';
 import { idempotencyKeyOf, MAX_KEY_LENGTH } from '@/lib/server/idempotency';
 import { chatItem, MAX_CHAT_FILE_BYTES, MAX_CHAT_FILES } from '@/lib/server/chat';
-import { DuplicateRunError, findTrigger, liveExecution, newExecutionId, planRerun, RerunError, runWorkflow, type RunOptions } from '@/lib/server/runner';
+import { DuplicateRunError, findTrigger, liveExecution, newExecutionId, planRerun, runWorkflow, type RunOptions } from '@/lib/server/runner';
 import { workflowSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
+import { flowDestinations } from '@/lib/server/agents/spotlight-approvals'; // AG23:
+import { getPublication } from '@/lib/server/publications';
+import { currentPrincipal } from '@/lib/server/auth/guard'; // AG23:
+import { SPOTLIGHT_ONLY_EDITOR, spotlightRunFields } from '@/lib/server/spotlight-run-schema'; // AG23:
 import { startTrigger, traceparentHeader, type TriggerFire } from '@/lib/server/telemetry';
 
 export const dynamic = 'force-dynamic';
@@ -58,6 +63,7 @@ const runSchema = z.object({
     .optional(),
   /** Run at most once per key (within LANDFLOW_IDEMPOTENCY_TTL_HOURS): a repeat names the first execution. */
   idempotencyKey: z.string().trim().min(1).max(MAX_KEY_LENGTH).optional(),
+  ...spotlightRunFields, // AG23:
 });
 
 export const POST = handler(async (request: Request, { params }: Ctx) => {
@@ -68,15 +74,20 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const workflow = (body.data.workflow ? { ...saved, ...body.data.workflow, id } : saved) as Workflow | undefined;
   if (!workflow) return error('Workflow not found', 404);
 
+  // AG23: Spotlight's approvals: only an editor test run of the draft graph, by a signed-in person (never an API key, a rerun or a chat-less trigger).
+  let spotlightApprovals: RunOptions['spotlightApprovals'];
+  if (body.data.approvals) {
+    const principal = currentPrincipal();
+    if (body.data.rerun || !principal || (principal.via !== 'session' && principal.via !== 'test') || !body.data.sessionId) return error(SPOTLIGHT_ONLY_EDITOR, 400);
+    spotlightApprovals = { userId: principal.user.id, sessionId: body.data.sessionId, destinations: [...(body.data.destinations ?? []), ...(getPublication(id) ? flowDestinations(workflow) : [])] }; // AG22 and AG23 agree: a brand-new draft's own builder URLs are not given (lesson 21), a published flow's are
+  } else if (body.data.sessionId || body.data.destinations) return error(SPOTLIGHT_ONLY_EDITOR, 400);
+
   let plan: Omit<RunOptions, 'signal' | 'onEvent' | 'onStart'>;
   let trigger: TriggerFire | undefined;
   if (body.data.rerun) {
-    try {
-      plan = planRerun(body.data.rerun.executionId, body.data.rerun, workflow);
-    } catch (caught) {
-      if (caught instanceof RerunError) return error(caught.message, caught.status);
-      throw caught;
-    }
+    // A RerunError is an HttpError: handler() answers it with its status.
+    await store.promoteExecution(body.data.rerun.executionId);
+    plan = planRerun(body.data.rerun.executionId, body.data.rerun, workflow);
   } else {
     let startNodeId = body.data.startNodeId;
     let triggerItems = body.data.items as NodeItem[] | undefined;
@@ -102,6 +113,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
       startNodeId,
       triggerItems,
       destinationNodeId: body.data.destinationNodeId,
+      ...(spotlightApprovals && { spotlightApprovals }), // AG23:
       // Chat runs stream what AI Agent and chain nodes write (node.chunk events) to the chat panel.
       ...(mode === 'chat' && { streaming: true, executionId }),
     };
@@ -111,19 +123,13 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const runContext = trigger?.context ?? context.active();
   const idempotencyKey = body.data.idempotencyKey ?? idempotencyKeyOf(request);
 
-  const encoder = new TextEncoder();
   const abort = new AbortController();
   if (body.data.debug) request.signal.addEventListener('abort', () => abort.abort());
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (event: string, data: unknown) => {
-        try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-        } catch {
-          // client went away
-        }
-      };
+  return sseResponse(
+    request,
+    async (write, close) => {
+      const send = (event: string, data: unknown) => void write(data, { event });
       try {
         const record = await context.with(runContext, () =>
           runWorkflow({
@@ -148,7 +154,7 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
         trigger?.end(caught);
         if (caught instanceof DuplicateRunError) {
           // The key ran before: name that execution instead of starting another.
-          const existing = liveExecution(caught.executionId) ?? store.getExecution(caught.executionId);
+          const existing = liveExecution(caught.executionId) ?? await store.loadExecution(caught.executionId);
           send('started', { executionId: caught.executionId, duplicate: true });
           send('result', { executionId: caught.executionId, status: existing?.status ?? 'running', error: existing?.error, lastNodeId: existing?.lastNodeId, duplicate: true });
           return;
@@ -158,11 +164,9 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
           error: { message: (caught as Error).message },
         });
       } finally {
-        try {
-          controller.close();
-        } catch {}
+        close();
       }
     },
-  });
-  return new Response(stream, { headers: { ...sseHeaders, ...traceparentHeader(runContext) } });
+    { route: '/api/workflows/:id/run', headers: traceparentHeader(runContext) },
+  );
 });

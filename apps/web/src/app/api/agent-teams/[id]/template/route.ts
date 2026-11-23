@@ -9,7 +9,7 @@ import { agentTeamStore } from '@/lib/server/agent-teams/store';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { canResource } from '@/lib/server/projects';
 import { store } from '@/lib/server/store';
-import { saveTeamTemplate, saveTeamTemplateSchema, TemplateError } from '@/lib/server/templates';
+import { saveTeamTemplate, saveTeamTemplateSchema } from '@/lib/server/templates';
 import type { Workflow } from '@/lib/shared/types';
 
 export const dynamic = 'force-dynamic';
@@ -26,10 +26,5 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
     workflow = store.getWorkflow(body.data.workflowId) as Workflow | undefined;
     if (!workflow || (user && !canResource(user, 'workflow', workflow.id, 'read'))) return error('Workflow not found', 404);
   }
-  try {
-    return json({ template: saveTeamTemplate(body.data, team, workflow, user?.name || user?.email, user) }, 201);
-  } catch (caught) {
-    if (caught instanceof TemplateError) return error(caught.message, caught.status, caught.details);
-    throw caught;
-  }
+  return json({ template: saveTeamTemplate(body.data, team, workflow, user?.name || user?.email, user) }, 201);
 });

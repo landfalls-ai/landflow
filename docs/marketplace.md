@@ -18,23 +18,25 @@ templates that installing adds to Templates, each with a read-only [share page](
 
 ## Using it
 
-**Marketplace** in the sidebar has three tabs.
+**Plugins** → **Marketplace** tab has two tabs.
 
-- **Explore.** Everything in one place: the plugins of every added marketplace, the flows of its Landflow plugins,
-  the registry's own plugins and the Templates library. One search covers names, descriptions, authors, keywords and
-  node types. The kind switch has five views:
+- **Explore.** Plugins, agents and skills in one place: the plugins of every added marketplace, the registry's own
+  plugins and the composite types. Workflows are not here: workflow templates live in
+  the Templates library under **Workflows** → **Templates** ([editor](features/editor.md); a one-line link on the page). One filter row: a search that covers
+  names, descriptions, authors, keywords and node types, a kind switch, one **category** dropdown (a sheet on a phone;
+  `incident-response` reads *Incident response*) and, only with more than one marketplace, a **source** dropdown. The
+  kind switch has four views:
   - **All**: a section per kind, each with its first 8 and **Show all**.
   - **Node plugins**: entries with a `landflow` field or a `landflow.plugin.json`. Once installed, a tile shows the
-    registry's icon, status and node count. The registry's own plugins that no marketplace installed show as
+    registry's icon (an app's real mark), status and node count; an entry that is not running yet, and an agent or
+    skill pack named after an app, wears the mark of that app. The registry's own plugins that no marketplace installed show as
     **This instance**, and open their card on the Plugins page.
-  - **Workflows**: marketplace flows (opening the share page) and built-in and saved templates. A flow already
-    installed is shown once, as its flow.
   - **Composites**: the [composite types](composites.md) this instance knows: the plugins' (they come with the plugin)
     and the ones saved here, which whoever saved them, or an owner or admin, can delete from their tile.
   - **Agents & skills**: the other Claude Code plugins, with their agent and skill counts once read.
 
-  The source chips narrow it to one marketplace, which shows its card with **Refresh** and **Remove**, or to
-  **This instance**. Category chips use readable names (`incident-response` reads *Incident response*). Explore
+  The source dropdown narrows it to one marketplace, which shows its card with **Refresh** and **Remove**, or to
+  **This instance**. Explore
   reads every plugin of a marketplace with at most 25 entries (`EXPLORE_READ_ALL`). In a larger one it reads only the
   Landflow plugins and the entries that list flows. A marketplace or plugin that can't be read is named in a notice,
   and the rest still shows. **Anthropic official** (`anthropics/claude-plugins-official`) is built in and is fetched
@@ -54,13 +56,13 @@ templates that installing adds to Templates, each with a read-only [share page](
   - the flows, each with its node icons, **View** (its share page) and a copy-link button;
   - unsupported components, notes, the README;
   - **Install**.
-- **Installed.** What each install created: links to its agents, its skills, its flows' templates,
+- **Installed.** Plugins and skills in one list, with a **type** filter (All, Plugins, Skills). A plugin shows what its install created: links to its agents, its skills, its flows' templates,
   and for node plugins the process state, port, restarts, **Logs** and **Restart**. **Uninstall** asks first,
   then deletes exactly what the install created. That includes agents you edited since; other
   agents are never touched. The installed agents are ordinary draft agents in the default project: they show under
   **Agents** (the **From marketplace** filter, in a team named after the plugin), where you add tools, pick a model and
   publish them.
-- **Skill library.** Every installed skill with its *when to use* line, references and full
+  The skills (the old **Skill library** tab) follow the plugins, each with its *when to use* line, references and full
   instructions.
 
 ## How a plugin maps to an agent
@@ -72,7 +74,7 @@ templates that installing adds to Templates, each with a read-only [share page](
 | body | instructions |
 | `model: sonnet` / `opus` / `haiku` / `inherit` | Anthropic `claude-sonnet-5-5` / `claude-opus-5-5` / `claude-haiku-5-5` / `claude-sonnet-5-5`. A full `claude-…` id is kept. Anything else leaves the model unset |
 | `color: yellow` | the agent colour (hex); the icon is picked from the name, then from the description |
-| (none) | a [face](agents.md#faces) seeded by the plugin and the agent's name, and the plugin's name as the agent's [team](agents.md#teams), so a plugin's agents sit together on the roster. The roster's **From marketplace** filter shows them, each with a "From <plugin>" link |
+| (none) | a [face](agents.md#faces) seeded by the plugin and the agent's name, and the plugin's name as the agent's [team](agents.md#teams), so a plugin's agents sit together on the roster. The roster's **From marketplace** filter shows them |
 | `tools: Glob, Grep, Read…` | not mapped, because Claude Code's built-in tools have no Landflow equivalent. They are listed in the description so you can add node, workflow or sub-agent tools under **Capabilities** |
 | skills of the same plugin | `AgentSkill`s: `whenToUse` = description, `instructions` = body, `references` = text files under `references/` (at most 30 files, 128 KB each, 1 MB in total) |
 
@@ -124,6 +126,39 @@ Not exported: schedules, channels and every credential reference (they are bound
 workflows (their ids mean nothing elsewhere), kagent deployments, and a team's flows (use a [team template](templates.md)
 for those). Claude Code ignores tools it has no equivalent of, so a Landflow agent's node, MCP and knowledge tools only
 work again once the plugin is installed in Landflow.
+
+## Export a project
+
+A project downloads as a Claude Code plugin too: **Export** in the project's header (any role in the project; an icon on
+a phone) lists the files, with a switch for `marketplace.json`, then downloads `<project-slug>.zip`.
+`GET /api/projects/:id/export?format=claude-plugin[&marketplace=1][&preview=1]` is the same ([API](reference/api.md)).
+
+```text
+<project-slug>/
+  PROJECT.md                        frontmatter name, title, status, target, goals; the brief, constraints, done when,
+                                    words we use, what it fits under (company mission and goal chain) and its agents
+  .claude-plugin/plugin.json        name, description (the brief's first sentence), keywords landflow and project
+  agents/<slug>.md, skills/…        the agents whose home is the project, written as an agent export writes them
+  .landflow/project.json            landflow/project: the brief fields, the goals (with a parent index) and the agent slugs
+  .landflow/agents/<slug>.json      each agent's Landflow data, without its id
+  README.md
+```
+
+Only agents whose home is the project are in; an agent only shared to it is left out. The goals are the ones the project
+serves and their parents up to the root, each once, in the wording of the "Where this work fits" block
+([agents.md](agents.md#project-context)) without owners; a goal the caller cannot see is left out.
+
+Never in the zip: people (lead, decision owner, goal owners, members, who made or changed anything, the exporting person
+as author), emails, any id, the workspace and its setup commands, the budget, project settings, variables, credentials,
+repositories, tasks and sessions. Every free text (brief, constraints, done when, glossary, goal titles and reasons)
+goes through the secret redaction first; that covers the project's own text. The agents' free text (instructions,
+persona, skills) is exported as the agent export writes it. The agent and team exports are unchanged.
+
+A sub-agent tool pointing at another home agent of the export is written with that agent's file slug (`agentSlug`) and no
+id, and the install maps the slug to the new agent, so the link survives a reinstall. Sub-agent tools pointing at an
+agent outside the export, workflow tools, tool-access rules that name one user, the agents' approval emails, and the
+guardrail judges' and the cheap model's credential references are dropped from the zip. A personal project is named
+after its user, so it exports as "Personal project" (`personal-project.zip`): the person's name is nowhere in it.
 
 ## Flows
 
@@ -219,10 +254,21 @@ of the same shape, is a node plugin:
 
 What installing does:
 
-1. **Asks.** Without `confirm: true` the API answers `409` with the repository, the install
-   command and the start command. The drawer shows them in a warning ("This runs code on this
-   machine") with an **I trust it — install and run** button.
-2. **Downloads** the plugin's files to `<data dir>/marketplace/plugins/<name>`:
+1. **Downloads and hashes first, then asks.** The plugin is downloaded into a staging folder
+   (`<data dir>/marketplace/staging/<random>`, removed after every answer) and its files are hashed together with how it runs (the manifest read again from the downloaded files and the marketplace entry: id, runtime, install and start commands, environment, transports), so the same files with another start command are a changed plugin. Without
+   `confirm: true` the API answers `409` with the repository, the install command, the start command, the pinned
+   commit (a GitHub source) and the **`hash`** of the files and the run recipe. The drawer shows them in a warning
+   ("This runs code on this machine") with an **I trust it — install and run** button, and sends the `hash` back with
+   `confirm: true`: if the files are not those any more (the source moved while you read), the answer is `409` and
+   nothing is installed, so a yes never covers files nobody saw. A confirm without a `hash` (a script) installs what was
+   downloaded.
+   - **The yes is recorded against the hash** (`trust.approve`: marketplace, plugin, hash, person), under the marketplace
+     and plugin name, so it outlives an uninstall.
+   - **A reinstall of files that were approved before needs no confirm.** Files with another hash do: the warning and the
+     drawer say *Changed since you approved it on <date>*, and the API answer carries `changedSince`
+     `{ hash, at, by }`. There is no update button: an update is an uninstall and an install, and the install is where
+     the changed files are asked about.
+2. **Downloads** the plugin's files to `<data dir>/marketplace/plugins/<name>` (the staged files, moved into place):
    - at most 500 files, 25 MB in total, 10 MB per file;
    - `node_modules`, `.git` and `.venv` are skipped;
    - every path is checked to stay inside the directory.
@@ -297,7 +343,7 @@ variables above. It does **not** get the host's API keys, `LANDFLOW_ENCRYPTION_K
 | `DELETE /api/marketplaces/:id` | `{ ok }`. `409` while plugins from it are installed; `400` for the built-in one |
 | `GET /api/marketplaces/:id/plugins/:name[?fresh=1]` | `{ plugin: PluginDetail }`: manifest, agents, skills, unsupported, nodePlugin, flows (`MarketplaceFlow[]`, each with `needs` and `link`), readme, warnings |
 | `GET /api/marketplaces/:id/plugins/:name/flow?path=` | `{ flow: MarketplaceFlowView }` for the share page: the flow as a template preview (nothing saved), the plugin's other flows, `templateId` once installed, and `link`. `:id` may be the marketplace's name. `400` without `path`; `404` for an unknown flow, and `404 { missing: "marketplace" }` when the marketplace isn't added |
-| `POST /api/marketplaces/:id/plugins/:name/install` `{ confirm? }` | `201 InstallResult` `{ installed, notSupported, warnings }`. `409 InstallConfirmation` for a node plugin without `confirm`. `422` when nothing in it runs in Landflow, or for an unsupported source |
+| `POST /api/marketplaces/:id/plugins/:name/install` `{ confirm?, hash? }` | `201 InstallResult` `{ installed, notSupported, warnings }`. `409 InstallConfirmation` (with `hash`, `commit?`, `changedSince?`) for a node plugin whose files are not approved yet and no `confirm`; `409` with `details.hash` when `confirm` comes with a `hash` that is no longer the files' hash. `422` when nothing in it runs in Landflow, or for an unsupported source |
 | `GET /api/marketplaces/installed` | `{ installed }`, with node-plugin process status |
 | `DELETE /api/marketplaces/installed/:pluginId` | `{ removed: { agents, skills, nodePlugin, flows? } }` (`pluginId` = `name@marketplace`, URL-encoded; `flows` counts the templates removed) |
 | `GET /api/marketplaces/installed/:pluginId/logs` | `{ lines }` |
@@ -332,8 +378,8 @@ All of it lives under `LANDFLOW_DATA_DIR` (default `apps/web/.data`):
 - **Agents and skills are text.** Installing them runs nothing, but their instructions come from
   a third party and the model follows them. Agents are installed as unpublished drafts with no
   tools, so they can't act until you add capabilities and publish.
-- **Node plugins run third-party code** as the host's user. The confirmation step, the minimal
-  environment and the file limits reduce the risk, but they are not a sandbox. Only install
+- **Node plugins run third-party code** as the host's user. The confirmation step (bound to the hash of the files, and asked
+  again when they change), the minimal environment and the file limits reduce the risk, but they are not a sandbox. Only install
   plugins from repositories you trust, and prefer marketplace entries pinned with a `sha`.
 - `npm install` runs with `--ignore-scripts` by default. A plugin's own `install` command can
   still do anything; the confirmation shows it.

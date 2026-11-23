@@ -99,7 +99,15 @@ function personaSections(persona: AgentPersona): string[] {
   return sections;
 }
 
-export function personaPrompt(config: AgentConfig, run: { memory?: string; now?: Date } = {}): string {
+export function personaPrompt(config: AgentConfig, run: { memory?: string; now?: Date; context?: string } = {}): string {
+  const { stable, volatile } = personaPromptParts(config, run);
+  return stable + volatile;
+}
+
+// SP19: the prompt cut where it stops being stable: `stable` is everything up to the project block and the practices,
+// `volatile` starts with the `\n\n` that opens the memory (or the intro line) and holds the memory and the date line.
+// `stable + volatile` is `personaPrompt`, byte for byte.
+export function personaPromptParts(config: AgentConfig, run: { memory?: string; now?: Date; context?: string } = {}): { stable: string; volatile: string } {
   const persona = cleanPersona(config.persona);
   const instructions = config.instructions.trim();
   // Without persona parts the prompt opens with the instructions as it always did, so agents written before stay the same.
@@ -115,9 +123,14 @@ export function personaPrompt(config: AgentConfig, run: { memory?: string; now?:
       ].join('\n'),
     );
   }
-  if (run.memory) parts.push(run.memory);
+  // The project block sits after the skills and before the memory, ahead of the date line, so the prompt up to there stays stable.
+  if (run.context) parts.push(run.context);
+  const stable = parts.join('\n\n');
+  const tail: string[] = [];
+  if (run.memory) tail.push(run.memory);
   const intro = `You are “${config.name}”${config.description ? `: ${config.description.trim()}` : ''}`;
   // A description that already ends a sentence doesn't get a second full stop.
-  parts.push(`${/[.!?]$/.test(intro) ? intro : `${intro}.`}${run.now ? ` Current date and time: ${run.now.toISOString()}.` : ''}`);
-  return parts.join('\n\n');
+  tail.push(`${/[.!?]$/.test(intro) ? intro : `${intro}.`}${run.now ? ` Current date and time: ${run.now.toISOString()}.` : ''}`);
+  // With nothing stable the prompt starts at the tail, with no leading separator, as it always did.
+  return { stable, volatile: (stable ? '\n\n' : '') + tail.join('\n\n') };
 }

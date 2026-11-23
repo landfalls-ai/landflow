@@ -47,10 +47,11 @@ import {
   type WebhookMethodResponseMsg,
 } from '@landflow/protocol/grpc';
 import type { Transport } from '@landflow/engine';
-import { REGISTRY_CHALLENGE_HEADER, REGISTRY_PROOF_HEADER } from '@landflow/sdk';
+import { GUARD_HEADER, pluginHttpToken, REGISTRY_CHALLENGE_HEADER, REGISTRY_PROOF_HEADER, transportSecretFromEnv } from '@landflow/sdk';
 import { tracePluginRpc, type RpcMethod } from '../telemetry';
+import { envInt } from '../config';
 
-export const EXECUTE_TIMEOUT_MS = Number(process.env.LANDFLOW_EXECUTE_TIMEOUT_MS ?? 120_000);
+export const EXECUTE_TIMEOUT_MS = envInt('LANDFLOW_EXECUTE_TIMEOUT_MS', { fallback: 120_000, min: 1_000 });
 
 export interface PluginClient {
   readonly endpoint: string;
@@ -103,9 +104,14 @@ export class HttpPluginClient extends TracedClient implements PluginClient {
   private async request<T>(path: string, init: RequestInit & { timeoutMs?: number; onResponse?: (response: Response) => void } = {}): Promise<T> {
     const timeout = AbortSignal.timeout(init.timeoutMs ?? 10_000);
     const { onResponse, ...rest } = init;
+    // Plugins that can start real work on their machine (the deck) opt in to a guard that wants this token, an HMAC of the
+    // shared secret (never the secret). Sent on calls that run something; the others ignore it. Read at call time.
+    const secret = path === HTTP_PATHS.execute || path === HTTP_PATHS.loadOptions || path === HTTP_PATHS.testCredentials || path === HTTP_PATHS.webhookMethod || path === HTTP_PATHS.webhook ? transportSecretFromEnv() : undefined;
+    // The token is bound to the plugin's id (what its own manifest or well-known document says), so it opens only that plugin.
+    if (secret && !this.pluginId) await this.wellKnown().catch(() => undefined);
     const response = await fetch(new URL(path, this.endpoint), {
       ...rest,
-      headers: { 'content-type': 'application/json', ...init.headers },
+      headers: { 'content-type': 'application/json', ...(secret && this.pluginId && { [GUARD_HEADER]: pluginHttpToken(secret, this.pluginId) }), ...init.headers },
       signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
     });
     onResponse?.(response);
@@ -126,8 +132,10 @@ export class HttpPluginClient extends TracedClient implements PluginClient {
     return JSON.parse(text) as T;
   }
 
-  wellKnown(timeoutMs = 800) {
-    return this.request<WellKnownDocument>(HTTP_PATHS.wellKnown, { timeoutMs });
+  async wellKnown(timeoutMs = 800) {
+    const doc = await this.request<WellKnownDocument>(HTTP_PATHS.wellKnown, { timeoutMs });
+    if (!this.pluginId && typeof doc?.plugin?.id === 'string') this.pluginId = doc.plugin.id;
+    return doc;
   }
 
   manifest() {

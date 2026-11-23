@@ -15,33 +15,36 @@
  * (or the requester, for decisions) are notified (./notify). Plain server module (no Next.js imports): workers can
  * load it.
  */
+import { guardAccessFlow } from '../access/guard';
+import { isInstanceAdmin } from '../projects/access';
 import { nanoid } from 'nanoid';
 import type { Workflow } from '@landflow/engine';
 import type { PublishResult } from '../../shared/publish';
 import type { PublishRequestDiff, PublishRequestedResponse, PublishRequestKind, PublishRequestList, PublishRequestStatus, PublishRequestView } from '../../shared/governance';
-import { can } from '../../shared/auth';
 import { recordAudit } from '../audit';
 import { getUser, listUsers, userNames, type UserRecord } from '../auth/users';
 import { database } from '../db';
 import { parse } from '../db/rows';
 import { onPublicationChanged, publishedVersionId } from '../publications';
-import { publicationStatus, publishDraft, PublishError, publishVersion, unpublishWorkflow } from '../publish';
+import { publicationStatus, publishDraft, PublishError, publishUpdate, publishVersion, pinChanges, resolveAgents, unpublishWorkflow } from '../publish';
 import { releaseScheduleAfterApproval } from '../publish-schedule-store';
 import { singleton } from '../singleton';
 import { store } from '../store';
 import { logger } from '../telemetry/logger';
-import { diffWorkflows, getVersion, listVersions, recordVersion, summarizeDiff, versionFor } from '../versions';
+import { diffWorkflows, getVersion, listVersions, recordVersion, summarizeDiff, versionFor, versionHash } from '../versions';
 import { notifyApprovers, notifyRequester } from './notify';
 import { getGovernancePolicy, publishBlockedReason } from './policy';
 import { ensureProjectApprovers, projectApproverLabel } from './project-approvers';
 import { workflowRequiresFourEyes } from './scopes';
+import { HttpError } from '../errors';
 
-export class ApprovalError extends Error {
+export class ApprovalError extends HttpError {
+  static readonly errorName: string = 'ApprovalError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 
@@ -104,7 +107,7 @@ export function mayApprove(user: Pick<UserRecord, 'id' | 'role'> & { disabledAt?
   ensureProjectApprovers();
   const { approverRole } = getGovernancePolicy().fourEyes;
   // `member` is the instance's editor role: owners, admins and members; `admin`: owners and admins.
-  if (approverRole === 'admin' ? !can(user, 'settings:manage') : !['owner', 'admin', 'member'].includes(user.role)) return false;
+  if (approverRole === 'admin' ? !isInstanceAdmin(user) : !['owner', 'admin', 'member'].includes(user.role)) return false;
   for (const check of approverChecks()) {
     try {
       if (check(user as UserRecord, workflowId) === false) return false;
@@ -159,7 +162,7 @@ function view(row: Row, viewer?: Pick<UserRecord, 'id' | 'role'>, names = userNa
     ...(data.scheduledFor && { scheduledFor: data.scheduledFor }),
     ...(viewer && {
       canApprove: pending && mayApprove(getUser(viewer.id) ?? viewer, row.workflow_id, row.requested_by),
-      canCancel: pending && (viewer.id === row.requested_by || can(viewer, 'settings:manage')),
+      canCancel: pending && (viewer.id === row.requested_by || isInstanceAdmin(viewer)),
     }),
   };
 }
@@ -327,6 +330,11 @@ export interface PublishAsk {
   by?: string;
   /** A scheduled publish (../publish-schedule.ts): the request approves the schedule; it goes live at `at` (ISO). */
   schedule?: { id: string; at: string };
+  /** AG21: what to do about agents whose draft differs from their published version (lib/server/publish.ts `PublishOptions`). */
+  agents?: 'publish-first' | 'as-published';
+  /** AG21: publish a new version from the production graph with these agents moved to their published versions. */
+  update?: { agents: string[]; testedExecutionId?: string };
+  signal?: AbortSignal;
 }
 
 /** Record a publish request (four-eyes on). Throws ApprovalError when there is nothing to ask for. */
@@ -400,16 +408,46 @@ export type PublishOutcome = ({ approvalRequired?: false } & PublishResult) | Pu
  * approvals and boot-time repairs call lib/server/publish.ts directly. PublishError and ApprovalError carry a status.
  */
 export async function publishOrRequest(ask: PublishAsk): Promise<PublishOutcome> {
+  guardAccessFlow(ask.workflowId, ask.by);
   const kind: PublishRequestKind = ask.action === 'unpublish' ? 'unpublish' : 'publish';
   if (!fourEyesApplies(kind, ask.workflowId)) {
     if (ask.action === 'unpublish') return unpublishWorkflow(ask.workflowId, ask.by, ask.note);
-    return ask.versionId ? publishVersion(ask.workflowId, ask.versionId, ask.by, ask.note) : publishDraft(ask.workflowId, ask.by, ask.note);
+    // AG21: the agents option, and the update path (a new version from the production graph).
+    if (ask.update) return publishUpdate(ask.workflowId, ask.update.agents, ask.by, ask.update.testedExecutionId);
+    const options = { ...(ask.agents && { agents: ask.agents }), ...(ask.signal && { signal: ask.signal }) };
+    return ask.versionId ? publishVersion(ask.workflowId, ask.versionId, ask.by, ask.note, options) : publishDraft(ask.workflowId, ask.by, ask.note, options);
   }
-  // Nothing to ask for: the version is live already, or there is nothing to unpublish.
+  if (ask.update) throw new ApprovalError('Four-eyes publishing is on: an agent update is published as a request for the draft instead', 409); // AG21:
   const workflow = store.getWorkflow(ask.workflowId);
   const live = publishedVersionId(ask.workflowId);
+  // AG21: the approval publishes without options, so an agent draft that differs is settled now (published first) or refused now, not at the approval.
+  // This runs before the "nothing to ask for" check: a workflow that did not change can still have an agent whose draft did.
+  if (ask.action === 'publish' && workflow) {
+    const graph = ask.versionId ? getVersion(ask.workflowId, ask.versionId)?.workflow : workflow;
+    // 'as-published' cannot be carried to the approval, so it refuses with the block like a plain publish.
+    // A version that has pins (a rollback) keeps its own, so nothing is asked of the agents.
+    if (graph && !(ask.versionId && (await import('../agents/versions')).pinsFor(ask.versionId).length)) await resolveAgents(graph, { ...(ask.agents === 'publish-first' && { agents: 'publish-first' as const }), ...(ask.signal && { signal: ask.signal }) }, ask.by);
+  }
+  // Nothing to ask for: the version is live already (and its pins are what the agents are now), or there is nothing to unpublish.
   const target = ask.action === 'publish' ? (ask.versionId ?? (workflow && versionFor(workflow)?.id)) : undefined;
-  if (workflow && (ask.action === 'publish' ? target !== undefined && target === live : !live && !workflow.active)) return { ...(await publicationStatus(ask.workflowId)), triggerErrors: [] };
+  if (workflow && ask.action === 'publish' && target !== undefined && target === live) {
+    const { pinsDiffer, pinsFor, pinsSummary, pinsToSet } = await import('../agents/versions');
+    const existing = pinsFor(live!);
+    const wanted = pinsToSet(workflow);
+    if (!ask.versionId && existing.length && pinsDiffer(existing, wanted)) {
+      // Agents were published since: the live version keeps its pins, so the request is for a new version of the same graph that pins the new ones.
+      const newest = listVersions(ask.workflowId)[0];
+      const reuse = newest && newest.id !== live && !pinsFor(newest.id).length && (() => { const g = getVersion(ask.workflowId, newest.id)?.workflow; return !!g && versionHash(g) === versionHash(workflow); })();
+      const forced = reuse ? newest : recordVersion(workflow, { force: true, summary: pinsSummary(pinChanges(existing, wanted)), ...(ask.by && { author: ask.by }) });
+      if (forced) return finishRequest({ ...ask, versionId: forced.id });
+    }
+    return { ...(await publicationStatus(ask.workflowId)), triggerErrors: [] };
+  }
+  if (workflow && ask.action !== 'publish' && !live && !workflow.active) return { ...(await publicationStatus(ask.workflowId)), triggerErrors: [] };
+  return finishRequest(ask);
+}
+
+async function finishRequest(ask: PublishAsk): Promise<PublishOutcome> {
   const request = requestPublish(ask);
   return { ...(await publicationStatus(ask.workflowId)), approvalRequired: true, request: view(rowOf(request.id)!, ask.by ? getUser(ask.by) : undefined), triggerErrors: [] };
 }
@@ -492,7 +530,7 @@ export function cancelRequest(id: string, user: Pick<UserRecord, 'id' | 'role'>)
   const row = rowOf(id);
   if (!row) throw new ApprovalError('Publish request not found', 404);
   if (row.status !== 'pending') throw new ApprovalError(`This request is already ${row.status}`, 409);
-  if (user.id !== row.requested_by && !can(user, 'settings:manage')) throw new ApprovalError('Only the requester or an admin can withdraw this request', 403);
+  if (user.id !== row.requested_by && !isInstanceAdmin(user)) throw new ApprovalError('Only the requester or an admin can withdraw this request', 403);
   const next = setStatus(row, 'canceled', { by: user.id });
   audit('publish_request.cancel', next, { summary: `Withdrew the request to ${KIND_LABEL[row.kind]}` });
   return view(next, user);

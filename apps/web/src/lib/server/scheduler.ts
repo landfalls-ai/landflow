@@ -163,7 +163,7 @@ export const scheduler = singleton('scheduler', () => {
     }
     if (now - last < interval || inFlight.has(key)) return;
     lastRun.set(key, now);
-    recordScheduleLag(workflow.id, now - (last + interval));
+    recordScheduleLag(now - (last + interval));
     fire(workflow, node, key, { scheduledAt: new Date(now).toISOString() });
   }
 
@@ -187,7 +187,7 @@ export const scheduler = singleton('scheduler', () => {
     let due: number | undefined;
     for (let s = from; s <= second; s++) if (matches(timeParts(new Date(s * 1000), zone))) due = s;
     if (due === undefined || inFlight.has(key)) return;
-    recordScheduleLag(workflow.id, now - due * 1000);
+    recordScheduleLag(now - due * 1000);
     fire(workflow, node, key, scheduleItem(new Date(due * 1000), zone));
   }
 

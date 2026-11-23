@@ -8,7 +8,7 @@ design: [spec 18](../../docs/specs/18-desktop-agent-node.md).
 # once: the sandbox image (Xvfb, Openbox, xdotool, Firefox ESR, Mousepad)
 COMPOSE_BAKE=false docker --context orbstack buildx build --builder orbstack --load \
   -t landflow/desktop-sandbox:dev services/desktop-sandbox
-LANDFLOW_DESKTOP_DOCKER_CONTEXT=orbstack pnpm plugin:desktop      # HTTP :7117 (MCP at /mcp), gRPC :7217
+LANDFLOW_DESKTOP_DOCKER_CONTEXT=orbstack pnpm plugin:desktop      # HTTP :7124 (MCP at /mcp), gRPC :7224
 pnpm --filter @landflow/plugin-desktop test                       # scripted driver and a fake docker; no container needed
 LANDFLOW_INTEGRATION=desktop pnpm --filter @landflow/plugin-desktop test   # also the real image
 ```

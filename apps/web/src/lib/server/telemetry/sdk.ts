@@ -69,9 +69,9 @@ function start(): TelemetrySdk {
     otelLog.warn(`OTEL_EXPORTER_OTLP_PROTOCOL=${protocol} is not supported by the host; exporting OTLP over HTTP with JSON encoding`);
   }
 
-  const spanProcessors: SpanProcessor[] = [new LandflowSpanProcessor()];
-  if (telemetryConfig.exportTraces) spanProcessors.push(new BatchSpanProcessor({ exporter: new OTLPTraceExporter() }));
-  const tracerProvider = new TracerProvider({ resource, sampler: new LandflowSampler(samplerFromEnv()), spanProcessors });
+  // The exporter sits behind the Landflow processor, which drops the traces of fast reads (see processors.ts).
+  const exporters: SpanProcessor[] = telemetryConfig.exportTraces ? [new BatchSpanProcessor({ exporter: new OTLPTraceExporter() })] : [];
+  const tracerProvider = new TracerProvider({ resource, sampler: new LandflowSampler(samplerFromEnv()), spanProcessors: [new LandflowSpanProcessor(exporters)] });
   trace.setGlobalTracerProvider(tracerProvider);
 
   const readers: MetricReader[] = [];
@@ -85,6 +85,8 @@ function start(): TelemetrySdk {
   }
   const meterProvider = new MeterProvider({ resource, readers });
   metrics.setGlobalMeterProvider(meterProvider);
+  // Loaded on demand: sdk.ts is in the static import closure of every route (http.ts), the sampler of the process is not.
+  if (readers.length) void import('./runtime-metrics').then((module) => module.startRuntimeMetrics());
 
   // OTel log records (audit events) over OTLP/HTTP JSON, next to the traces and metrics.
   const logsUrl = telemetryConfig.exportLogs ? otlpLogsEndpoint() : undefined;

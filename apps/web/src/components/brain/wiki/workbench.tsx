@@ -1,0 +1,781 @@
+'use client';
+/**
+ * /brain: the second brain as a repository of Markdown files in an editor's workbench (docs/second-brain.md#the-brain-page).
+ *
+ * - Activity bar: Explorer, Search, Timeline, and What Landflow knows (the brain's status, facts and detectors, as a tab).
+ * - Side bar: the view; drag its edge to resize, ⌘B to hide.
+ * - Editor: tabs (one click opens a preview tab in italics, which the next replaces; a double click or a second click
+ *   keeps it), breadcrumbs, and each file as Preview or Source (⌘⇧V).
+ * - Ask (the Ask button in the title bar, or ⌘K) opens the app's one Spotlight, the shell's panel at the right of the page
+ *   (a bottom sheet on a phone), about the open page unless its chip is removed. A link in an answer opens beside it.
+ * - Panel (⌘J): Problems (pages that need a person) and Suggestions. Status bar: the page count and problems. With no pages the index shows alone.
+ * - ⌘P: go to a file, or `>` for commands.
+ * The open tabs and the side bar's width are kept in this browser. On a phone the side bar is a drawer and the activity
+ * bar folds into it.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { AlertTriangle, Brain, ChevronRight, Code2, Eye, Files, GitCommitHorizontal, Network, PanelBottom, PanelLeft, ScrollText, Search, Settings2, Sparkles, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { api } from '@/lib/client/api';
+import { isPhone } from '@/lib/client/use-phone';
+import { cn } from '@/lib/utils';
+import { brainTree, GRAPH, graphRef, graphSubject, INDEX, indexMarkdown, isGraphRef, isPageRef, isPracticeRef, LOG, logMarkdown, outlineOf, pageMarkdown, practiceRef, SETTINGS, urlOf, type BrainTree, type FileRef, type OutlineItem } from '@/lib/shared/brain-files';
+import type { WikiHome, WikiPage, WikiSummary } from '@/lib/shared/brain-wiki';
+import type { LinkProblemView } from '@/lib/shared/notion-brain'; // NB07:
+import { CopyButton } from '../../ui/copy-button';
+import { BrainPanel } from '../brain-panel';
+import { GraphView } from '../graph/graph-view';
+import { ProposalCard, useProposalActions } from '../proposal-card';
+import { IndexDoc, indexOutline, LogDoc } from './index-doc';
+import { PageDoc } from './page-doc';
+import { PracticeDoc } from './practice-doc';
+import { usePracticeList } from './practices-api';
+import { practiceFileName } from './practices-logic';
+import { PracticesView } from './practices-view';
+import { WikiNav } from './parts';
+import { NotionChip, NotionProblems, useNotionBrain } from './notion-status'; // NB07:
+import { ExplorerView, FileIcon, SearchView, TimelineView, type Opener } from './side-views';
+import { lineId, SourceView } from './source-view';
+import { type SpotlightFile } from './spotlight';
+import { closeSpotlight, keyAction, openSpotlight, setBrainFile, setBrainOpener, useSpotlightState } from '../../spotlight/context';
+
+type View = 'explorer' | 'search' | 'timeline' | 'practices';
+type Mode = 'preview' | 'source';
+interface Tab {
+  ref: FileRef;
+  pinned: boolean;
+}
+type Loaded = WikiPage | { error: string };
+
+const STORE = 'landflow.brain.workbench';
+const isPage = isPageRef;
+
+/**
+ * The side bar's classes: a drawer on a phone (only while the drawer is open), in place on a desktop. A closed side bar
+ * is hidden on a desktop whatever the drawer state, so a stale drawer never floats over the app nav.
+ */
+export function sideBarClass(drawer: boolean, sidebar: boolean): string {
+  return cn(
+    'min-h-0 shrink-0 flex-col border-r border-hair bg-sf2',
+    drawer ? 'fixed inset-y-0 left-0 z-40 flex w-[86vw] max-w-[340px] shadow-pop' : 'hidden',
+    sidebar ? 'md:static md:z-auto md:flex md:w-[var(--sb)] md:max-w-none md:shadow-none' : 'md:hidden',
+  );
+}
+
+/**
+ * What chrome the workbench shows: with no pages and the index open, the index alone (no Explorer, no tabs), unless
+ * practices are on (the Practices view is how the first one is written).
+ */
+export function workbenchLayout(pages: number | undefined, active?: FileRef, practicesOn = false): { indexOnly: boolean; explorer: boolean; tabs: boolean } {
+  const indexOnly = pages === 0 && !practicesOn && (!active || active === INDEX);
+  return { indexOnly, explorer: !indexOnly, tabs: !indexOnly };
+}
+
+/** The status bar: the page count and the pages that need a person. Nothing else. */
+export function statusItems(pages: number, problems: number): [string, string] {
+  return [`${pages} page${pages === 1 ? '' : 's'}`, `${problems} problem${problems === 1 ? '' : 's'}`];
+}
+
+export function BrainWorkbench({ initial }: { initial: FileRef }) {
+  const [home, setHome] = useState<WikiHome>();
+  const [homeError, setHomeError] = useState<string>();
+  const [pages, setPages] = useState<Record<FileRef, Loaded>>({});
+  const [tabs, setTabs] = useState<Tab[]>([{ ref: initial, pinned: true }]);
+  const [active, setActive] = useState<FileRef | undefined>(initial);
+  const [modes, setModes] = useState<Record<FileRef, Mode>>({});
+  const [view, setView] = useState<View>('explorer');
+  const [sidebar, setSidebar] = useState(true);
+  const [drawer, setDrawer] = useState(false);
+  const [panel, setPanel] = useState<'problems' | 'suggestions' | undefined>();
+  const [width, setWidth] = useState(272);
+  const [quick, setQuick] = useState(false);
+  const askOpen = useSpotlightState().open;
+  const practices = usePracticeList();
+  const activeRef = useRef(active);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+
+  // The tabs and side bar from last time, with the file the URL names in front.
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORE) ?? '{}') as { tabs?: Tab[]; width?: number; sidebar?: boolean };
+      if (Array.isArray(saved.tabs)) {
+        const restored = saved.tabs.filter((t) => typeof t.ref === 'string' && t.ref !== initial).slice(0, 20);
+        setTabs([...restored.map((t) => ({ ref: t.ref, pinned: Boolean(t.pinned) })), { ref: initial, pinned: true }]);
+      }
+      if (typeof saved.width === 'number') setWidth(Math.min(480, Math.max(200, saved.width)));
+      if (typeof saved.sidebar === 'boolean') setSidebar(saved.sidebar);
+    } catch {
+      // A broken entry: start fresh.
+    }
+  }, [initial]);
+  useEffect(() => {
+    localStorage.setItem(STORE, JSON.stringify({ tabs, width, sidebar }));
+  }, [tabs, width, sidebar]);
+
+  // The active tab in view, on a narrow screen too.
+  useEffect(() => {
+    if (active) document.querySelector(`[data-tab="${CSS.escape(active)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [active, tabs]);
+
+  // The address names the open file, so a reload or a shared link opens it again.
+  useEffect(() => {
+    const url = urlOf(active ?? INDEX);
+    if (window.location.pathname !== url) window.history.replaceState(null, '', url);
+  }, [active]);
+
+  const loadHome = useCallback(() => {
+    api<WikiHome>('/api/brain/wiki')
+      .then((h) => {
+        setHome(h);
+        setHomeError(undefined);
+      })
+      .catch((e: Error) => setHomeError(e.message));
+  }, []);
+  useEffect(loadHome, [loadHome]);
+
+  const loadPage = useCallback((ref: FileRef) => {
+    const [type, id] = [ref.slice(0, ref.indexOf('/')), ref.slice(ref.indexOf('/') + 1)];
+    api<WikiPage>(`/api/brain/wiki/${encodeURIComponent(type)}/${encodeURIComponent(id)}`)
+      .then((p) => setPages((all) => ({ ...all, [ref]: p })))
+      .catch((e: Error) => setPages((all) => ({ ...all, [ref]: { error: e.message } })));
+  }, []);
+  useEffect(() => {
+    if (active && isPage(active) && !pages[active]) loadPage(active);
+  }, [active, pages, loadPage]);
+
+  const open = useCallback((ref: FileRef, options: { pin?: boolean } = {}) => {
+    setTabs((all) => {
+      const at = all.findIndex((t) => t.ref === ref);
+      // Opening the open preview tab again keeps it.
+      if (at >= 0) return options.pin || ref === activeRef.current ? all.map((t) => (t.ref === ref ? { ...t, pinned: true } : t)) : all;
+      const tab = { ref, pinned: Boolean(options.pin) };
+      const preview = all.findIndex((t) => !t.pinned);
+      if (preview >= 0 && !options.pin) return all.map((t, i) => (i === preview ? tab : t));
+      const after = all.findIndex((t) => t.ref === activeRef.current);
+      return [...all.slice(0, after + 1), tab, ...all.slice(after + 1)];
+    });
+    setActive(ref);
+    setDrawer(false);
+  }, []);
+  const opener: Opener = useMemo(() => ({ open }), [open]);
+
+  const close = (ref: FileRef) => {
+    setTabs((all) => {
+      const at = all.findIndex((t) => t.ref === ref);
+      const rest = all.filter((t) => t.ref !== ref);
+      if (ref === activeRef.current) setActive(rest[Math.min(at, rest.length - 1)]?.ref);
+      return rest;
+    });
+  };
+  const pin = (ref: FileRef) => setTabs((all) => all.map((t) => (t.ref === ref ? { ...t, pinned: true } : t)));
+
+  const tree: BrainTree | undefined = useMemo(() => (home ? brainTree(home) : undefined), [home]);
+  const loaded = active && isPage(active) ? pages[active] : undefined;
+  const page = loaded && 'entity' in loaded ? loaded : undefined;
+  // NB07: the open page's project's Notion link (a chip, its problems); nothing when the project has none.
+  const notionProject = page?.entity.projectId;
+  const notion = useNotionBrain(notionProject);
+  const markdown = useMemo(() => {
+    if (!active || !home) return undefined;
+    if (active === INDEX) return indexMarkdown(home);
+    if (active === LOG) return logMarkdown(home);
+    return page ? pageMarkdown(page) : undefined;
+  }, [active, home, page]);
+  const outline = useMemo(() => {
+    const all = markdown ? outlineOf(markdown) : [];
+    return active === INDEX && home ? indexOutline(all, home) : all;
+  }, [markdown, active, home]);
+  const [askedForPractices, setAskedForPractices] = useState(false);
+  const practicesOn = (practices.data?.practices.length ?? 0) > 0 || (practices.data?.waiting ?? 0) > 0 || askedForPractices;
+  const layout = workbenchLayout(home?.entries.length, active, practicesOn);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const mode: Mode = active ? (modes[active] ?? 'preview') : 'preview';
+  const toggleMode = useCallback(() => active && active !== SETTINGS && !isGraphRef(active) && setModes((m) => ({ ...m, [active]: (m[active] ?? 'preview') === 'preview' ? 'source' : 'preview' })), [active]);
+
+  const jump = (item: OutlineItem) => {
+    document.getElementById(mode === 'source' ? lineId(item.line) : item.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setDrawer(false);
+  };
+
+  // A change on a page reloads it, and the home (its counts, problems and suggestions change with it).
+  const changed = (ref: FileRef) => () => {
+    pin(ref);
+    loadPage(ref);
+    loadHome();
+  };
+  const summaryWritten = (ref: FileRef) => (summary: WikiSummary) => {
+    pin(ref);
+    setPages((all) => {
+      const p = all[ref];
+      return p && 'entity' in p ? { ...all, [ref]: { ...p, summary } } : all;
+    });
+    loadHome();
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+      // ⌘K and ⌘I belong to the shell's Spotlight; QuickOpen is ⌘P.
+      if (keyAction(e, { brain: true }) === 'quick') {
+        e.preventDefault();
+        setQuick(true);
+      } else if (key === 'b') {
+        e.preventDefault();
+        if (layoutRef.current.explorer) setSidebar((v) => !v);
+      } else if (key === 'j') {
+        e.preventDefault();
+        setPanel((p) => (p ? undefined : 'problems'));
+      } else if (key === 'v' && e.shiftKey) {
+        e.preventDefault();
+        toggleMode();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleMode]);
+
+  const practiceName = (ref: FileRef) => practiceFileName(practices.data?.practices.find((p) => practiceRef(p.id) === ref)?.handle ?? practices.retired?.find((p) => practiceRef(p.id) === ref)?.handle ?? ref.slice(ref.indexOf('/') + 1));
+  const graphName = (ref: FileRef) => {
+    const subject = graphSubject(ref);
+    return subject ? `Graph: ${tree?.files.get(subject)?.title ?? subject.split('/').pop()}` : 'Graph';
+  };
+  const nameOf = (ref: FileRef) => (ref === SETTINGS ? 'What Landflow knows' : isGraphRef(ref) ? graphName(ref) : isPracticeRef(ref) ? practiceName(ref) : (tree?.files.get(ref)?.name ?? `${ref.split('/').pop()}.md`));
+  const problems = tree ? [...tree.files.values()].filter((f) => f.problems.length) : [];
+  const status = home && statusItems(home.entries.length, problems.length + notion.problems.length); // NB07: the Notion sync problems count too
+  const spotlightFile: SpotlightFile | undefined = active
+    ? { ref: active, name: page?.entity.name ?? tree?.files.get(active)?.title ?? nameOf(active), page: isPage(active), ...(home?.shared[0] && { topShared: home.shared[0].name }) }
+    : undefined;
+  // The shell's Spotlight asks about the open file: publish it (and clear it when the workbench goes).
+  const [fileRef, fileName, fileIsPage, fileTop, fileModel] = [spotlightFile?.ref, spotlightFile?.name, spotlightFile?.page, spotlightFile?.topShared, home?.model];
+  useEffect(() => {
+    setBrainFile(fileRef ? { ref: fileRef, name: fileName ?? fileRef, page: Boolean(fileIsPage), ...(fileTop && { topShared: fileTop }), ...(fileModel && { model: fileModel }) } : undefined);
+  }, [fileRef, fileName, fileIsPage, fileTop, fileModel]);
+  useEffect(() => () => setBrainFile(undefined), []);
+  // And its opener, so a link in an answer opens a tab here instead of navigating (which would remount the workbench).
+  useEffect(() => {
+    setBrainOpener(open);
+    return () => setBrainOpener(undefined);
+  }, [open]);
+
+  const sideView = home && tree && (
+    <>
+      {view === 'explorer' && <ExplorerView tree={tree} active={active} outline={outline} page={page} opener={opener} onOutline={jump} onRefresh={loadHome} />}
+      {view === 'search' && <SearchView home={home} tree={tree} opener={opener} />}
+      {view === 'timeline' && <TimelineView home={home} opener={opener} />}
+      {view === 'practices' && <PracticesView list={practices} active={active} opener={opener} />}
+    </>
+  );
+  const VIEWS: Array<{ id: View; label: string; icon: typeof Files }> = [
+    { id: 'explorer', label: 'Explorer', icon: Files },
+    { id: 'search', label: 'Search', icon: Search },
+    { id: 'timeline', label: 'Timeline', icon: GitCommitHorizontal },
+    { id: 'practices', label: 'Practices', icon: ScrollText },
+  ];
+  const waiting = practices.data?.waiting ?? 0;
+  const pickView = (id: View) => {
+    if (id === view && sidebar) setSidebar(false);
+    else {
+      setView(id);
+      setSidebar(true);
+    }
+  };
+
+  return (
+    <WikiNav.Provider value={open}>
+      <div className="flex h-[calc(100dvh-3.5rem-env(safe-area-inset-bottom))] flex-col overflow-hidden bg-bg md:h-dvh">
+        {/* Title bar: the command center. */}
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-hair bg-sf2 px-2">
+          <button type="button" onClick={() => setDrawer(true)} className={cn('grid size-7 place-items-center rounded-md text-t2 hover:bg-acdim md:hidden', !layout.explorer && 'hidden')} aria-label="Files">
+            <Files className="size-4" />
+          </button>
+          <span className="hidden items-center gap-1.5 text-[12px] font-medium text-t2 md:flex">
+            <Brain className="size-3.5 text-viz-7" aria-hidden />
+            brain
+          </span>
+          <button
+            type="button"
+            onClick={() => setQuick(true)}
+            className="mx-auto flex h-7 w-full max-w-[520px] items-center gap-2 rounded-md border border-bd bg-bg px-2.5 text-[12px] text-t3 hover:border-ac hover:text-t2"
+          >
+            <Search className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate">Go to a page or run a command</span>
+            <kbd className="ml-auto hidden rounded border border-hair px-1 text-[11px] sm:inline">⌘P</kbd>
+          </button>
+          {/* NB07: */}
+          <NotionChip view={notion.view} onClick={() => setPanel('problems')} className="max-md:hidden" />
+          <button
+            type="button"
+            onClick={() => (askOpen ? closeSpotlight() : openSpotlight('/brain'))}
+            aria-pressed={askOpen}
+            title="Ask the brain (⌘K)"
+            className={cn('flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[12px] font-medium max-md:min-h-9', askOpen ? 'border-ac bg-acdim text-t1' : 'border-bd text-t2 hover:border-ac hover:text-t1')}
+          >
+            <Sparkles className="size-3.5 text-viz-7" aria-hidden />
+            Ask
+            <kbd className="hidden rounded border border-hair px-1 font-mono text-[10.5px] text-t3 lg:inline">⌘K</kbd>
+          </button>
+          <div className="hidden items-center gap-0.5 md:flex">
+            {layout.explorer && (
+              <ToolbarButton title="Toggle side bar (⌘B)" onClick={() => setSidebar((v) => !v)} active={sidebar}>
+                <PanelLeft className="size-3.5" />
+              </ToolbarButton>
+            )}
+            <ToolbarButton title="Toggle panel (⌘J)" onClick={() => setPanel((p) => (p ? undefined : 'problems'))} active={Boolean(panel)}>
+              <PanelBottom className="size-3.5" />
+            </ToolbarButton>
+          </div>
+        </div>
+
+        <div className="relative flex min-h-0 flex-1">
+          {/* Activity bar. */}
+          <nav className={cn('hidden w-11 shrink-0 flex-col items-center gap-1 border-r border-hair bg-sf2 py-1.5', layout.explorer && 'md:flex')} aria-label="Views">
+            {VIEWS.map((v) => (
+              <ActivityButton key={v.id} label={v.label} active={sidebar && view === v.id} onClick={() => pickView(v.id)} badge={v.id === 'practices' ? waiting : 0}>
+                <v.icon className="size-[18px]" />
+              </ActivityButton>
+            ))}
+            <div className="mt-auto" />
+            <ActivityButton label="Graph" active={active === GRAPH} onClick={() => open(GRAPH, { pin: true })}>
+              <Network className="size-[18px]" />
+            </ActivityButton>
+            <ActivityButton label="What Landflow knows" active={active === SETTINGS} onClick={() => open(SETTINGS, { pin: true })}>
+              <Settings2 className="size-[18px]" />
+            </ActivityButton>
+          </nav>
+
+          {/* Side bar: in place on a desktop, a drawer on a phone. */}
+          {layout.explorer && drawer && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setDrawer(false)} aria-hidden />}
+          {layout.explorer && (
+          <aside
+            className={sideBarClass(drawer, sidebar)}
+            style={{ width: drawer ? undefined : width, ['--sb' as string]: `${width}px` }}
+          >
+            <div className="flex h-9 shrink-0 items-center gap-1 px-3 text-[11px] font-semibold uppercase tracking-wide text-t3">
+              {VIEWS.find((v) => v.id === view)?.label}
+              <div className="ml-auto flex items-center gap-0.5 md:hidden">
+                {VIEWS.map((v) => (
+                  <button key={v.id} type="button" onClick={() => setView(v.id)} className={cn('relative grid size-7 place-items-center rounded-md', view === v.id ? 'bg-acdim text-t1' : 'text-t3')} aria-label={waiting > 0 && v.id === 'practices' ? `${v.label}, ${waiting} waiting for you` : v.label}>
+                    <v.icon className="size-4" />
+                    {v.id === 'practices' && waiting > 0 && <span className="absolute right-0.5 top-0.5 size-2 rounded-full bg-warn" aria-hidden />}
+                  </button>
+                ))}
+                <button type="button" onClick={() => open(GRAPH, { pin: true })} className="grid size-7 place-items-center rounded-md text-t3" aria-label="Graph">
+                  <Network className="size-4" />
+                </button>
+                <button type="button" onClick={() => open(SETTINGS, { pin: true })} className="grid size-7 place-items-center rounded-md text-t3" aria-label="What Landflow knows">
+                  <Settings2 className="size-4" />
+                </button>
+                <button type="button" onClick={() => setDrawer(false)} className="grid size-7 place-items-center rounded-md text-t3" aria-label="Close">
+                  <X className="size-4" />
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1">{sideView ?? <div className="m-3 h-40 rounded-lg bg-acdim animate-pulse-soft" />}</div>
+          </aside>
+          )}
+          {layout.explorer && sidebar && <ResizeHandle width={width} onWidth={setWidth} />}
+
+          {/* Editor group. */}
+          <div className="flex min-w-0 flex-1 flex-col">
+            {layout.tabs && (
+            <div className="flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-hair bg-sf2 [scrollbar-width:none]" role="tablist">
+              {tabs.map((t) => (
+                <div
+                  key={t.ref}
+                  role="tab"
+                  data-tab={t.ref}
+                  aria-selected={t.ref === active}
+                  tabIndex={0}
+                  onClick={() => setActive(t.ref)}
+                  onDoubleClick={() => pin(t.ref)}
+                  onAuxClick={(e) => e.button === 1 && close(t.ref)}
+                  onKeyDown={(e) => e.key === 'Enter' && setActive(t.ref)}
+                  title={tree?.paths.get(t.ref)?.join('/') ?? nameOf(t.ref)}
+                  className={cn(
+                    'group flex shrink-0 cursor-pointer items-center gap-1.5 border-r border-hair pl-3 pr-1.5 text-[12px]',
+                    t.ref === active ? 'bg-bg text-t1 shadow-[inset_0_2px_0_var(--color-ac)]' : 'text-t3 hover:text-t2',
+                  )}
+                >
+                  {t.ref === SETTINGS ? <Settings2 className="size-3.5 shrink-0 text-t3" /> : isGraphRef(t.ref) ? <Network className="size-3.5 shrink-0 text-t3" aria-hidden /> : isPracticeRef(t.ref) ? <ScrollText className="size-3.5 shrink-0 text-viz-4" aria-hidden /> : <FileIcon file={tree?.files.get(t.ref)} />}
+                  <span className={cn('max-w-[180px] truncate', !t.pinned && 'italic')}>{nameOf(t.ref)}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      close(t.ref);
+                    }}
+                    className={cn('grid size-5 place-items-center rounded text-t3 hover:bg-acdim hover:text-t1', t.ref === active ? 'visible' : 'invisible group-hover:visible')}
+                    aria-label={`Close ${nameOf(t.ref)}`}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            )}
+
+            {active && !layout.indexOnly && (
+              <div className="flex h-7 shrink-0 items-center gap-1 border-b border-hair px-3 text-[12px] text-t3">
+                <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+                  {(active === SETTINGS ? ['What Landflow knows'] : isGraphRef(active) ? ['brain', graphName(active)] : isPracticeRef(active) ? ['brain', 'practices', nameOf(active)] : ['brain', ...(tree?.paths.get(active) ?? [nameOf(active)])]).map((part, i, all) => (
+                    <span key={i} className="flex shrink-0 items-center gap-1 last:min-w-0 last:shrink">
+                      {i > 0 && <ChevronRight className="size-3 shrink-0" />}
+                      {i === all.length - 1 && active !== SETTINGS && !isGraphRef(active) && !isPracticeRef(active) && <FileIcon file={tree?.files.get(active)} className="size-3" />}
+                      <span className={cn('truncate', i === all.length - 1 && 'text-t2')}>{part}</span>
+                    </span>
+                  ))}
+                </div>
+                {isPage(active) && (
+                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                    <ToolbarButton title="Show this page’s graph" onClick={() => open(graphRef(active), { pin: true })}>
+                      <Network className="size-3.5" />
+                    </ToolbarButton>
+                  </div>
+                )}
+                {markdown && (
+                  <div className={cn('flex shrink-0 items-center gap-0.5', !isPage(active) && 'ml-auto')}>
+                    <ToolbarButton title={mode === 'preview' ? 'Show the Markdown (⌘⇧V)' : 'Show the preview (⌘⇧V)'} onClick={toggleMode}>
+                      {mode === 'preview' ? <Code2 className="size-3.5" /> : <Eye className="size-3.5" />}
+                    </ToolbarButton>
+                    <CopyButton text={markdown} label="Copy the Markdown" className="size-6" />
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="relative min-h-0 flex-1">
+              <div className="h-full overflow-y-auto" id="brain-editor">
+                {!active ? (
+                  <Welcome />
+                ) : homeError && !home ? (
+                  <p className="p-6 text-[13px] text-rd">{homeError}</p>
+                ) : isGraphRef(active) ? (
+                  <div className="flex h-full min-h-[420px] flex-col px-4 pb-4 pt-4">
+                    <GraphView key={active} about={graphSubject(active)} onOpenPage={(ref) => open(ref, { pin: true })} />
+                  </div>
+                ) : mode === 'source' && markdown ? (
+                  <div className="pb-12">
+                    <SourceView markdown={markdown} />
+                  </div>
+                ) : (
+                  <div className="mx-auto w-full max-w-3xl px-4 pb-16 pt-6 sm:px-8">
+                    <FileContent
+                      ref_={active}
+                      home={home}
+                      loaded={pages[active]}
+                      onHomeChanged={loadHome}
+                      onPageChanged={changed(active)}
+                      onSummary={summaryWritten(active)}
+                      onPracticeChanged={practices.reload}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {panel && home && (
+              <Panel
+                panel={panel}
+                onPanel={setPanel}
+                problems={problems.map((f) => ({ ref: f.ref, name: f.name, path: tree?.paths.get(f.ref)?.slice(0, -1).join('/') ?? '', problems: f.problems, file: f }))}
+                home={home}
+                onOpen={(ref) => open(ref, { pin: true })}
+                onChanged={loadHome}
+                notion={notionProject && notion.view ? { projectId: notionProject, problems: notion.problems, viewer: { canEdit: Boolean(page?.canEdit), canManage: notion.view.canManage }, onChanged: () => void notion.reload().then(loadHome) } : undefined} // NB07:
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Status bar. */}
+        <div className="flex h-6 shrink-0 items-center gap-3 border-t border-hair bg-sf2 px-2.5 text-[11px] text-t2">
+          {status && (
+            <>
+              <button type="button" onClick={() => open(INDEX)} className="hover:opacity-80" title="Open the index">
+                {status[0]}
+              </button>
+              <button type="button" onClick={() => setPanel((p) => (p === 'problems' ? undefined : 'problems'))} className="flex items-center gap-1 hover:opacity-80" title="Pages that need a person">
+                <AlertTriangle className="size-3" aria-hidden />
+                {status[1]}
+              </button>
+              {/* NB07: on a phone the chip sits here, where there is room. */}
+              <NotionChip view={notion.view} onClick={() => setPanel('problems')} className="ml-auto h-5 min-w-0 px-1.5 text-[11px] md:hidden" />
+            </>
+          )}
+        </div>
+
+        {quick && (
+          <QuickOpen
+            tree={tree}
+            onClose={() => setQuick(false)}
+            onOpen={(ref) => open(ref, { pin: true })}
+            commands={[
+              { label: 'Open index.md', run: () => open(INDEX, { pin: true }) },
+              { label: 'Open log.md', run: () => open(LOG, { pin: true }) },
+              { label: 'Show the graph', run: () => open(GRAPH, { pin: true }) },
+              { label: 'What Landflow knows', run: () => open(SETTINGS, { pin: true }) },
+              { label: 'Toggle Preview and Source', run: toggleMode },
+              ...(layout.explorer ? [{ label: 'Toggle the side bar', run: () => setSidebar((v) => !v) }] : []),
+              { label: 'Show Practices', run: () => (setAskedForPractices(true), setView('practices'), setSidebar(true), setDrawer(isPhone())) },
+              { label: 'Show Problems', run: () => setPanel('problems') },
+              { label: 'Show Suggestions', run: () => setPanel('suggestions') },
+              ...(layout.explorer ? [{ label: 'Search the brain', run: () => (setView('search'), setSidebar(true), setDrawer(isPhone())) }] : []),
+              { label: 'Refresh', run: loadHome },
+              {
+                label: 'Run the brain now (study and detect)',
+                run: () =>
+                  void api('/api/brain/run', { method: 'POST', json: { what: 'all' } })
+                    .then(() => (toast.success('The brain ran'), loadHome()))
+                    .catch((e: Error) => toast.error(e.message)),
+              },
+            ]}
+          />
+        )}
+      </div>
+    </WikiNav.Provider>
+  );
+}
+
+function FileContent({ ref_, home, loaded, onHomeChanged, onPageChanged, onSummary, onPracticeChanged }: { ref_: FileRef; home?: WikiHome; loaded?: Loaded; onHomeChanged: () => void; onPageChanged: () => void; onSummary: (s: WikiSummary) => void; onPracticeChanged: () => void }) {
+  if (isPracticeRef(ref_)) return <PracticeDoc key={ref_} id={ref_.slice(ref_.indexOf('/') + 1)} onChanged={onPracticeChanged} />;
+  if (ref_ === SETTINGS)
+    return (
+      <div className="space-y-4">
+        <h1 className="text-[24px] font-semibold text-t1">What Landflow knows</h1>
+        <p className="text-[13px] text-t2">The second brain itself: what it holds, a search over its facts, and how each detector has done, with Run and Backtest.</p>
+        <BrainPanel />
+      </div>
+    );
+  if (!isPage(ref_)) {
+    if (!home) return <Skeleton />;
+    return ref_ === LOG ? <LogDoc home={home} /> : <IndexDoc home={home} onChanged={onHomeChanged} />;
+  }
+  if (!loaded) return <Skeleton />;
+  if ('error' in loaded)
+    return (
+      <div className="space-y-1 py-10 text-center">
+        <p className="text-[15px] font-semibold text-t1">This page can’t be opened</p>
+        <p className="text-[13px] text-t2">{loaded.error}. It may have been removed, or it is in a project you can’t open.</p>
+      </div>
+    );
+  return <PageDoc page={loaded} onChanged={onPageChanged} onSummary={onSummary} />;
+}
+
+const Skeleton = () => (
+  <div className="space-y-3">
+    <div className="h-8 w-1/2 rounded-lg bg-acdim animate-pulse-soft" />
+    <div className="h-40 rounded-2xl bg-acdim animate-pulse-soft" />
+  </div>
+);
+
+function Welcome() {
+  const rows: Array<[string, string]> = [
+    ['Go to a page or command', '⌘P'],
+    ['Ask the brain', '⌘K'],
+    ['Toggle the side bar', '⌘B'],
+    ['Toggle the panel', '⌘J'],
+    ['Preview or Markdown', '⌘⇧V'],
+  ];
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 pb-28 text-t3">
+      <Brain className="size-16 text-hair" aria-hidden />
+      <dl className="grid grid-cols-[auto_auto] gap-x-6 gap-y-1.5 text-[12px]">
+        {rows.map(([label, keys]) => (
+          <div key={label} className="contents">
+            <dt className="text-right">{label}</dt>
+            <dd>
+              <kbd className="rounded border border-hair px-1.5 text-[11px]">{keys}</kbd>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function ActivityButton({ label, active, onClick, children, badge = 0 }: { label: string; active: boolean; onClick: () => void; children: ReactNode; badge?: number }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={badge > 0 ? `${label}: ${badge} waiting for you` : label}
+      aria-label={badge > 0 ? `${label}, ${badge} waiting for you` : label}
+      aria-pressed={active}
+      className={cn('relative grid size-9 place-items-center rounded-md', active ? 'text-t1 before:absolute before:-left-1 before:top-1.5 before:h-6 before:w-0.5 before:rounded before:bg-ac' : 'text-t3 hover:text-t1')}
+    >
+      {children}
+      {badge > 0 && <span className="absolute -right-0.5 top-0 grid min-w-4 place-items-center rounded-full bg-warn px-1 text-[10px] font-bold leading-4 text-on-ac tabular-nums">{badge > 9 ? '9+' : badge}</span>}
+    </button>
+  );
+}
+
+function ToolbarButton({ title, onClick, active, children }: { title: string; onClick: () => void; active?: boolean; children: ReactNode }) {
+  return (
+    <button type="button" title={title} aria-label={title} onClick={onClick} className={cn('grid size-6 place-items-center rounded text-t3 hover:bg-acdim hover:text-t1', active && 'text-t1')}>
+      {children}
+    </button>
+  );
+}
+
+function ResizeHandle({ width, onWidth }: { width: number; onWidth: (w: number) => void }) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the side bar"
+      className="-ml-0.5 hidden w-1 shrink-0 cursor-col-resize hover:bg-ac/40 md:block"
+      onPointerDown={(e) => {
+        const start = e.clientX;
+        const from = width;
+        const move = (m: PointerEvent) => onWidth(Math.min(480, Math.max(200, from + m.clientX - start)));
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      }}
+    />
+  );
+}
+
+function Panel({
+  panel,
+  onPanel,
+  problems,
+  home,
+  onOpen,
+  onChanged,
+  notion, // NB07:
+}: {
+  panel: 'problems' | 'suggestions';
+  onPanel: (p?: 'problems' | 'suggestions') => void;
+  problems: Array<{ ref: FileRef; name: string; path: string; problems: string[]; file: Parameters<typeof FileIcon>[0]['file'] }>;
+  home: WikiHome;
+  onOpen: (ref: FileRef) => void;
+  onChanged: () => void;
+  /** NB07: the open page's project's Notion sync problems, with the actions the viewer may press. */
+  notion?: { projectId: string; problems: LinkProblemView[]; viewer: { canEdit: boolean; canManage: boolean }; onChanged: () => void };
+}) {
+  const actions = useProposalActions({ onDone: onChanged });
+  const tabs = [
+    { id: 'problems' as const, label: 'Problems', count: problems.length + (notion?.problems.length ?? 0) }, // NB07:
+    { id: 'suggestions' as const, label: 'Suggestions', count: home.proposals.length },
+  ];
+  return (
+    <div className="flex h-56 shrink-0 flex-col border-t border-hair bg-bg">
+      <div className="flex h-8 shrink-0 items-center gap-4 px-3">
+        {tabs.map((t) => (
+          <button key={t.id} type="button" onClick={() => onPanel(t.id)} className={cn('flex h-full items-center gap-1.5 border-b text-[11px] font-semibold uppercase tracking-wide', panel === t.id ? 'border-ac text-t1' : 'border-transparent text-t3 hover:text-t2')}>
+            {t.label}
+            <span className="rounded-full bg-acdim px-1.5 text-[11px] tabular-nums">{t.count}</span>
+          </button>
+        ))}
+        <button type="button" onClick={() => onPanel(undefined)} className="ml-auto grid size-6 place-items-center rounded text-t3 hover:bg-acdim hover:text-t1" aria-label="Close the panel">
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+        {panel === 'problems' && notion && <NotionProblems projectId={notion.projectId} problems={notion.problems} viewer={notion.viewer} onChanged={notion.onChanged} />}
+        {panel === 'problems' &&
+          (problems.length ? (
+            problems.flatMap((p) =>
+              p.problems.map((problem) => (
+                <button key={`${p.ref}:${problem}`} type="button" onClick={() => onOpen(p.ref)} className="flex w-full items-center gap-2 px-3 py-1 text-left text-[12px] hover:bg-acdim/60">
+                  <AlertTriangle className="size-3.5 shrink-0 text-warn" aria-hidden />
+                  <span className="text-t1">{problem.charAt(0).toUpperCase() + problem.slice(1)}</span>
+                  <FileIcon file={p.file} />
+                  <span className="text-t2">{p.name}</span>
+                  <span className="truncate text-t3">{p.path}</span>
+                </button>
+              )),
+            )
+          ) : notion?.problems.length ? null : (
+            <p className="px-3 py-1 text-[12px] text-t3">No problems: every page has an owner, work in the last 30 days and a current summary.</p>
+          ))}
+        {panel === 'suggestions' &&
+          (home.proposals.length ? (
+            <div className="grid gap-2 px-3 pt-1 lg:grid-cols-2">
+              {home.proposals.map((p) => (
+                <ProposalCard key={p.id} proposal={p} actions={actions} compact />
+              ))}
+            </div>
+          ) : (
+            <p className="px-3 py-1 text-[12px] text-t3">No open suggestions.</p>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+/** ⌘P: files by name or path; `>` for commands. */
+function QuickOpen({ tree, onClose, onOpen, commands }: { tree?: BrainTree; onClose: () => void; onOpen: (ref: FileRef) => void; commands: Array<{ label: string; run: () => void }> }) {
+  const [q, setQ] = useState('');
+  const [at, setAt] = useState(0);
+  const commandMode = q.startsWith('>');
+  const query = (commandMode ? q.slice(1) : q).trim().toLowerCase();
+  type Item = { key: string; label: string; detail?: string; icon: ReactNode; run: () => void };
+  const items: Item[] = commandMode
+    ? commands.filter((c) => fuzzy(c.label.toLowerCase(), query)).map((c) => ({ key: c.label, label: c.label, icon: <ChevronRight className="size-3.5 text-t3" />, run: c.run }))
+    : [
+        ...[...(tree?.files.values() ?? [])]
+          .map((f) => ({ f, path: tree?.paths.get(f.ref)?.join('/') ?? f.name }))
+          .filter(({ f, path }) => !query || fuzzy(`${path} ${f.title}`.toLowerCase(), query))
+          .sort((a, b) => score(b.f.title, query) - score(a.f.title, query) || b.f.week - a.f.week)
+          .slice(0, 12)
+          .map(({ f, path }) => ({ key: f.ref, label: f.title === 'Brain' || f.title === 'Log' ? f.name : f.title, detail: path, icon: <FileIcon file={f} />, run: () => onOpen(f.ref) })),
+      ];
+  const choose = (item?: Item) => {
+    if (!item) return;
+    onClose();
+    item.run();
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex justify-center bg-black/30 px-3 pt-[12vh]" onMouseDown={onClose}>
+      <div role="dialog" aria-modal="true" aria-label="Go to a page" className="h-fit w-full max-w-[600px] overflow-hidden rounded-xl border border-bd bg-sf shadow-pop" onMouseDown={(e) => e.stopPropagation()}>
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setAt(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') onClose();
+            else if (e.key === 'ArrowDown') (e.preventDefault(), setAt((i) => Math.min(items.length - 1, i + 1)));
+            else if (e.key === 'ArrowUp') (e.preventDefault(), setAt((i) => Math.max(0, i - 1)));
+            else if (e.key === 'Enter') choose(items[at]);
+          }}
+          placeholder="Go to a page · > for commands"
+          aria-label="Go to a page or command"
+          className="h-10 w-full border-b border-hair bg-transparent px-3.5 text-[13px] text-t1 outline-none placeholder:text-t3"
+        />
+        <ul className="max-h-[50vh] overflow-y-auto py-1" role="listbox">
+          {items.map((item, i) => (
+            <li key={item.key} role="option" aria-selected={i === at}>
+              <button type="button" onMouseEnter={() => setAt(i)} onClick={() => choose(item)} className={cn('flex w-full items-center gap-2 px-3.5 py-1.5 text-left text-[13px]', i === at ? 'bg-acdim text-t1' : 'text-t2')}>
+                {item.icon}
+                <span className="truncate">{item.label}</span>
+                {item.detail && <span className="ml-auto truncate pl-3 text-[11px] text-t3">{item.detail}</span>}
+              </button>
+            </li>
+          ))}
+          {!items.length && <li className="px-3.5 py-2 text-[12px] text-t3">{commandMode ? 'No command matches.' : 'No page matches.'}</li>}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/** Every letter of the query in order. */
+const fuzzy = (text: string, query: string) => {
+  let i = 0;
+  for (const ch of text) if (ch === query[i]) i++;
+  return i >= query.length;
+};
+const score = (title: string, query: string) => (!query ? 0 : title.toLowerCase().startsWith(query) ? 3 : title.toLowerCase().includes(query) ? 2 : 1);

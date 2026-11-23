@@ -1,0 +1,36 @@
+/**
+ * The audit row for a key refused for its address or its use cap (`api.denied`, reason `ip_not_allowed` or
+ * `uses_exhausted`): one a minute per key and route (the throttle of denied reads, audit/http.ts) and under that
+ * layer's per-minute ceiling, so a caller hammering a leaked key can't flood the log. The row names the key's id and
+ * label, never the key; the caller's address is the request's own (audit context). Recorded inside the request's audit
+ * context, which then leaves the generic refusal row out.
+ */
+import { recordAudit } from '../audit';
+import { deniedReadDue, deniedReadUnderCap } from '../audit/http';
+import { type KeyRefusal } from './api-key-refusal';
+import { auditRequestContext } from '../audit/context';
+import { countDenied } from '../rate-limit/counters';
+
+const SUMMARY: Record<KeyRefusal, string> = {
+  ip_not_allowed: 'refused: called from an address outside its allow-list',
+  uses_exhausted: 'refused: it has used all its uses',
+};
+
+export function noteKeyRefusal(reason: KeyRefusal, key: { id: string; label: string }, status = 401, counted = false): void {
+  // Every refusal is counted under its own label, whether or not the audit row is throttled (the guard counts its own: `counted`).
+  if (!counted) countDenied(reason);
+  const ctx = auditRequestContext();
+  if (!deniedReadDue(`key:${key.id}`, `${reason}:${ctx?.route ?? ctx?.path ?? ''}`) || !deniedReadUnderCap()) {
+    // Throttled: this refusal is accounted for, so the generic layer must not write a row of its own for it.
+    if (ctx) ctx.recorded++;
+    return;
+  }
+  recordAudit({
+    action: 'api.denied',
+    outcome: 'denied',
+    status,
+    target: { type: 'api_key', id: key.id, name: key.label },
+    summary: `The API key “${key.label}” ${SUMMARY[reason]}`,
+    details: { reason, keyId: key.id },
+  });
+}

@@ -7,22 +7,32 @@
  * Durability: a batch is appended to `<data dir>/postgres-queue.jsonl` before it is queued, and
  * Postgres records the last batch it applied (`meta.postgres.replica_seq`, in the same transaction).
  * At boot the file is replayed from there, so writes not yet in Postgres when the host stopped or
- * crashed are not lost; the file is emptied whenever the queue drains.
+ * crashed are not lost; the file is emptied whenever the queue drains. The file is fsynced by LANDFLOW_PG_SPOOL_FSYNC.
  *
- * Limits: one host per database (an advisory lock refuses a second one) in regular mode, and the
- * whole database lives in memory.
+ * A batch Postgres rejects (not a connection failure) five times is never dropped: the sink is `blocked`, the batch
+ * stays at the head, nothing after it is applied, `Database.write` throws StoreUnavailableError (`handler()` answers 503)
+ * so the in-memory copy can't run ahead, and the batch is retried every LANDFLOW_PG_BLOCKED_RETRY_SECONDS. LANDFLOW_PG_SKIP_BATCH=<seq> skips it at the
+ * next boot, writing it to `postgres-rejected-<seq>.jsonl` (`-<instance>-<seq>` in queue mode).
+ *
+ * Memory: the copy holds every table except the data and journal of cold runs, which Postgres serves on demand
+ * (./hot-mirror, ./reads); the audit log, the usage ledger, insights rows and AI usage still live in it whole.
+ *
+ * Limits: one host per database (an advisory lock refuses a second one) in regular mode.
  *
  * Queue mode (`openPostgres(…, { instanceId })`, lib/server/cluster): mains and workers share the database. Each holds
  * the instance lock in shared mode (so a regular-mode host can't join, nor start beside them), spools to
  * `postgres-queue-<instance>.jsonl` with its own replayed sequence number, and notifies the others of every batch it
  * applies; ./replication keeps its copy in step with theirs.
  */
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, existsSync, fdatasyncSync, ftruncateSync, openSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { Pool, PoolClient } from 'pg';
+import { envNumber, envString } from '../config';
 import { logger } from '../telemetry/logger';
-import { Database, openSqliteConnection, upsertSql, type DirectClient, type SqlValue, type WriteOp, type WriteSink } from './database';
-import { CHANGES_CHANNEL, noticesFor, Replica, rowIdOf } from './replication';
+import { Database, openSqliteConnection, upsertSql, type DirectClient, type SqlValue, type WriteHealth, type WriteOp, type WriteSink } from './database';
+import { hotCutoff, mirrorSelect, startEviction } from './hot-mirror';
+import { CHANGES_CHANNEL, noticesFor, type ChangeNotice, Replica, rowIdOf } from './replication';
+import { recordWriteRejection, recordWriteRetry, registerWriteMetrics } from './write-metrics';
 import { addColumnSql, MIGRATIONS, pendingMigrations, SCHEMA_VERSION_TABLE, TABLES, type TableName } from './schema';
 
 /** Held for the life of the host: a second host on the same database fails to start. */
@@ -92,16 +102,54 @@ export async function migratePostgres(pool: Pool): Promise<number[]> {
   }
 }
 
+export type SpoolFsync = 'interval' | 'always' | 'off';
+export interface SinkOptions {
+  /** Seconds between retries of a blocked batch (LANDFLOW_PG_BLOCKED_RETRY_SECONDS, default 60). */
+  blockedRetrySeconds?: number;
+  spoolFsync?: SpoolFsync;
+  /** Base of the exponential wait between retries (default 250 ms); tests shrink it. */
+  backoffMs?: number;
+  /** How long close() waits for the queue to drain (default 10 s); tests shrink it. */
+  closeFlushMs?: number;
+}
+
+const FSYNC_INTERVAL_MS = 100;
+/** Non-connection rejections of the same batch before the sink blocks. */
+const REJECTIONS_TO_BLOCK = 5;
+
 /** The ordered, spooled write queue to Postgres. */
-class PostgresSink implements WriteSink {
+export class PostgresSink implements WriteSink {
   private queue: Batch[] = [];
   private draining?: Promise<void>;
   private failures = 0;
+  private rejections = 0;
   private closed = false;
+  private blockedSeq?: number;
+  private lastError?: string;
+  /** After a rejection: one batch per transaction, so the one Postgres rejects is the one that blocks. */
+  private isolate = false;
+  private queuedOps = 0;
+  private readonly enqueuedAt = new WeakMap<Batch, number>();
+  private fd: number;
+  private readonly closeFlushMs: number;
+  private readonly fsync: SpoolFsync;
+  private readonly blockedRetryMs: number;
+  private readonly backoffMs: number;
+  private fsyncTimer?: NodeJS.Timeout;
+  private unregister?: () => void;
   /** Queue mode: rows with writes not yet in Postgres (the follower leaves them alone), and how many. */
   private readonly pending = new Map<string, number>();
   /** Queue mode: the follower (closed with the store). */
   replica?: Replica;
+  /** The tables the copy holds in part (a delete on them is always replayed). */
+  readonly partial: ReadonlySet<TableName> = new Set<TableName>(['executions', 'execution_events']);
+  /** Executions with writes not yet in Postgres, with how many. */
+  private readonly pendingExecs = new Map<string, number>();
+  /** Sequence number of the last batch applied (or already there at boot), and who waits for a later one. */
+  private applied: number;
+  private waiters: Array<{ seq: number; resolve: (ok: boolean) => void }> = [];
+  /** Stops the evictor of cold runs (./hot-mirror). */
+  stopEviction?: () => void;
 
   constructor(
     private readonly pool: Pool,
@@ -109,19 +157,63 @@ class PostgresSink implements WriteSink {
     private readonly spool: string,
     private seq: number,
     private readonly shared?: Shared,
-  ) {}
+    options: SinkOptions = {},
+  ) {
+    this.applied = seq;
+    const mode = options.spoolFsync ?? envString('LANDFLOW_PG_SPOOL_FSYNC')?.toLowerCase();
+    this.fsync = mode === 'always' || mode === 'off' ? mode : 'interval';
+    // At least a second from the environment, so a blocked sink can't retry in a tight loop; tests pass 0 as an option.
+    this.blockedRetryMs = (options.blockedRetrySeconds ?? envNumber('LANDFLOW_PG_BLOCKED_RETRY_SECONDS', { fallback: 60, min: 1 })) * 1000;
+    this.backoffMs = options.backoffMs ?? 250;
+    this.closeFlushMs = options.closeFlushMs ?? 10_000;
+    this.fd = openSync(spool, 'a');
+    this.unregister = registerWriteMetrics(() => this.health());
+  }
 
   private track(batches: Batch[], delta: 1 | -1) {
-    if (!this.shared) return;
     for (const batch of batches) {
+      this.queuedOps += delta * batch.ops.length;
       for (const op of batch.ops) {
+        const exec = executionOf(op);
+        if (exec) bump(this.pendingExecs, exec, delta);
+        if (!this.shared) continue;
         const id = rowIdOf(op);
-        if (!id) continue;
-        const count = (this.pending.get(id) ?? 0) + delta;
-        if (count > 0) this.pending.set(id, count);
-        else this.pending.delete(id);
+        if (id) bump(this.pending, id, delta);
       }
     }
+  }
+
+  pendingExecutions(): { has(id: string): boolean } {
+    return this.pendingExecs;
+  }
+
+  /** Resolve true once every batch queued by now is in Postgres, false after `timeoutMs` (a blocked or slow queue). */
+  barrier(timeoutMs: number): Promise<boolean> {
+    if (this.applied >= this.seq) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const waiter = {
+        seq: this.seq,
+        resolve: (ok: boolean) => {
+          clearTimeout(timer);
+          resolve(ok);
+        },
+      };
+      const timer = setTimeout(() => {
+        this.waiters = this.waiters.filter((w) => w !== waiter);
+        resolve(false);
+      }, timeoutMs);
+      timer.unref?.();
+      this.waiters.push(waiter);
+    });
+  }
+
+  private markApplied(seq: number) {
+    this.applied = Math.max(this.applied, seq);
+    this.waiters = this.waiters.filter((waiter) => {
+      if (waiter.seq > this.applied) return true;
+      waiter.resolve(true);
+      return false;
+    });
   }
 
   /** Rows with writes of this process not yet in Postgres. */
@@ -132,6 +224,19 @@ class PostgresSink implements WriteSink {
   /** Writes not yet in Postgres, in order. */
   pendingOps(): WriteOp[] {
     return this.queue.flatMap((batch) => batch.ops);
+  }
+
+  health(): WriteHealth {
+    const oldest = this.queue[0];
+    const at = oldest && this.enqueuedAt.get(oldest);
+    return {
+      state: this.blockedSeq !== undefined ? 'blocked' : this.failures > 0 ? 'retrying' : 'ok',
+      queuedBatches: this.queue.length,
+      queuedOps: this.queuedOps,
+      oldestAgeMs: at ? Date.now() - at : 0,
+      ...(this.lastError ? { lastError: this.lastError } : {}),
+      ...(this.blockedSeq !== undefined ? { blockedSeq: this.blockedSeq } : {}),
+    };
   }
 
   /** A pool connection for `fn` (Database.direct): straight to Postgres, released afterwards. */
@@ -145,14 +250,45 @@ class PostgresSink implements WriteSink {
     }
   }
 
+  async refresh(table: TableName, where: Record<string, SqlValue>): Promise<boolean> {
+    if (!this.replica) return false;
+    await this.replica.refresh(table, where);
+    return true;
+  }
+
+  keyNotice(table: TableName, key: SqlValue[]): string | undefined {
+    if (!this.replica) return undefined;
+    return JSON.stringify({ o: this.replica.origin, c: [['k', table, key]], t: Date.now() } satisfies ChangeNotice);
+  }
+
   enqueue(ops: WriteOp[]) {
     if (this.closed) throw new Error('The Postgres store is closed');
     const batch = { seq: ++this.seq, ops };
-    this.track([batch], 1);
     // On disk before anything else: a crash before Postgres has it replays it at the next boot.
-    appendFileSync(this.spool, `${JSON.stringify(batch)}\n`);
+    writeSync(this.fd, `${JSON.stringify(batch)}\n`);
+    this.track([batch], 1);
+    this.syncSpool();
+    this.enqueuedAt.set(batch, Date.now());
     this.queue.push(batch);
     this.drain();
+  }
+
+  /** fdatasync per LANDFLOW_PG_SPOOL_FSYNC: after each append, at most every 100 ms, or never. */
+  private syncSpool() {
+    if (this.fsync === 'off') return;
+    if (this.fsync === 'always') return void fdatasyncSync(this.fd);
+    if (this.fsyncTimer) return;
+    this.fsyncTimer = setTimeout(() => {
+      this.fsyncTimer = undefined;
+      if (this.closed) return;
+      try {
+        fdatasyncSync(this.fd);
+      } catch (error) {
+        this.lastError = `spool fsync: ${errorText(error)}`;
+        logger.error('postgres store: syncing the spool failed', { error });
+      }
+    }, FSYNC_INTERVAL_MS);
+    this.fsyncTimer.unref?.();
   }
 
   private drain() {
@@ -164,35 +300,63 @@ class PostgresSink implements WriteSink {
 
   private async run() {
     while (this.queue.length) {
-      // Several small batches go in one transaction; a big one goes alone.
+      // close() may have run while this loop slept (a blocked sink waits up to a minute): the pool is gone.
+      if (this.closed) return;
+      // Several small batches go in one transaction; a big one goes alone (and so does each, after a rejection).
       const take: Batch[] = [];
       let ops = 0;
       for (const batch of this.queue) {
-        if (take.length && ops + batch.ops.length > MAX_OPS_PER_FLUSH) break;
+        if (take.length && (this.isolate || ops + batch.ops.length > MAX_OPS_PER_FLUSH)) break;
         take.push(batch);
         ops += batch.ops.length;
       }
+      const wasBlocked = this.blockedSeq !== undefined;
+      const afterRejection = this.isolate;
       try {
         await applyBatches(this.pool, take, this.shared);
         this.queue.splice(0, take.length);
         this.track(take, -1);
+        this.markApplied(take.at(-1)!.seq);
         this.failures = 0;
-        if (!this.queue.length) writeFileSync(this.spool, '');
+        this.rejections = 0;
+        this.lastError = undefined;
+        if (wasBlocked) {
+          this.blockedSeq = undefined;
+          logger.info('postgres store: the blocked write batch was applied; writes are accepted again', { 'landflow.db.seq': take[0].seq });
+        }
+        // The batch Postgres rejected earlier (the head one, taken alone) applied: back to grouping batches.
+        if (afterRejection) this.isolate = false;
+        // close() may have closed the spool while this transaction was in flight: its descriptor is no longer ours.
+        if (this.closed) return;
+        if (!this.queue.length) ftruncateSync(this.fd, 0);
       } catch (error) {
         this.failures++;
-        if (!isConnectionError(error) && this.failures >= 5) {
-          // A batch Postgres keeps rejecting would block every later write: drop it, loudly.
-          const dropped = take[0];
-          logger.error('postgres store: dropped a write batch Postgres rejects', { error, 'landflow.db.seq': dropped.seq, 'landflow.db.ops': JSON.stringify(dropped.ops).slice(0, 2000) });
-          this.queue.shift();
-          this.track([dropped], -1);
-          await setSeq(this.pool, dropped.seq, this.shared?.seqKey).catch(() => {});
-          this.failures = 0;
-          continue;
+        const rejected = !isConnectionError(error);
+        this.lastError = errorText(error);
+        if (rejected) {
+          this.rejections++;
+          this.isolate = true;
+          recordWriteRejection();
         }
-        if (this.failures === 1 || this.failures % 20 === 0) logger.warn('postgres store: write failed, retrying', { error, 'landflow.db.queued': this.queue.length });
+        if (wasBlocked) {
+          recordWriteRetry();
+          logger.warn(rejected ? 'postgres store: the blocked write batch is still rejected' : 'postgres store: retrying the blocked write batch failed (connection)', { error, 'landflow.db.seq': take[0].seq });
+        } else if (rejected && this.rejections >= REJECTIONS_TO_BLOCK) {
+          // Never dropped: the batch stays at the head, later writes are refused (Database.write) and it is retried.
+          this.blockedSeq = take[0].seq;
+          logger.error('postgres store: blocked on a write batch Postgres rejects; writes are refused until it applies (retrying, or restart with LANDFLOW_PG_SKIP_BATCH)', {
+            error,
+            'landflow.db.seq': take[0].seq,
+            'landflow.db.ops.count': take[0].ops.length,
+            'landflow.db.ops': JSON.stringify(take[0].ops).slice(0, 2000),
+            'db.response.status_code': (error as { code?: string }).code,
+          });
+        } else if (this.failures === 1 || this.failures % 20 === 0) {
+          logger.warn('postgres store: write failed, retrying', { error, 'landflow.db.queued': this.queue.length });
+        }
         if (this.closed) return;
-        await new Promise((resolve) => setTimeout(resolve, Math.min(30_000, 250 * 2 ** Math.min(this.failures, 7))).unref?.());
+        const wait = this.blockedSeq !== undefined ? this.blockedRetryMs : Math.min(30_000, this.backoffMs * 2 ** Math.min(this.failures, 7));
+        await new Promise((resolve) => setTimeout(resolve, wait).unref?.());
       }
     }
   }
@@ -206,17 +370,68 @@ class PostgresSink implements WriteSink {
     if (this.queue.length) throw new Error(`${this.queue.length} write batch(es) not yet in Postgres (kept in ${this.spool})`);
   }
 
+  /** Boot failed after the sink was made: release the spool and the metrics source without flushing (the caller ends the pool). */
+  discard() {
+    this.closed = true;
+    this.stopEviction?.();
+    this.unregister?.();
+    clearTimeout(this.fsyncTimer);
+    const fd = this.fd;
+    this.fd = -1;
+    try {
+      closeSync(fd);
+    } catch {
+      // Already closed.
+    }
+  }
+
   async close() {
     try {
-      await this.flush();
+      await this.flush(this.closeFlushMs);
     } finally {
       this.closed = true;
+      this.stopEviction?.();
+      for (const waiter of this.waiters) waiter.resolve(false);
+      this.waiters = [];
+      this.unregister?.();
+      clearTimeout(this.fsyncTimer);
+      try {
+        if (this.fsync !== 'off') fdatasyncSync(this.fd);
+      } catch {
+        // Already closed, or the disk is gone: nothing more to do for the spool.
+      }
+      const fd = this.fd;
+      this.fd = -1;
+      closeSync(fd);
       await this.replica?.close();
       this.lock.release();
       await this.pool.end();
     }
   }
 }
+
+/** The execution a write belongs to (its row, or one of its journal events), for the evictor's list of rows in flight to Postgres. */
+function executionOf(op: WriteOp): string | undefined {
+  if (op.table !== 'executions' && op.table !== 'execution_events') return undefined;
+  if (op.op === 'deleteBefore') return undefined;
+  const values = op.op === 'delete' ? op.where : op.row;
+  const id = op.table === 'executions' ? values.id : values.execution_id;
+  return typeof id === 'string' ? id : undefined;
+}
+
+function bump(map: Map<string, number>, key: string, delta: 1 | -1) {
+  const count = (map.get(key) ?? 0) + delta;
+  if (count > 0) map.set(key, count);
+  else map.delete(key);
+}
+
+/** Queue mode: each process has its own sequence space, so the file name carries the instance. */
+const rejectedName = (seq: number, shared?: Shared) => (shared ? `${shared.origin}-${seq}` : String(seq));
+
+const errorText = (error: unknown) => {
+  const code = (error as { code?: string })?.code;
+  return `${code ? `${code}: ` : ''}${error instanceof Error ? error.message : String(error)}`;
+};
 
 /** Apply batches in one Postgres transaction and record the last one's sequence number (queue mode: and notify the others). */
 async function applyBatches(pool: Pool, batches: Batch[], shared?: Shared) {
@@ -231,7 +446,7 @@ async function applyBatches(pool: Pool, batches: Batch[], shared?: Shared) {
     }
     if (shared) {
       // Delivered at COMMIT, in commit order, to every other process's LISTEN connection (./replication).
-      for (const payload of noticesFor(shared.origin, batches.flatMap((batch) => batch.ops))) await client.query('SELECT pg_notify($1, $2)', [CHANGES_CHANNEL, payload]);
+      for (const payload of noticesFor(shared.origin, batches.flatMap((batch) => batch.ops), Date.now())) await client.query('SELECT pg_notify($1, $2)', [CHANGES_CHANNEL, payload]);
     }
     await setSeq(client, batches.at(-1)!.seq, shared?.seqKey);
     await client.query('COMMIT');
@@ -244,7 +459,7 @@ async function applyBatches(pool: Pool, batches: Batch[], shared?: Shared) {
 }
 
 /** Replay what the spool holds past Postgres' last applied batch. Returns the sequence number to continue from. */
-async function replaySpool(pool: Pool, spool: string, shared?: Shared): Promise<number> {
+export async function replaySpool(pool: Pool, spool: string, shared?: Shared): Promise<number> {
   const applied = Number((await pool.query('SELECT value FROM meta WHERE key = $1', [shared?.seqKey ?? SEQ_KEY])).rows[0]?.value ?? 0);
   if (!existsSync(spool)) return applied;
   const batches: Batch[] = [];
@@ -257,19 +472,46 @@ async function replaySpool(pool: Pool, spool: string, shared?: Shared): Promise<
       // A line cut short by a crash mid-write: that batch never committed locally either.
     }
   }
-  if (batches.length) {
-    await applyBatches(pool, batches, shared);
-    logger.info('postgres store: replayed queued writes', { 'landflow.db.batches': batches.length });
+  const skip = Number(envString('LANDFLOW_PG_SKIP_BATCH') ?? NaN);
+  const skipped = Number.isFinite(skip) ? batches.filter((batch) => batch.seq === skip) : [];
+  const todo = batches.filter((batch) => !skipped.includes(batch));
+  for (const batch of skipped) {
+    // Kept, never discarded: the operator can read it and replay it by hand.
+    const file = join(dirname(spool), `postgres-rejected-${rejectedName(batch.seq, shared)}.jsonl`);
+    writeFileSync(file, `${JSON.stringify(batch)}\n`);
+    logger.error('postgres store: skipped a write batch (LANDFLOW_PG_SKIP_BATCH); it is in the rejected file', { 'landflow.db.seq': batch.seq, file });
   }
+  if (todo.length) {
+    try {
+      await applyBatches(pool, todo, shared);
+    } catch (error) {
+      if (isConnectionError(error)) throw error;
+      // Find the batch Postgres rejects: one by one (the failed transaction rolled back whole).
+      for (const batch of todo) {
+        try {
+          await applyBatches(pool, [batch], shared);
+        } catch (single) {
+          if (isConnectionError(single)) throw single;
+          throw new Error(`Postgres rejected write batch ${batch.seq} while replaying ${spool} (${errorText(single)}); fix the cause, or restart with LANDFLOW_PG_SKIP_BATCH=${batch.seq} to set it aside in postgres-rejected-${rejectedName(batch.seq, shared)}.jsonl`);
+        }
+      }
+    }
+    logger.info('postgres store: replayed queued writes', { 'landflow.db.batches': todo.length });
+  }
+  const last = Math.max(applied, batches.at(-1)?.seq ?? 0);
+  // A skipped batch at the end is not in what was applied: record the sequence so it is not replayed again.
+  if (skipped.length && last > applied && (todo.at(-1)?.seq ?? 0) < last) await setSeq(pool, last, shared?.seqKey);
   writeFileSync(spool, '');
-  return Math.max(applied, batches.at(-1)?.seq ?? 0);
+  return last;
 }
 
-/** Copy every table from Postgres into the in-memory SQLite connection. */
+/** Copy every table from Postgres into the in-memory SQLite connection (run data and journal: only the hot runs'). */
 async function loadMirror(pool: Pool, mirror: Database): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
+  const cutoff = hotCutoff();
   for (const table of Object.keys(TABLES) as TableName[]) {
-    const { rows } = await pool.query(`SELECT * FROM ${table}`);
+    const query = mirrorSelect(table, cutoff);
+    const { rows } = await pool.query(query.text, query.values);
     counts[table] = rows.length;
     if (!rows.length) continue;
     const columns = Object.keys(rows[0]);
@@ -298,6 +540,7 @@ export async function openPostgres(url: string, dataDir: string, options: { inst
   pool.on('error', (error) => logger.warn('postgres store: idle connection error', { error }));
   let lock: PoolClient | undefined;
   let replica: Replica | undefined;
+  let sink: PostgresSink | undefined;
   try {
     lock = await pool.connect();
     const { rows } = await lock.query(`SELECT ${shared ? 'pg_try_advisory_lock_shared' : 'pg_try_advisory_lock'}($1) AS locked`, [INSTANCE_LOCK]);
@@ -311,21 +554,24 @@ export async function openPostgres(url: string, dataDir: string, options: { inst
     await migratePostgres(pool);
     const spool = join(dataDir, shared ? `postgres-queue-${shared.origin}.jsonl` : 'postgres-queue.jsonl');
     const seq = await replaySpool(pool, spool, shared);
-    const sink = new PostgresSink(pool, lock, spool, seq, shared);
-    const db = new Database(openSqliteConnection(':memory:'), 'postgres', ':memory:', sink);
+    const opened = new PostgresSink(pool, lock, spool, seq, shared);
+    sink = opened;
+    const db = new Database(openSqliteConnection(':memory:'), 'postgres', ':memory:', opened);
     if (shared) {
       // LISTEN before loading: what commits while the copy loads is applied after it, in order.
-      replica = new Replica(db, pool, url, shared.origin, () => sink.pendingRows(), () => sink.pendingOps());
+      replica = new Replica(db, pool, url, shared.origin, () => opened.pendingRows(), () => opened.pendingOps());
       await replica.listen();
-      sink.replica = replica;
+      opened.replica = replica;
     }
     const counts = await loadMirror(pool, db);
     replica?.ready();
     logger.info('postgres store loaded', { 'landflow.db.workflows': counts.workflows ?? 0, 'landflow.db.executions': counts.executions ?? 0 });
-    // Best effort; anything left is in the spool for the next boot.
-    process.once('beforeExit', () => void sink.flush(5_000).catch(() => {}));
+    // Runs that cool down leave the copy (nothing is sent to Postgres); the lifecycle shutdown registry flushes the queue.
+    opened.stopEviction = startEviction(db);
     return db;
   } catch (error) {
+    // A test (or a retried boot) that opens again must not inherit this attempt's spool descriptor or metrics source.
+    sink?.discard();
     await replica?.close();
     lock?.release();
     await pool.end().catch(() => {});

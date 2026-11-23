@@ -1,0 +1,27 @@
+{
+  "name": "@landflow/test-fakes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Stateful fakes of outside services for tests: a small contract (defineFake) and fakes for Slack, GitHub, S3, Google Drive, a small website and a System One decision-model server, a Vault that issues leased credentials and a Google OpenID Connect server. Test-only; node built-ins only.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./slack": "./src/slack.ts",
+    "./github": "./src/github.ts",
+    "./s3": "./src/s3.ts",
+    "./site": "./src/site.ts",
+    "./drive": "./src/drive.ts",
+    "./upstream": "./src/upstream.ts",
+    "./systemone": "./src/systemone.ts",
+    "./vault-leases": "./src/vault-leases.ts",
+    "./google-oidc": "./src/google-oidc.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "vitest": "^5.0.5"
+  }
+}

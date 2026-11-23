@@ -1,22 +1,29 @@
 'use client';
-/** The Sessions tab: every conversation the agent had (test chat, schedules, channels, workflows, other agents) and its timeline. */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+/** Activity → Sessions: every conversation the agent had (test chat, schedules, channels, workflows, other agents) and its timeline. */
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Bot, Clock, Code, FlaskConical, Loader2, MessagesSquare, RefreshCw, Send, Trash2, Workflow } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronRight, Clock, Code, FlaskConical, ListTodo, Loader2, MessagesSquare, RefreshCw, Send, Trash2, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
-import type { AgentSession, SessionSource, SessionStatus, SessionSummary } from '@/lib/shared/agents';
+import type { Agent, AgentSession, SessionSource, SessionStatus, SessionSummary } from '@/lib/shared/agents';
 import type { ChatFeedback, FeedbackRating } from '@/lib/shared/chat-feedback';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
+import { BrandGlyph } from '../ui/icon';
+import type { Brand } from '@/lib/shared/brand-icons';
 import { EmptyState } from '../ui/empty-state';
-import { Switch } from '../ui/inputs';
+import { Segmented } from '../ui/segmented';
+import { cleanPersona } from '@/lib/shared/persona';
+import type { SawMemorySource } from '@/lib/shared/what-it-saw';
+import { sawMemoryOf, sawPersona } from '@/lib/shared/what-it-saw-sections';
+import { WhatItSaw } from '../run-trace/what-it-saw';
 import { TimelineView, TraceChip, type ToolEntry } from './timeline';
 import { REASON_LABEL, useAgentRun } from './use-agent-run';
+import { useExecutionRequests } from '@/lib/client/approval-inbox'; // AP03:
 
-const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Tone }> = {
+const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Tone; brand?: Brand }> = {
   test: { label: 'Test', icon: FlaskConical, tone: 'accent' },
   schedule: { label: 'Schedule', icon: Clock, tone: 'neutral' },
   telegram: { label: 'Telegram', icon: Send, tone: 'neutral' },
@@ -25,20 +32,22 @@ const SOURCE: Record<SessionSource, { label: string; icon: typeof Bot; tone: Ton
   workflow: { label: 'Workflow', icon: Workflow, tone: 'neutral' },
   agent: { label: 'Agent', icon: Bot, tone: 'neutral' },
   api: { label: 'API', icon: Code, tone: 'neutral' },
+  task: { label: 'Task', icon: ListTodo, tone: 'neutral' },
+  harness: { label: 'Claude Code', icon: Bot, tone: 'neutral', brand: 'claude' },
 };
 
 const STATUS: Record<SessionStatus, { label: string; tone: Tone }> = {
   idle: { label: 'Idle', tone: 'muted' },
   running: { label: 'Running', tone: 'accent' },
   awaiting_approval: { label: 'Needs approval', tone: 'warning' },
-  error: { label: 'Error', tone: 'danger' },
+  error: { label: 'Failed', tone: 'danger' },
 };
 
 export function SourceBadge({ source }: { source: SessionSource }) {
   const meta = SOURCE[source] ?? SOURCE.api;
   return (
     <Badge tone={meta.tone}>
-      <meta.icon className="size-3" /> {meta.label}
+      {meta.brand ? <BrandGlyph brand={meta.brand} size={12} /> : <meta.icon className="size-3" />} {meta.label}
     </Badge>
   );
 }
@@ -52,8 +61,40 @@ function StatusBadge({ status }: { status: SessionStatus }) {
   );
 }
 
+type Audience = 'all' | 'people' | 'automations';
+const PAGE = 50;
 const versionLabel = (version: 'draft' | number) => (version === 'draft' ? 'Draft' : `v${version}`);
 const tokens = (u: { inputTokens: number; outputTokens: number }) => (u.inputTokens + u.outputTokens).toLocaleString();
+
+/** What the agent got at the start of this session: its project block, practices and a summary of its persona now. */
+function SawFold({ session, agentId }: { session: AgentSession; agentId: string }) {
+  const [persona, setPersona] = useState<ReturnType<typeof sawPersona>>();
+  const has = Boolean(session.context);
+  useEffect(() => {
+    if (!has) return;
+    let live = true;
+    api<{ agent: Agent }>(`/api/agents/${agentId}`, { background: true })
+      .then((r) => live && setPersona(sawPersona(cleanPersona(r.agent.persona))))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [agentId, has]);
+  const context = session.context;
+  if (!context) return null;
+  // C11: the memory the run was given. The session carries it once the agent-memory package records it (`memory`, `memoryText`); none before.
+  const { memory, memoryText } = session as AgentSession & { memory?: SawMemorySource[]; memoryText?: string };
+  return (
+    <details className="group mb-4 rounded-2xl border border-hair bg-sf px-4 py-2.5" data-testid="session-saw">
+      <summary className="flex min-h-9 cursor-pointer list-none items-center gap-1.5 text-[13px] font-semibold text-t1 [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-3.5 text-t3 transition-transform group-open:rotate-90" /> What it saw
+      </summary>
+      <div className="pb-1.5">
+        <WhatItSaw bare mode={context.mode} text={context.text} practices={context.practices} memory={sawMemoryOf(memory)} memoryText={memoryText} executionId={session.execution?.executionId} persona={persona} />
+      </div>
+    </details>
+  );
+}
 
 function SessionDetail({
   agentId,
@@ -75,10 +116,14 @@ function SessionDetail({
   const [confirm, setConfirm] = useState(false);
   const [deciding, setDeciding] = useState(false);
   const run = useAgentRun(agentId, session, traceUrls);
+  // AP03: a workflow session whose calls wait in the approval inbox says so, with a link, and has no Approve or Deny here.
+  const inboxRequests = useExecutionRequests(session?.execution?.executionId ?? '', session?.status);
+  const waitingRequest = session?.execution && session.status === 'awaiting_approval' ? inboxRequests.find((r) => r.status === 'waiting' && r.agentId === agentId) : undefined;
+  const inboxHref = waitingRequest ? `/?approval=${encodeURIComponent(waitingRequest.id)}` : run.waitsInNeedsYou && session?.execution ? `/runs/${session.execution.executionId}` : undefined;
 
   const load = useCallback(
     () =>
-      api<{ session: AgentSession; traceUrls?: Record<string, string>; feedback?: ChatFeedback[] }>(`/api/agents/${agentId}/sessions/${sessionId}`)
+      api<{ session: AgentSession; traceUrls?: Record<string, string>; feedback?: ChatFeedback[] }>(`/api/agents/${agentId}/sessions/${sessionId}`, { background: true })
         .then((r) => {
           setFeedback(Object.fromEntries((r.feedback ?? []).flatMap((f) => (f.entryId ? [[f.entryId, f]] : []))));
           setTraceUrls(r.traceUrls);
@@ -105,6 +150,18 @@ function SessionDetail({
     setDeciding(true);
     try {
       await run.decide(callId, approved);
+    } finally {
+      setDeciding(false);
+      void load();
+      onChanged();
+    }
+  };
+
+  // AG05: Approve all (n) / Deny all: the waiting calls decided in order, each once.
+  const decideAll = async (callIds: string[], approved: boolean) => {
+    setDeciding(true);
+    try {
+      await run.decideAll(callIds, approved);
     } finally {
       setDeciding(false);
       void load();
@@ -192,6 +249,8 @@ function SessionDetail({
               <span title={new Date(session.createdAt).toLocaleString()}>started {timeAgo(session.createdAt)}</span>
               <span className="font-mono" title="Input · output tokens">
                 {run.usage.inputTokens.toLocaleString()} in · {run.usage.outputTokens.toLocaleString()} out
+                {/* SP07: */}
+                {run.usage.cacheReadTokens ? ` · ${run.usage.cacheReadTokens.toLocaleString()} cached` : ''}
               </span>
               {session.parentSessionId && (
                 <span>
@@ -218,6 +277,7 @@ function SessionDetail({
               </div>
             )}
           </div>
+          <SawFold session={session} agentId={agentId} />
           <div className="rounded-2xl border border-hair bg-sf px-4 py-4">
             {run.entries.length ? (
               <TimelineView
@@ -225,7 +285,10 @@ function SessionDetail({
                 childHref={childHref}
                 onDecide={(callId, approved) => void decide(callId, approved)}
                 deciding={deciding}
+                decisions={run.decisions}
+                onDecideAll={(ids, approved) => void decideAll(ids, approved)}
                 wide
+                inboxHref={inboxHref} // AP03:
                 feedback={feedback}
                 onRate={(entryId, rating) => void rate(entryId, rating)}
               />
@@ -254,45 +317,136 @@ export function SessionsTab({
   childHref?: (entry: ToolEntry) => string | undefined;
 }) {
   const [sessions, setSessions] = useState<SessionSummary[]>();
+  const [next, setNext] = useState<string | null>(null);
   const [error, setError] = useState<string>();
-  const [auto, setAuto] = useState(true);
+  // Who the list shows: undefined until it is known whether there are people's sessions (People opens first when there are).
+  const [audience, setShownAudience] = useState<Audience>();
+  // The audience shown now, for answers that arrive late: a page asked for another audience is dropped.
+  const shown = useRef<Audience>(undefined);
+  const setAudience = useCallback((a: Audience | undefined) => {
+    shown.current = a;
+    setShownAudience(a);
+  }, []);
+  const stale = (a: Audience) => shown.current !== undefined && shown.current !== a;
   const [loading, setLoading] = useState(false);
+  const [more, setMore] = useState(false);
+  const hovering = useRef(false);
+  const scrolledAt = useRef(0);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    return api<{ sessions: SessionSummary[] }>(`/api/agents/${agentId}/sessions`)
+  const url = (a: Audience, cursor?: string | null) => `/api/agents/${agentId}/sessions?limit=${PAGE}${a === 'all' ? '' : `&audience=${a}`}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+
+  const fetchPage = useCallback((a: Audience, cursor?: string | null) => api<{ sessions: SessionSummary[]; nextCursor: string | null }>(url(a, cursor), { background: true }), [agentId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** The first page of an audience (a person's own refresh, and the quiet one). */
+  const load = useCallback(
+    (a: Audience) => {
+      setLoading(true);
+      return fetchPage(a)
+        .then((r) => {
+          if (stale(a)) return;
+          setSessions(r.sessions);
+          setNext(r.nextCursor);
+          setError(undefined);
+        })
+        .catch((e: Error) => !stale(a) && setError(e.message))
+        .finally(() => setLoading(false));
+    },
+    [fetchPage],
+  );
+
+  // The first look: People when there are any, else everything.
+  useEffect(() => {
+    let live = true;
+    setAudience(undefined);
+    setSessions(undefined);
+    void fetchPage('people')
       .then((r) => {
-        setSessions(r.sessions);
-        setError(undefined);
+        if (!live) return;
+        if (r.sessions.length) {
+          setAudience('people');
+          setSessions(r.sessions);
+          setNext(r.nextCursor);
+          setError(undefined);
+        } else {
+          setAudience('all');
+          void load('all');
+        }
+      })
+      .catch((e: Error) => {
+        if (!live) return;
+        setAudience('all');
+        setError(e.message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [agentId, fetchPage, load, setAudience]);
+
+  const choose = (a: Audience) => {
+    setAudience(a);
+    setSessions(undefined);
+    setNext(null);
+    void load(a);
+  };
+
+  const showMore = () => {
+    if (!audience || !next) return;
+    setMore(true);
+    fetchPage(audience, next)
+      .then((r) => {
+        if (stale(audience)) return;
+        setSessions((before) => [...(before ?? []), ...r.sessions.filter((x) => !before?.some((y) => y.id === x.id))]);
+        setNext(r.nextCursor);
       })
       .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [agentId]);
+      .finally(() => setMore(false));
+  };
 
+  // New sessions show up on their own, quietly: not while a hand is on the list or it is being scrolled, and only the first page.
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (sessionId || !audience) return;
+    const onScroll = () => (scrolledAt.current = Date.now());
+    window.addEventListener('scroll', onScroll, true);
+    const timer = setInterval(() => {
+      if (hovering.current || Date.now() - scrolledAt.current < 2000 || document.hidden) return;
+      void fetchPage(audience)
+        .then((r) => {
+          if (stale(audience)) return;
+          setSessions((before) => {
+            if (!before) return r.sessions;
+            // Keep any further pages already opened: replace only the first page's rows.
+            const fresh = new Set(r.sessions.map((x) => x.id));
+            return [...r.sessions, ...before.filter((x) => !fresh.has(x.id) && x.updatedAt < (r.sessions.at(-1)?.updatedAt ?? ''))];
+          });
+        })
+        .catch(() => {});
+    }, 6000);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      clearInterval(timer);
+    };
+  }, [sessionId, audience, fetchPage]);
 
-  useEffect(() => {
-    if (!auto || sessionId) return;
-    const timer = setInterval(() => void load(), 4000);
-    return () => clearInterval(timer);
-  }, [auto, sessionId, load]);
-
-  const sorted = useMemo(() => [...(sessions ?? [])].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [sessions]);
+  const sorted = sessions ?? [];
 
   if (sessionId)
-    return <SessionDetail agentId={agentId} sessionId={sessionId} onBack={() => onOpen(undefined)} childHref={childHref} onChanged={() => void load()} />;
+    return <SessionDetail agentId={agentId} sessionId={sessionId} onBack={() => onOpen(undefined)} childHref={childHref} onChanged={() => audience && void load(audience)} />;
 
   return (
     <div className="animate-fade-up">
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <span className="text-[13px] text-t2">{sessions ? `${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}` : 'Loading…'}</span>
-        <label className="ml-auto flex items-center gap-2 text-[12px] text-t2">
-          <Switch checked={auto} onChange={setAuto} label="Auto-refresh" />
-          Auto-refresh
-        </label>
-        <Button size="icon-sm" variant="ghost" aria-label="Refresh" title="Refresh" onClick={() => void load()}>
+        <Segmented<Audience>
+          label="Who the sessions are with"
+          value={audience ?? 'people'}
+          onChange={choose}
+          options={[
+            { value: 'all', label: 'All' },
+            { value: 'people', label: 'People', title: 'Test chat, Telegram, Slack and Teams' },
+            { value: 'automations', label: 'Automations', title: 'Schedules, workflows, other agents and the API' },
+          ]}
+        />
+        <span className="text-[13px] text-t2">{sessions ? `${sessions.length}${next ? '+' : ''} ${sessions.length === 1 && !next ? 'session' : 'sessions'}` : 'Loading…'}</span>
+        <Button size="icon-sm" variant="ghost" className="ml-auto" aria-label="Refresh" title="Refresh" onClick={() => audience && void load(audience)}>
           <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
         </Button>
       </div>
@@ -300,14 +454,20 @@ export function SessionsTab({
       {sessions && !sessions.length && (
         <div className="rounded-2xl border border-hair bg-sf">
           <EmptyState
-            title="No sessions yet"
-            hint="Every conversation lands here: the test chat, schedules, Telegram, workflows and other agents."
+            title={audience === 'people' ? 'No conversations with people yet' : audience === 'automations' ? 'Nothing has run on its own yet' : 'No sessions yet'}
+            hint={
+              audience === 'people'
+                ? 'Your test chats and the conversations on Telegram, Slack and Teams land here.'
+                : audience === 'automations'
+                  ? 'Schedules, workflows, other agents and the API land here.'
+                  : 'Every conversation lands here: the test chat, schedules, Telegram, workflows and other agents.'
+            }
             action={<MessagesSquare className="size-6 text-t3" strokeWidth={1.5} />}
           />
         </div>
       )}
       {sorted.length > 0 && (
-        <div className="overflow-hidden rounded-2xl border border-hair bg-sf">
+        <div className="overflow-hidden rounded-2xl border border-hair bg-sf" onMouseEnter={() => (hovering.current = true)} onMouseLeave={() => (hovering.current = false)}>
           <div className="hidden grid-cols-[92px_minmax(0,1fr)_110px_56px_56px_72px_56px_72px] gap-3 border-b border-hair px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3 md:grid">
             <span>Source</span>
             <span>Session</span>
@@ -352,6 +512,13 @@ export function SessionsTab({
               <span className="hidden text-right tabular-nums text-t2 md:block">{timeAgo(s.updatedAt)}</span>
             </button>
           ))}
+        </div>
+      )}
+      {next && (
+        <div className="mt-3 flex justify-center">
+          <Button size="sm" variant="outline" loading={more} onClick={showMore} className="max-md:min-h-11">
+            Show more
+          </Button>
         </div>
       )}
     </div>

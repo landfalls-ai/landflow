@@ -14,6 +14,7 @@ import { tint } from '@/lib/client/node-style';
 import type { NodeItem } from '@/lib/shared/types';
 import { JsonView } from '../ui/json-view';
 import { BinaryMode } from './binary-view';
+import { Segmented } from '../ui/segmented';
 
 export type DataMode = 'schema' | 'table' | 'json' | 'binary';
 
@@ -137,6 +138,19 @@ function schemaOf(values: unknown[], base: Path): SchemaField[] {
     }
     return { key, path, type, sample, children };
   });
+}
+
+/** Every field of the items, depth first, with its expression: for picking one by tapping on a phone (param-form.tsx). */
+export function fieldList(items: NodeItem[] | undefined): Array<{ key: string; depth: number; expression: string; sample: string }> {
+  const out: Array<{ key: string; depth: number; expression: string; sample: string }> = [];
+  const walk = (fields: SchemaField[], depth: number) => {
+    for (const field of fields) {
+      out.push({ key: field.key, depth, expression: fieldExpression(field.path), sample: sampleText(field) });
+      if (field.children) walk(field.children, depth + 1);
+    }
+  };
+  walk(schemaOf((items ?? []).map((i) => i.json), []), 0);
+  return out;
 }
 
 function sampleText(field: SchemaField): string {
@@ -282,6 +296,11 @@ const MODES: Array<{ mode: DataMode; label: string; icon: typeof Table2 }> = [
   { mode: 'binary', label: 'Binary', icon: Paperclip },
 ];
 
+/** The Schema / Table / JSON switch shows only when there is something to switch. */
+export function showViewSwitch(items: unknown[] | undefined): boolean {
+  return Boolean(items && items.length > 0);
+}
+
 export function DataView({ items, emptyLabel = 'No data', draggable, toolbar, notice, className }: DataViewProps) {
   const chosen = useDataMode();
   const list = items ?? [];
@@ -303,25 +322,26 @@ export function DataView({ items, emptyLabel = 'No data', draggable, toolbar, no
             </>
           )}
         </span>
-        <div role="tablist" aria-label="Display mode" className="ml-auto flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-          {MODES.filter(({ mode: m }) => m !== 'binary' || files > 0).map(({ mode: m, label, icon: Icon }) => (
-            <button
-              key={m}
-              role="tab"
-              title={label}
-              aria-label={label}
-              aria-selected={mode === m}
-              onClick={() => setMode(m)}
-              className={cn(
-                'flex h-6 items-center gap-1 rounded-full px-2.5 text-[12px] text-t2 transition-all duration-200 hover:text-t1',
-                mode === m && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
-              )}
-            >
-              <Icon className="size-3" />
-              <span className="hidden @xl:inline">{label}</span>
-            </button>
-          ))}
-        </div>
+        {showViewSwitch(items) && (
+          <Segmented
+            label="Display mode"
+            size="sm"
+            className="ml-auto"
+            value={mode}
+            onChange={setMode}
+            options={MODES.filter(({ mode: m }) => m !== 'binary' || files > 0).map(({ mode: m, label, icon: Icon }) => ({
+              value: m,
+              title: label,
+              ariaLabel: label,
+              label: (
+                <>
+                  <Icon className="size-3" />
+                  <span className="hidden @xl:inline">{label}</span>
+                </>
+              ),
+            }))}
+          />
+        )}
       </div>
       {notice && <div className="shrink-0 px-3 pb-2">{notice}</div>}
       <div className="min-h-0 flex-1 overflow-auto border-t border-hair">

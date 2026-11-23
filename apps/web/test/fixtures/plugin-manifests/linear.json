@@ -1,0 +1,1363 @@
+{
+ "protocol": "landflow.plugin/v1",
+ "plugin": {
+  "language": "typescript",
+  "sdk": {
+   "name": "landflow-sdk-typescript",
+   "version": "0.2.0"
+  },
+  "id": "linear",
+  "name": "Linear",
+  "version": "0.1.0",
+  "description": "Linear issues, comments and project updates as activity items (webhook trigger and changed-since reads), users with email, and create-issue, comment and add-link actions over the GraphQL API",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIE9yaWdpbmFsIExhbmRmbG93IGdseXBoOiBzdGFja2VkIHByb2dyZXNzIGJhcnMgb24gYW4gaW5kaWdvIHRpbGUuIE5vdCBMaW5lYXIncyBsb2dvLiAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiM1RTZBRDIiLz4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0xMyAxN2gyMiIvPgogICAgPHBhdGggZD0iTTEzIDI0aDE1IiBvcGFjaXR5PSIwLjg1Ii8+CiAgICA8cGF0aCBkPSJNMTMgMzFoOCIgb3BhY2l0eT0iMC43Ii8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjM1IiBjeT0iMzEiIHI9IjIuNiIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+  "color": "#5E6AD2",
+  "author": "Landflow"
+ },
+ "nodes": [
+  {
+   "name": "linear",
+   "displayName": "Linear",
+   "description": "Read Linear issues, comments and project updates changed since a time as activity items, get an issue with its comments, list users with their email, create issues and comments and attach links",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Productivity",
+    "Development"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIE9yaWdpbmFsIExhbmRmbG93IGdseXBoOiBzdGFja2VkIHByb2dyZXNzIGJhcnMgb24gYW4gaW5kaWdvIHRpbGUuIE5vdCBMaW5lYXIncyBsb2dvLiAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiM1RTZBRDIiLz4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0xMyAxN2gyMiIvPgogICAgPHBhdGggZD0iTTEzIDI0aDE1IiBvcGFjaXR5PSIwLjg1Ii8+CiAgICA8cGF0aCBkPSJNMTMgMzFoOCIgb3BhY2l0eT0iMC43Ii8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjM1IiBjeT0iMzEiIHI9IjIuNiIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+   "color": "#5E6AD2",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://linear.app/developers/graphql",
+   "keywords": [
+    "linear",
+    "issue",
+    "ticket",
+    "comment",
+    "project update",
+    "bug",
+    "activity",
+    "changed since"
+   ],
+   "usableAsTool": true,
+   "idempotent": false,
+   "toolDescription": "Create a Linear issue, comment on an issue, attach a link to an issue, get one issue with its comments, list issues, comments or project updates changed since a time, or list workspace users with their email. It never deletes, archives or closes anything.",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "linearApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "apiKey"
+       ]
+      }
+     }
+    },
+    {
+     "name": "linearOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "apiKey",
+     "options": [
+      {
+       "name": "API Key",
+       "value": "apiKey",
+       "description": "A personal API key"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Connect with Linear; the token is renewed for you"
+      }
+     ]
+    },
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "issue",
+     "options": [
+      {
+       "name": "Comment",
+       "value": "comment"
+      },
+      {
+       "name": "Issue",
+       "value": "issue"
+      },
+      {
+       "name": "Project Update",
+       "value": "projectUpdate"
+      },
+      {
+       "name": "User",
+       "value": "user"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "comment"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Comment on an issue",
+       "action": "Create a comment"
+      },
+      {
+       "name": "Get Many Changed Since",
+       "value": "getManySince",
+       "description": "Comments created or edited after a time, oldest first, as activity items",
+       "action": "Get comments changed since",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getManySince",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "projectUpdate"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Many Changed Since",
+       "value": "getManySince",
+       "description": "Project updates posted or edited after a time, oldest first, as activity items",
+       "action": "Get project updates changed since",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getAll",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "user"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "description": "List the workspace’s users with their email, status and teams",
+       "action": "Get many users",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getManySince",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Add Link",
+       "value": "addLink",
+       "description": "Attach a URL to an issue",
+       "action": "Add a link to an issue"
+      },
+      {
+       "name": "Create",
+       "value": "create",
+       "description": "Create an issue in a team",
+       "action": "Create an issue"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "One issue as an activity item, with its description and comments as text",
+       "action": "Get an issue",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         },
+         "text": {
+          "type": "string",
+          "description": "The issue description and its comments, as Markdown text"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw",
+         "text"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "Get Many Changed Since",
+       "value": "getManySince",
+       "description": "Issues created or updated after a time, oldest first, as activity items",
+       "action": "Get issues changed since",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ]
+    },
+    {
+     "name": "since",
+     "displayName": "Since",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-11-12T08:00:00.000Z",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue",
+        "comment",
+        "projectUpdate"
+       ],
+       "operation": [
+        "getManySince"
+       ]
+      }
+     },
+     "description": "Records updated after this ISO time, or the cursor of an earlier item (an ISO time too). Empty: the last 24 hours."
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue",
+        "comment",
+        "projectUpdate",
+        "user"
+       ],
+       "operation": [
+        "getManySince",
+        "getAll"
+       ]
+      }
+     },
+     "description": "Whether to return all results or only up to a limit"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue",
+        "comment",
+        "projectUpdate",
+        "user"
+       ],
+       "operation": [
+        "getManySince",
+        "getAll"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     },
+     "description": "Max number of results to return (the oldest first for Changed Since)"
+    },
+    {
+     "name": "activityOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue",
+        "comment",
+        "projectUpdate"
+       ],
+       "operation": [
+        "getManySince",
+        "get"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "teamKey",
+       "displayName": "Team Key",
+       "type": "string",
+       "default": "",
+       "placeholder": "ENG",
+       "description": "Issues Get Many Changed Since: only issues of the team with this key"
+      },
+      {
+       "name": "customerNeeds",
+       "displayName": "Read Customer Needs",
+       "type": "boolean",
+       "default": true,
+       "description": "Whether to read Linear’s customer needs for the customer hint (turn off if the workspace has no Customers feature)"
+      },
+      {
+       "name": "customerLabelPrefix",
+       "displayName": "Customer Label Prefix",
+       "type": "string",
+       "default": "customer:",
+       "description": "Used when an issue has no Linear customer needs: a label named <prefix><name> (customer:Acme) is about the customer <name> (customerHint). Empty: no label hints."
+      }
+     ]
+    },
+    {
+     "name": "issueId",
+     "displayName": "Issue",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "ENG-123",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "get",
+        "addLink"
+       ]
+      }
+     },
+     "description": "The issue’s identifier (ENG-123) or ID"
+    },
+    {
+     "name": "issueId",
+     "displayName": "Issue",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "ENG-123",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "comment"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "The issue to comment on: its identifier (ENG-123) or ID"
+    },
+    {
+     "name": "teamId",
+     "displayName": "Team",
+     "type": "options",
+     "required": true,
+     "default": "",
+     "typeOptions": {
+      "loadOptionsMethod": "getTeams"
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "The team that owns the issue. Pick one, or set a team ID with an expression"
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "description",
+     "displayName": "Description",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "rows": 4
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "Markdown"
+    },
+    {
+     "name": "additionalFields",
+     "displayName": "Additional Fields",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add field",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "priority",
+       "displayName": "Priority",
+       "type": "options",
+       "default": 0,
+       "options": [
+        {
+         "name": "No Priority",
+         "value": 0
+        },
+        {
+         "name": "Urgent",
+         "value": 1
+        },
+        {
+         "name": "High",
+         "value": 2
+        },
+        {
+         "name": "Medium",
+         "value": 3
+        },
+        {
+         "name": "Low",
+         "value": 4
+        }
+       ]
+      },
+      {
+       "name": "assigneeId",
+       "displayName": "Assignee ID",
+       "type": "string",
+       "default": "",
+       "description": "The user’s UUID (User → Get Many)"
+      },
+      {
+       "name": "labelIds",
+       "displayName": "Label IDs",
+       "type": "string",
+       "default": "",
+       "description": "Comma-separated label UUIDs"
+      },
+      {
+       "name": "projectId",
+       "displayName": "Project ID",
+       "type": "string",
+       "default": "",
+       "description": "A project UUID of the team"
+      },
+      {
+       "name": "stateId",
+       "displayName": "Status ID",
+       "type": "string",
+       "default": "",
+       "description": "A workflow state UUID of the team. Default: the team’s first status"
+      },
+      {
+       "name": "dueDate",
+       "displayName": "Due Date",
+       "type": "string",
+       "default": "",
+       "placeholder": "2026-12-01",
+       "description": "YYYY-MM-DD"
+      }
+     ]
+    },
+    {
+     "name": "body",
+     "displayName": "Comment",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "typeOptions": {
+      "rows": 4
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "comment"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "Markdown. @mentions notify the people mentioned."
+    },
+    {
+     "name": "parentId",
+     "displayName": "Reply To Comment ID",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "comment"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "Optional: the root comment of a thread to reply in"
+    },
+    {
+     "name": "url",
+     "displayName": "URL",
+     "type": "string",
+     "required": true,
+     "default": "",
+     "placeholder": "https://example.com/pull/42",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "addLink"
+       ]
+      }
+     },
+     "description": "Attaching a URL already on the issue updates that attachment"
+    },
+    {
+     "name": "linkTitle",
+     "displayName": "Title",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "addLink"
+       ]
+      }
+     },
+     "description": "Shown in Linear. Empty: the URL"
+    },
+    {
+     "name": "linkSubtitle",
+     "displayName": "Subtitle",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "issue"
+       ],
+       "operation": [
+        "addLink"
+       ]
+      }
+     }
+    },
+    {
+     "name": "includeDisabled",
+     "displayName": "Include Deactivated Users",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "user"
+       ],
+       "operation": [
+        "getAll"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "linearTrigger",
+   "displayName": "Linear Trigger",
+   "description": "Starts the workflow when something changes in Linear (issues, comments, project updates, completed projects and cycles), with the change as an activity item",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "appWebhook",
+   "categories": [
+    "Productivity",
+    "Development"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIE9yaWdpbmFsIExhbmRmbG93IGdseXBoOiBzdGFja2VkIHByb2dyZXNzIGJhcnMgb24gYW4gaW5kaWdvIHRpbGUuIE5vdCBMaW5lYXIncyBsb2dvLiAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiM1RTZBRDIiLz4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0xMyAxN2gyMiIvPgogICAgPHBhdGggZD0iTTEzIDI0aDE1IiBvcGFjaXR5PSIwLjg1Ii8+CiAgICA8cGF0aCBkPSJNMTMgMzFoOCIgb3BhY2l0eT0iMC43Ii8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjM1IiBjeT0iMzEiIHI9IjIuNiIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+   "color": "#5E6AD2",
+   "subtitle": "{{resourceTypes}}",
+   "documentationUrl": "https://linear.app/developers/webhooks",
+   "keywords": [
+    "linear",
+    "trigger",
+    "webhook",
+    "issue",
+    "comment",
+    "project",
+    "cycle",
+    "activity"
+   ],
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputSchema": {
+    "type": "object",
+    "properties": {
+     "source": {
+      "type": "string",
+      "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+     },
+     "sourceId": {
+      "type": "string",
+      "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+     },
+     "url": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Where a person opens it"
+     },
+     "actorEmail": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+     },
+     "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When it happened, ISO 8601 in UTC with milliseconds"
+     },
+     "kind": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+      "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+     },
+     "title": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "One line: the document, ticket or meeting title, or the channel and first words"
+     },
+     "summary": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "The text, whitespace collapsed, at most 600 characters"
+     },
+     "teamHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+     },
+     "initiativeHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The project or initiative it seems to belong to, when there is one"
+     },
+     "customerHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+     },
+     "raw": {
+      "type": "object",
+      "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+     },
+     "cursor": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+     }
+    },
+    "required": [
+     "source",
+     "sourceId",
+     "url",
+     "actorEmail",
+     "occurredAt",
+     "kind",
+     "title",
+     "summary",
+     "teamHint",
+     "initiativeHint",
+     "customerHint",
+     "raw"
+    ],
+    "additionalProperties": false
+   },
+   "credentials": [
+    {
+     "name": "linearApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "apiKey"
+       ]
+      }
+     }
+    },
+    {
+     "name": "linearOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "apiKey",
+     "options": [
+      {
+       "name": "API Key",
+       "value": "apiKey",
+       "description": "A workspace admin's personal API key"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Connect with Linear; needs the admin scope to register the webhook"
+      }
+     ]
+    },
+    {
+     "name": "notice",
+     "displayName": "Publishing the workflow registers a webhook in Linear (webhookCreate) with a signing secret Landflow generates; unpublishing removes it. Registering needs a workspace admin's API key or an OAuth token with the admin scope, and a public HTTPS Landflow URL. Linear signs every delivery and Landflow verifies it with that secret.",
+     "type": "notice",
+     "default": ""
+    },
+    {
+     "name": "teamId",
+     "displayName": "Team",
+     "type": "options",
+     "default": "",
+     "typeOptions": {
+      "loadOptionsMethod": "getTeams"
+     },
+     "description": "Only events of this team. Empty: every public team, including teams created later"
+    },
+    {
+     "name": "resourceTypes",
+     "displayName": "Resources",
+     "type": "multiOptions",
+     "required": true,
+     "default": [
+      "Issue",
+      "Comment",
+      "ProjectUpdate"
+     ],
+     "options": [
+      {
+       "name": "Comment",
+       "value": "Comment",
+       "description": "work.discussion"
+      },
+      {
+       "name": "Cycle",
+       "value": "Cycle",
+       "description": "work.release when a cycle completes"
+      },
+      {
+       "name": "Issue",
+       "value": "Issue",
+       "description": "work.bug_reported, work.feature_request or work.ticket_moved"
+      },
+      {
+       "name": "Project",
+       "value": "Project",
+       "description": "work.release when a project completes"
+      },
+      {
+       "name": "Project Update",
+       "value": "ProjectUpdate",
+       "description": "work.self_update"
+      }
+     ],
+     "description": "The Linear resource types to subscribe the webhook to"
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "customerLabelPrefix",
+       "displayName": "Customer Label Prefix",
+       "type": "string",
+       "default": "customer:",
+       "description": "Used when an issue has no Linear customer needs: a label named <prefix><name> (customer:Acme) is about the customer <name> (customerHint). Empty: no label hints."
+      },
+      {
+       "name": "tolerance",
+       "displayName": "Signature Tolerance (s)",
+       "type": "number",
+       "default": 60,
+       "typeOptions": {
+        "minValue": 0
+       },
+       "description": "How far the payload's webhookTimestamp may be from now before the call is rejected as a replay (Linear recommends one minute)"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "credentialTypes": [
+  {
+   "name": "linearApi",
+   "displayName": "Linear API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIE9yaWdpbmFsIExhbmRmbG93IGdseXBoOiBzdGFja2VkIHByb2dyZXNzIGJhcnMgb24gYW4gaW5kaWdvIHRpbGUuIE5vdCBMaW5lYXIncyBsb2dvLiAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiM1RTZBRDIiLz4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0xMyAxN2gyMiIvPgogICAgPHBhdGggZD0iTTEzIDI0aDE1IiBvcGFjaXR5PSIwLjg1Ii8+CiAgICA8cGF0aCBkPSJNMTMgMzFoOCIgb3BhY2l0eT0iMC43Ii8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjM1IiBjeT0iMzEiIHI9IjIuNiIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+   "documentationUrl": "https://linear.app/developers/graphql",
+   "description": "A personal API key (Linear Settings, Security & access). It is sent as is in the Authorization header, without Bearer. A key acts as you: creating webhooks for the Linear Trigger needs a workspace admin.",
+   "properties": [
+    {
+     "name": "apiKey",
+     "displayName": "API Key",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "placeholder": "lin_api_…",
+     "description": "Personal API key"
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "default": "https://api.linear.app",
+     "description": "Change it only for a proxy or a test double. The GraphQL endpoint is <base URL>/graphql."
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "linearOAuth2Api",
+   "displayName": "Linear OAuth2 API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIE9yaWdpbmFsIExhbmRmbG93IGdseXBoOiBzdGFja2VkIHByb2dyZXNzIGJhcnMgb24gYW4gaW5kaWdvIHRpbGUuIE5vdCBMaW5lYXIncyBsb2dvLiAtLT4KICA8cmVjdCB4PSIwLjc1IiB5PSIwLjc1IiB3aWR0aD0iNDYuNSIgaGVpZ2h0PSI0Ni41IiByeD0iMTEuMjUiIGZpbGw9IiM1RTZBRDIiLz4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0xMyAxN2gyMiIvPgogICAgPHBhdGggZD0iTTEzIDI0aDE1IiBvcGFjaXR5PSIwLjg1Ii8+CiAgICA8cGF0aCBkPSJNMTMgMzFoOCIgb3BhY2l0eT0iMC43Ii8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjM1IiBjeT0iMzEiIHI9IjIuNiIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
+   "documentationUrl": "https://linear.app/developers/oauth-2-0-authentication",
+   "description": "Sign in with Linear: create an OAuth2 application (Linear Settings, API), add the redirect URL shown below, then Connect. The default scopes are read plus issues:create and comments:create, which cover every node operation. The Linear Trigger registers its webhook through the API, which needs the admin scope: add it to Scopes (or register the webhook yourself and use a key).",
+   "extends": [
+    "oAuth2Api"
+   ],
+   "properties": [
+    {
+     "name": "grantType",
+     "displayName": "Grant Type",
+     "type": "hidden",
+     "default": "authorizationCode"
+    },
+    {
+     "name": "authUrl",
+     "displayName": "Authorization URL",
+     "type": "hidden",
+     "default": "https://linear.app/oauth/authorize"
+    },
+    {
+     "name": "accessTokenUrl",
+     "displayName": "Access Token URL",
+     "type": "hidden",
+     "default": "https://api.linear.app/oauth/token"
+    },
+    {
+     "name": "authentication",
+     "displayName": "Client Authentication",
+     "type": "hidden",
+     "default": "body"
+    },
+    {
+     "name": "scope",
+     "displayName": "Scopes",
+     "type": "string",
+     "default": "read,issues:create,comments:create",
+     "description": "Comma-separated scopes asked for at Connect. read: all reads. issues:create: create issues and attach links. comments:create: comment. admin: needed only to register the Linear Trigger's webhook."
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "default": "https://api.linear.app",
+     "description": "Change it only for a proxy or a test double. The GraphQL endpoint is <base URL>/graphql."
+    }
+   ],
+   "testable": true
+  }
+ ],
+ "transports": [
+  "http",
+  "grpc",
+  "mcp"
+ ],
+ "maxConcurrency": 8
+}

@@ -2,10 +2,12 @@
 
 Status: **in progress**. Written 2026-10-27 at commit 493177a. **Spotlight in the editor is built** (2026-10-27): the bar at
 the bottom of the canvas with suggestion bubbles, `@` mentions and node-type completion, replacing the Assistant panel;
-[assistant.md](assistant.md#spotlight) documents it. The new Home, Spotlight on the other pages and the action layer are
+[assistant.md](assistant.md#spotlight) documents it. It now sits on the chat kit (B08, 2026-11): streamed words, one activity trace, the full reply footer and a model chip ([what you see while it works](assistant.md#the-spotlight-panel)). The new Home, Spotlight on the other pages and the action layer are
 still a plan. Spotlight in the editor knows the published [agent teams](agent-teams.md#spotlight) and can turn a lead and its agents into one. An interactive version with UI
 mockups is the artifact <https://claude.ai/artifact/3FPJ1Ci3Jb8K3oJfjcvV8F> (private to the owner). The screen-by-screen
 simplification review that goes with it is [ux-simplification.md](ux-simplification.md).
+
+Spotlight in the editor now opens folded, eases its fold, folds an applied change into a row, offers actions on errors and has an Asks first | Autonomous switch ([Fold, Apply and errors](assistant.md#fold-apply-and-errors)).
 
 Three parts:
 
@@ -14,6 +16,50 @@ Three parts:
    runs actions with `/`, and has an agent that can create and change things.
 3. **The action layer**: the only way Spotlight (and the instance MCP server) changes anything. The agent proposes;
    the layer validates, checks access and stores a plan; only the user's click applies it.
+
+## One Spotlight
+
+Built (B35, wave 6, closes CH17). Spotlight is one panel for the whole app, not one in the editor and another in the
+brain.
+
+- **Keys.** **⌘K** opens Spotlight on every page, and **⌘I** does the same. Pressed again from its box, either closes
+  it. On the Brain page, go-to-a-page (QuickOpen) is **⌘P**; it used to be ⌘K.
+- **Where.** A 360 px column at the right of the page, which you can drag wider (320 to 560 px, kept in this browser). The
+  rail's "Ask or build… ⌘K" button opens it too. It sits in the layout, so a conversation stays while you move from page
+  to page. On a phone it is a bottom sheet with three heights (the arrows beside the chip step through them).
+- **Modes.** A chip in its header says what it does here. On a workflow's editor it is the builder, "Building Ticket
+  router": the editor's own column, which takes the focus on ⌘K.
+  On an agent's own page (`/agents/<id>`, not `new`, `teams` or a team's page) it is "Changing <agent name>": a box to ask
+  for a change to the agent (a card to read and **Apply to its draft**) or about it (the brain answers, nothing is
+  applied), with "Ask the brain instead" on the chip ([assistant.md](assistant.md#agents-and-teams)).
+  Everywhere else it is the brain, "Asking the brain", about the open page on the Brain page and about everything
+  elsewhere. A page can send it to one thing: the `landflow:ask-about` window event (detail `{ ref: { type, id, name,
+  workflowId? }, starters }`) opens it as "About <name>" with that thing as the chip and the starters as its first
+  questions. On the editor the chip offers "Ask the brain instead" (or any ask-about event there), and the brain panel then takes the
+  right side while the builder folds to its 44 px strip: one column at a time, so the canvas keeps its room. ⌘K, ⌘I, the
+  Spotlight button or the strip bring the builder back and the brain panel goes. Closing the brain panel (X) unfolds the
+  builder again if the panel was what folded it; a builder that was already folded stays folded. In about mode "Ask the brain instead"
+  drops the chip, and so does closing the panel or removing the chip in its box. Ctrl does not count as the key on a Mac.
+- **Moving a brain to Notion** (wave nb3, NB08). A typed ask in the shell panel (not the editor's builder) about the Notion
+  brain is decided from the words, in the browser, with no model and no spend (`lib/shared/notion-brain-ask.ts`, as
+  `askKind` and the agent ask do): "Keep this project's brain in Notion under <link>", "Move the brain to Notion", "Sync
+  this project's brain with Notion". It never goes to Ask and is never stored in the conversation. It answers with a card,
+  **Brain in Notion · <project>**: the project's Notion keys by name (the one fitting key is preselected; with two or more
+  none is), **New Notion key** (the credential dialog for `productivity.notionApi`, where the person types the secret:
+  Spotlight never sees, asks for, repeats or sets one), the page from the ask (editable), **Check** (what the page is, what a
+  copy would send and what is never copied), and **Connect and copy**, which is the person's click: nothing that writes runs
+  before it. While the copy runs the card folds to one progress line, and the panel can close: the project page's Brain card and the Brain
+  page's chip keep showing it. A project that is already linked answers with its status and **Open in Notion**, not a second
+  Connect; a viewer who is not the project's admin sees "An admin of <project> can move its brain to Notion". The project is
+  the one the page names (`/projects/<id>`), else a choice among the projects the viewer administers.
+  **"Is the brain in sync with Notion?"** (also "when did it last sync", "what is wrong with the Notion sync") is answered from
+  the link's status and problems, in the same sentence the Brain card uses ("The brain is in Notion under “Acme”. Synced 2
+  minutes ago, 0 waiting, 1 problem: …"). **A pasted key** (`ntn_` or `secret_` and 40 or more letters and digits) is never
+  sent: the message is shown as "[a Notion key, hidden]" with the warning "That looks like a Notion key. Keys don't belong
+  in a chat: add it in the credential dialog (New Notion key), where it is kept encrypted. It was not sent or saved."
+  Flows and agents mask the same shape (`NOTION_KEY` in the guardrails). The asks are English words and a key is recognised
+  only by its shape ([limitations](limitations.md#what-the-notion-brain-does-not-do)).
+- **The Brain page** has one way in: the Ask button in its title bar opens this panel.
 
 ## 1. Home 2.0
 
@@ -58,9 +104,18 @@ chat (⌘I), "Describe a workflow" and most jump-to buttons. Three speeds:
 | A data table | table | columns and sample rows |
 | Agent builder | agent | settings without secrets, recent session summaries |
 
-**Tagging.** `@` searches every resource type; `@Invoice sync ›` steps into a workflow's nodes and runs. A chosen result
-becomes a chip and travels as a structured reference (`{ type: "node", workflowId, nodeId }`), not as text. The server
-resolves references with the user's permissions; something the user cannot see resolves to "not found".
+**Tagging.** `@` searches every resource type (built, B16). The picker lists the canvas's nodes first ("On this page"),
+then your last choices, then workflows, runs, agents and the rest you may open. A chosen result becomes a chip above the
+box (the selected-node chip stays beside it) and travels as a structured reference (`{ type, id, workflowId? }`), not as
+text. The server reads each one as you, with your permissions, and puts its digest into the prompt as data; each read is
+a step in the trace ("Read @Invoice sync"). Something you may not open reads "Couldn't read @Name" and shows nothing
+([Tagging with @](assistant.md#tagging-with-)).
+
+**History.** Spotlight's conversation is kept per workflow (built, B16, closes CH12). Opening the editor brings back
+the last one under an "Earlier" divider, dimmed, with new turns below. The clock beside New conversation opens the
+history: this workflow's conversations first, search, rename, delete; choosing one loads it in place ([Conversation
+history](assistant.md#conversation-history)). A proposal still waiting when you left is checked against the workflow as
+it is now: it keeps its Apply button if its changes still apply, and reads "This no longer fits the workflow" if not.
 
 **Plan cards.** A proposal renders as a card: a summary, the diff (the assistant's existing diff rendering for workflow
 edits), checks (role, environment protection, four-eyes, draft vs live), outside effects ("Calls Stripe: creates up to 6
@@ -75,6 +130,25 @@ first version of Go and `@`: they complete canvas nodes and the node types the w
 without a model call. The chat it sends to uses only the node types the workflow allows (`assistant/scope.ts`).
 **Also built:** [Test and fix](assistant.md#test-and-fix), which runs the workflow, has failures fixed until a run passes,
 and then offers to publish it. While it works, the conversation waits in a card at the side of the canvas.
+
+### Ask about it
+
+Every resource's ⋯ menu has **Ask Spotlight**: workflows (list rows), runs (list rows, the run page and the run preview),
+agents (cards and the agent page), data tables, credentials and brain pages. A failed run also has a button, **Ask why it
+failed**, on its list row, its one-line row, its page and its preview; there the ⋯ menu leaves the item out, so it is
+offered once (a list row whose error is not shown keeps it in the menu, reading **Ask why it failed**). The run page has a
+header button on a desktop; on a phone it is the first item of the page's ⋯ menu, so the header keeps one row. The brain
+page has a header icon button. A run line on Home or a team's page names its workflow. A run's chip reads "<workflow> run",
+as the @ picker names it. Each fires one browser event,
+`landflow:ask-about`, whose detail is `{ ref: { type, id, name, workflowId? }, starters }` (`lib/client/ask-about.ts`).
+The chat panel listens for it, sets the resource as the chip and offers the three starter questions for its type
+(`lib/shared/ask-starters.ts`; a failed run's first is "Why did this fail?"). A credential's item says **Ask about where
+it's used** and sends only its name and id, never a value. The shell panel's conversation outlives the panel, so an
+ask-about about another thing than the panel is already about starts a new conversation (`startsNew` in
+`components/spotlight/ask-about-listener.ts`): the starters show and the first question carries no history from the earlier
+talk, which stays under the history button. Asking about the same thing again keeps the conversation, and so does an
+answer still coming (it finishes first). Closing the panel does not stop an answer that is coming in: it finishes in the
+background and is there when the panel opens again.
 
 ## 3. The action layer
 

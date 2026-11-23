@@ -5,6 +5,8 @@
  */
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { Variable } from '../shared/platform';
+import { recordAudit } from './audit';
+import { HttpError } from './errors';
 
 export type { Variable };
 
@@ -19,12 +21,13 @@ export interface StoredVariable extends Variable {
   updatedAt: string;
 }
 
-export class VariableError extends Error {
+export class VariableError extends HttpError {
+  static readonly errorName: string = 'VariableError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 
@@ -38,6 +41,39 @@ function checkValue(value: unknown): string {
   if (typeof value !== 'string') throw new VariableError('Values are strings');
   if (value.length > MAX_VALUE_LENGTH) throw new VariableError(`Values are at most ${MAX_VALUE_LENGTH.toLocaleString('en-US')} characters`);
   return value;
+}
+
+/**
+ * `variable.create|update|delete` for the instance's variables (no `projectId`) and a project's: the name (and the old name
+ * on a rename), never a value; `valueChanged` says whether the value moved.
+ */
+export function auditVariable(change: 'create' | 'update' | 'delete', key: string, scope: { projectId?: string }, extra: { renamedFrom?: string; valueChanged?: boolean } = {}) {
+  const where = scope.projectId ? `project ${scope.projectId}` : 'the instance';
+  recordAudit({
+    action: `variable.${change}`,
+    target: { type: 'variable', id: key, name: key },
+    ...(scope.projectId && { project: scope.projectId }),
+    summary: `${change === 'create' ? 'Created' : change === 'update' ? 'Changed' : 'Deleted'} the variable ${key} of ${where}`,
+    details: { scope: scope.projectId ? 'project' : 'instance', ...(scope.projectId && { projectId: scope.projectId }), key, ...(extra.renamedFrom && { from: extra.renamedFrom, to: key }), ...(extra.valueChanged !== undefined && { valueChanged: extra.valueChanged }) },
+  });
+}
+
+/**
+ * `variable.update` for per-environment values: which environments got a value and which lost theirs, never a value.
+ * Nothing is recorded when nothing differs from `before`.
+ */
+export function auditVariableEnvironments(key: string, scope: { projectId?: string }, before: Record<string, string>, values: Record<string, string | null>) {
+  const set = Object.entries(values).filter(([env, value]) => value !== null && before[env] !== value).map(([env]) => env);
+  const cleared = Object.entries(values).filter(([env, value]) => value === null && env in before).map(([env]) => env);
+  if (!set.length && !cleared.length) return;
+  const where = scope.projectId ? `project ${scope.projectId}` : 'the instance';
+  recordAudit({
+    action: 'variable.update',
+    target: { type: 'variable', id: key, name: key },
+    ...(scope.projectId && { project: scope.projectId }),
+    summary: `Changed the per-environment values of the variable ${key} of ${where}`,
+    details: { scope: scope.projectId ? 'project' : 'instance', ...(scope.projectId && { projectId: scope.projectId }), key, environments: set, cleared },
+  });
 }
 
 /** What changed in a write: the variable saved (under its new key) and the key that went away (a delete or a rename). */

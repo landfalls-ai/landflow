@@ -6,6 +6,8 @@
  */
 import { NodeOperationError } from '@landflow/sdk';
 import type { AgentMessage, LanguageModel, ModelAttachment } from '@landflow/engine';
+import { withCallNote } from '../ai-usage/call-context';
+import { plainDraft } from '../ai-usage/drafts';
 import type { GenerateInput } from './models';
 import { stableStringify } from './paths';
 
@@ -175,7 +177,7 @@ export async function generateStructured<T = unknown>(
       ...(responseFormat && { responseFormat }),
       ...(input.signal && { signal: input.signal }),
     };
-    const turn = await model.generate(request);
+    const turn = await withCallNote({ draft: plainDraft({ system: request.system, messages }) }, () => model.generate(request));
     if (turn.stopReason === 'refusal') throw new NodeOperationError('The model declined the request', { description: turn.text });
     let value: unknown;
     let errors: string[];

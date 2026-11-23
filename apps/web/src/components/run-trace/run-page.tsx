@@ -1,14 +1,16 @@
 'use client';
-/** The full-screen Run Trace page: a back link to the execution, then the trace. */
+/** The full-screen Run Trace page: the header (back to the run in its workflow's Runs), then the trace. */
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { api } from '@/lib/client/api';
+import { askAbout, askDetail } from '@/lib/client/ask-about';
 import type { ExecutionRecord } from '@/lib/shared/types';
 import { RunTraceView } from './run-trace-view';
 import { JsonRenderGallery } from './ui-cards';
 import { useJsonRender } from './use-json-render';
-import { DebugAccessButton } from './debug-access';
+import { RunMenu } from './debug-access';
+import { PageHeader } from '../shell/page-header';
+import { Button } from '../ui/button';
 
 /**
  * With json-render on (Settings → General, read at runtime), /runs/json-render-gallery shows the spec cards (dev page).
@@ -25,22 +27,30 @@ function GalleryOrRun({ executionId }: { executionId: string }) {
 }
 
 function RunPageOf({ executionId }: { executionId: string }) {
-  const [record, setRecord] = useState<Pick<ExecutionRecord, 'workflowId' | 'workflowName'>>();
+  const [record, setRecord] = useState<Pick<ExecutionRecord, 'workflowId' | 'workflowName' | 'status'>>();
   useEffect(() => {
     api<{ execution: ExecutionRecord }>(`/api/executions/${executionId}`)
       .then((r) => setRecord(r.execution))
       .catch(() => {});
   }, [executionId]);
-  const href = record ? `/workflows/${record.workflowId}/executions/${executionId}` : '/executions';
+  const href = record ? `/workflows/${record.workflowId}/runs/${executionId}` : '/runs';
+  const ask = record && {
+    label: record.status === 'error' ? 'Ask why it failed' : 'Ask Spotlight',
+    run: () => askAbout(askDetail({ type: 'run', id: executionId, name: `${record.workflowName} run`, workflowId: record.workflowId }, { failed: record.status === 'error' })),
+  };
   return (
     <div className="flex h-dvh flex-col">
-      <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-hair bg-bg px-3">
-        <Link href={href} className="inline-flex h-9 items-center gap-1.5 rounded-full px-2.5 text-[13px] text-t2 hover:bg-acdim hover:text-t1">
-          <ArrowLeft className="size-4" /> Execution
-        </Link>
-        <span className="min-w-0 truncate text-[14px] font-semibold text-t1">{record?.workflowName ?? 'Run trace'}</span>
-        <DebugAccessButton executionId={executionId} />
-      </header>
+      <PageHeader back={{ href, label: 'Runs' }} title="Run trace" actions={
+          <>
+            {/* On a phone Ask is the first item of the ⋯ menu, so the header stays one row. */}
+            {ask && (
+              <Button size="sm" variant="outline" onClick={ask.run} className="max-md:hidden">
+                <Sparkles className="size-3.5" /> {ask.label}
+              </Button>
+            )}
+            <RunMenu executionId={executionId} {...(ask && { ask })} />
+          </>
+        } />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <RunTraceView executionId={executionId} executionHref={href} />
       </div>

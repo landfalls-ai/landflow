@@ -9,8 +9,14 @@ import { useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { api } from '@/lib/client/api';
 import type { FlowTemplate, TemplateNode } from '@/lib/client/templates';
+import type { DraftLeft } from '@/lib/shared/draft-left'; // SB02:
+import type { DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
 import type { ConnectionType, NodeItem } from '@/lib/shared/types';
 import { useEditor } from './store';
+import { pickedModel } from './spotlight-model'; // SB19:
+import { designUnboundAgents } from './spotlight/step-agents'; // AG25:
+import type { NewAgentHint } from '@/lib/shared/agent-brief'; // AG25:
+import type { BuildPlan, BuildStage } from '@/lib/shared/build-plan'; // SB13:
 
 interface FlowDraft {
   name: string;
@@ -20,6 +26,13 @@ interface FlowDraft {
   model: string;
   durationMs: number;
   dropped: string[];
+  /** What the guards left for the person (lib/shared/draft-left.ts). */
+  left?: DraftLeft[]; // SB02:
+  /** The plan it was built from, and every model call's size (lib/shared/build-plan.ts). */
+  plan?: BuildPlan; // SB13:
+  stages?: BuildStage[]; // SB13:
+  summary?: DraftSummary; // SB15:
+  newAgents?: Record<string, NewAgentHint>; // AG25: what a converted AI Agent step had, by the step's name
 }
 
 /** Columns by longest path from the trigger; sub-nodes under the node they attach to. */
@@ -60,28 +73,69 @@ export interface BuiltFlow {
   model: string;
   durationMs: number;
   dropped: number;
+  /** What the guards left for the person (SB02): made-up values cleared, credentials to pick, parts left out. */
+  left: DraftLeft[]; // SB02:
   /** Test data was pinned on the trigger. */
   pinned: boolean;
+  /** SB13: the plan it was built from. */
+  plan?: BuildPlan;
+  /** SB15: the build summary (steps in words, assumed, left, not possible). */
+  summary?: DraftSummary; // SB15:
 }
 
 /** Draft a flow from a description and drop it on the canvas (one undo step). Throws when the model can't. */
+/**
+ * A drafted flow's nodes, and the connections into them, fade in left to right. After the edits that record undo steps
+ * (setMeta), so no snapshot keeps the class, which is taken off once they are in. Opacity only: a node's wrapper carries
+ * its position.
+ */
+function arriveLeftToRight(before: Set<string>) {
+  const arrived = useEditor
+    .getState()
+    .nodes.filter((n) => !before.has(n.id))
+    .sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y);
+  // At most about a second in all, however many nodes.
+  const step = Math.min(110, 1000 / Math.max(1, arrived.length));
+  const delay = new Map(arrived.map((n, i) => [n.id, `${Math.round(i * step)}ms`]));
+  const mark = <T extends { className?: string; style?: React.CSSProperties }>(item: T, at: string | undefined): T => (at ? { ...item, className: 'lf-arrive', style: { ...item.style, animationDelay: at } } : item);
+  const clear = <T extends { className?: string; style?: React.CSSProperties }>(item: T): T => (item.className === 'lf-arrive' ? { ...item, className: undefined, style: { ...item.style, animationDelay: undefined } } : item);
+  // An edge's style goes on its path (its class on the group around it): the animation goes there, with its delay.
+  const fade = (at: string) => `lf-arrive 0.45s ease-out ${at} both`;
+  useEditor.setState((s) => ({
+    nodes: s.nodes.map((n) => mark(n, delay.get(n.id))),
+    edges: s.edges.map((e) => (delay.has(e.target) ? { ...e, style: { ...e.style, animation: fade(delay.get(e.target)!) } } : e)),
+  }));
+  setTimeout(
+    () =>
+      useEditor.setState((s) => ({
+        nodes: s.nodes.map(clear),
+        edges: s.edges.map((e) => (typeof e.style?.animation === 'string' && e.style.animation.startsWith('lf-arrive') ? { ...e, style: { ...e.style, animation: undefined } } : e)),
+      })),
+    1600,
+  );
+}
+
 export function useBuildFlow() {
   const { fitView } = useReactFlow();
   const [busy, setBusy] = useState(false);
-  const build = async (prompt: string): Promise<BuiltFlow> => {
+  const build = async (prompt: string, signal?: AbortSignal, plan?: BuildPlan /* SB13 */): Promise<BuiltFlow> => {
     setBusy(true);
     try {
-      const { draft } = await api<{ draft: FlowDraft }>('/api/ai/build', { method: 'POST', json: { prompt } });
+      const { draft } = await api<{ draft: FlowDraft }>('/api/ai/build', { method: 'POST', json: { prompt, workflowId: useEditor.getState().workflowId || undefined /* SB02 */, ...pickedModel() /* SB19 */, ...(plan && { plan }) /* SB13 */ }, signal });
       const state = useEditor.getState();
       const right = state.nodes.length ? Math.max(...state.nodes.map((n) => n.position.x)) + 360 : 0;
       const top = state.nodes.length ? Math.min(...state.nodes.map((n) => n.position.y)) : 0;
       const template: FlowTemplate = { id: 'ai', title: draft.name, description: prompt, icon: 'lucide:sparkles', color: 'var(--viz-7)', nodes: layout(draft), edges: draft.edges, pinData: draft.pinData };
+      const before = new Set(state.nodes.map((n) => n.id));
       state.applyTemplate(template, { x: right, y: top });
       if (/^untitled/i.test(state.name) || !state.name) state.setMeta({ name: draft.name });
       // What it was drafted from: Spotlight's "Test and fix" checks a run against it.
       if (!state.description?.trim()) state.setMeta({ description: prompt });
+      arriveLeftToRight(before);
+      // AG25: a Run an Agent step the draft left with no agent is designed now (created by itself on a brand-new draft in autonomous mode).
+      void designUnboundAgents(useEditor.getState().nodes.filter((n) => !before.has(n.id)).map((n) => n.id), prompt, draft.newAgents);
       setTimeout(() => fitView({ padding: 0.25, duration: 600, maxZoom: 1.1 }), 60);
-      return { name: draft.name, nodes: draft.nodes.length, model: draft.model, durationMs: draft.durationMs, dropped: draft.dropped.length, pinned: Boolean(draft.pinData && Object.keys(draft.pinData).length) };
+      return { name: draft.name, nodes: draft.nodes.length, model: draft.model, durationMs: draft.durationMs, dropped: draft.dropped.length, left: draft.left ?? [], pinned: Boolean(draft.pinData && Object.keys(draft.pinData).length), plan: draft.plan /* SB13 */, ...(draft.summary && { summary: draft.summary }) /* SB15: */ };
     } finally {
       setBusy(false);
     }

@@ -1,17 +1,15 @@
 'use client';
-/** Build tab → Capabilities: node tools, workflow tools and sub-agents, plus memory. */
+/** Abilities → Capabilities: node tools, workflow tools and sub-agents, plus memory. */
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
-  BookOpen,
   Bot,
   Brain,
+  ChevronDown,
   ExternalLink,
   Loader2,
   Pencil,
-  Plug,
   Plus,
-  RadioTower,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -22,13 +20,15 @@ import {
   Wrench,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { defaultParameters } from '@landflow/protocol';
+import { defaultParameters, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import type { NodeDescriptor } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { languageMeta } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import type { A2aAgentToolConfig, AgentConfig, AgentToolConfig, KnowledgeBaseToolConfig, McpServerToolConfig, NodeToolConfig, SubAgentConfig, WorkflowToolConfig } from '@/lib/shared/agents';
+import { isNodeKnowledge, KNOWLEDGE_NODE_PRESETS } from '@/lib/shared/agents';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { ParamForm } from '../editor/param-form';
@@ -36,8 +36,12 @@ import { PluginIcon } from '../editor/node-creator';
 import { ProtectedGate } from '../shell/protected-gate';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { MenuItem, Popover } from '../ui/popover';
+import { PluginsCard } from './plugins-card';
+import { SkillsCard } from './skills-card';
+import { CAPABILITY_MENU } from './tabs';
 import { EmptyState } from '../ui/empty-state';
-import { NodeIcon } from '../ui/icon';
+import { NodeIcon, isImageIcon } from '../ui/icon';
 import { AgentAvatar } from './avatar';
 import { Input, Textarea } from '../ui/inputs';
 import { Dialog, Field, ItemRow, Section, ToggleRow } from './dialog';
@@ -47,6 +51,7 @@ import { GithubMcpDialog, GithubTile, isGithubTool } from './github-mcp-dialog';
 import { A2A_AGENT, A2aAgentDialog, A2aTile } from './a2a-agent-dialog';
 import { useAgentList, useNodeTypes } from './use-agent-data';
 import { newId, type UpdateConfig } from './util';
+import { MemoryCard } from './memory-card';
 
 interface WorkflowOption {
   id: string;
@@ -61,6 +66,8 @@ const usable = (t: NodeTypeInfo) => t.descriptor.kind === 'action' && t.descript
 
 function NodeTile({ info, size = 32 }: { info?: NodeTypeInfo; size?: number }) {
   const color = nodeColor(info);
+  // An app's own icon (its real mark) brings its tile: shown whole, not inside a tinted one.
+  if (isImageIcon(info?.descriptor.icon)) return <NodeIcon icon={info?.descriptor.icon} size={size} className="shrink-0" />;
   return (
     <span className="grid shrink-0 place-items-center rounded-[10px] border border-hair" style={{ width: size, height: size, background: tint(color, 12) }}>
       <NodeIcon icon={info?.descriptor.icon ?? 'wrench'} size={Math.round(size * 0.45)} style={{ color }} />
@@ -180,7 +187,31 @@ function NodePicker({ onPick, onClose }: { onPick: (info: NodeTypeInfo) => void;
   );
 }
 
-function NodeToolDialog({
+/** AG06: the credential slots a tool's settings use (the node panel's rule): a slot another auth method owns is not listed. */
+export function toolCredentialSlots(descriptor: Pick<NodeDescriptor, 'credentials' | 'properties'> | undefined, parameters: Record<string, unknown>) {
+  const slots = descriptor?.credentials ?? [];
+  if (!descriptor) return slots;
+  const values = withPropertyDefaults(descriptor.properties, parameters as never);
+  return slots.filter((c) => isPropertyVisible(c, values));
+}
+
+/** AG06: the credentials after a parameter change: a pick leaves only when this change hid its slot, never on open. */
+export function credentialsAfterChange(
+  descriptor: Pick<NodeDescriptor, 'credentials' | 'properties'>,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  credentials: NodeToolConfig['credentials'],
+) {
+  const now = toolCredentialSlots(descriptor, after);
+  const hidden = toolCredentialSlots(descriptor, before).filter((c) => !now.some((n) => n.name === c.name));
+  if (hidden.length === 0) return credentials;
+  const kept = { ...(credentials ?? {}) };
+  for (const c of hidden) delete kept[c.name];
+  return kept;
+}
+
+// AG16: exported so a canvas bubble's Change opens the agent page's own dialog.
+export function NodeToolDialog({
   tool,
   info,
   onSave,
@@ -198,7 +229,7 @@ function NodeToolDialog({
   const [value, setValue] = useState(tool);
   const [tab, setTab] = useState<'parameters' | 'settings'>('parameters');
   const set = (patch: Partial<NodeToolConfig>) => setValue((v) => ({ ...v, ...patch }));
-  const requirements = info?.descriptor.credentials ?? [];
+  const requirements = toolCredentialSlots(info?.descriptor, value.parameters); // AG06
   const valid = value.name.trim() && value.description.trim();
   const modelFields = Object.values(value.parameters).filter((v) => typeof v === 'string' && v.includes('$fromAI(')).length;
 
@@ -245,11 +276,11 @@ function NodeToolDialog({
             aria-selected={tab === key}
             onClick={() => setTab(key)}
             className={cn(
-              '-mb-px border-b-2 py-2.5 text-[13px] capitalize transition-colors',
+              '-mb-px border-b-2 py-2.5 text-[13px] transition-colors',
               tab === key ? 'border-ac font-semibold text-t1' : 'border-transparent text-t2 hover:text-t1',
             )}
           >
-            {key}
+            {key === 'parameters' ? 'Parameters' : 'Settings'}
           </button>
         ))}
       </div>
@@ -294,7 +325,7 @@ function NodeToolDialog({
                   nodeType={value.nodeType}
                   properties={info.descriptor.properties}
                   values={value.parameters}
-                  onChange={(parameters) => set({ parameters })}
+                  onChange={(parameters) => set({ parameters, credentials: credentialsAfterChange(info.descriptor, value.parameters, parameters, value.credentials) })} // AG06
                   credentials={value.credentials}
                   scope={{ agentId }}
                   fromAI
@@ -341,7 +372,8 @@ async function createAndOpen(kind: 'workflow' | 'agent') {
   }
 }
 
-function WorkflowToolDialog({ tool, onSave, onClose }: { tool?: WorkflowToolConfig; onSave: (tool: WorkflowToolConfig) => void; onClose: () => void }) {
+// AG16: exported (see NodeToolDialog).
+export function WorkflowToolDialog({ tool, onSave, onClose }: { tool?: WorkflowToolConfig; onSave: (tool: WorkflowToolConfig) => void; onClose: () => void }) {
   const [workflows, setWorkflows] = useState<WorkflowOption[]>();
   const [error, setError] = useState<string>();
   const [value, setValue] = useState<WorkflowToolConfig | undefined>(tool);
@@ -482,7 +514,8 @@ function WorkflowToolDialog({ tool, onSave, onClose }: { tool?: WorkflowToolConf
 // Sub-agents
 // ---------------------------------------------------------------------------
 
-function SubAgentDialog({
+// AG16: exported (see NodeToolDialog).
+export function SubAgentDialog({
   tool,
   selfId,
   taken,
@@ -635,6 +668,8 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
   const nodeTypes = useNodeTypes();
   const agents = useAgentList();
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  /** The skill or plugin picked in the Add menu: their cards open the dialog. */
+  const [side, setSide] = useState<'skill' | 'plugin' | null>(null);
 
   const save = (tool: AgentToolConfig) => {
     const exists = config.tools.some((t) => t.id === tool.id);
@@ -704,7 +739,9 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
     } else if (tool.type === 'knowledge') {
       icon = <KnowledgeTile />;
       title = tool.name;
-      subtitle = `Knowledge base · ${STORE_LABEL[tool.store]} “${tool.collection}” · ${tool.embeddings.model}`;
+      subtitle = isNodeKnowledge(tool)
+        ? `Knowledge base · ${KNOWLEDGE_NODE_PRESETS.find((p) => p.nodeType === tool.nodeType)?.label ?? tool.nodeType} (plugin)`
+        : `Knowledge base · ${STORE_LABEL[tool.store]} “${tool.collection}” · ${tool.embeddings.model}`;
     } else {
       const agent = agents?.find((a) => a.id === tool.agentId);
       icon = <AgentAvatar agent={agent ?? {}} size={32} />;
@@ -712,8 +749,9 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
       subtitle = `Sub-agent · ${tool.useWhen || agent?.description || 'No description'}`;
     }
     return (
+      // AG12: the canvas's band links to a tool's row (`?open=capabilities&tool=<id>`): the builder scrolls to it and outlines it.
+      <div key={tool.id} id={`tool-${tool.id}`} className="rounded-xl transition-shadow">
       <ItemRow
-        key={tool.id}
         icon={icon}
         title={title}
         subtitle={subtitle}
@@ -748,6 +786,7 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
           </>
         }
       />
+      </div>
     );
   };
 
@@ -758,29 +797,30 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
         title="Capabilities"
         description="What the agent can do: nodes as tools, workflows, other agents (here or remote, over A2A), MCP servers and knowledge bases."
         actions={
-          <>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'pick-node' })}>
-              <Plus className="size-3.5" /> Add tool
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'workflow' })}>
-              <Workflow className="size-3.5" /> Add workflow
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'agent' })}>
-              <Bot className="size-3.5" /> Add sub-agent
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'mcp' })}>
-              <Plug className="size-3.5" /> Add MCP server
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'github' })}>
-              <GithubTile size={14} /> Add GitHub MCP
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'a2a' })}>
-              <RadioTower className="size-3.5" /> Add A2A agent
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'knowledge' })}>
-              <BookOpen className="size-3.5" /> Add knowledge base
-            </Button>
-          </>
+          <Popover
+            title="Add capability"
+            trigger={({ toggle, open }) => (
+              <Button size="sm" variant="outline" onClick={toggle} aria-expanded={open} aria-haspopup="menu">
+                <Plus className="size-3.5" /> Add capability <ChevronDown className="size-3.5" />
+              </Button>
+            )}
+            className="w-[220px]"
+          >
+            {(close) =>
+              CAPABILITY_MENU.map((item) => (
+                <MenuItem
+                  key={item.kind}
+                  onClick={() => {
+                    close();
+                    if (item.kind === 'skill' || item.kind === 'plugin') setSide(item.kind);
+                    else setDialog({ kind: item.kind });
+                  }}
+                >
+                  {item.label}
+                </MenuItem>
+              ))
+            }
+          </Popover>
         }
       >
         {config.tools.length ? (
@@ -807,6 +847,10 @@ export function CapabilitiesCard({ agentId, config, update }: { agentId: string;
           />
         </div>
       </Section>
+      {config.memory.crossSession && <MemoryCard agentId={agentId} />}
+
+      <SkillsCard config={config} update={update} adding={side === 'skill'} onAdded={() => setSide(null)} />
+      <PluginsCard config={config} update={update} adding={side === 'plugin'} onAdded={() => setSide(null)} />
 
       {dialog?.kind === 'pick-node' && <NodePicker onPick={pickNode} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'node' && (

@@ -17,18 +17,24 @@
  * and this host as authorization servers. `canListTool` / `canCallTool` apply the grants (./grants).
  */
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
-import { can, type Role } from '../../shared/auth';
+import { can, type ApiKeyScope, type Role } from '../../shared/auth';
 import { API_KEY_PREFIX, SESSION_COOKIE } from '../../shared/auth-paths';
+import { noteKeyRefusal } from '../auth/api-key-audit';
+import { KEY_REFUSAL_MESSAGE } from '../auth/api-key-refusal';
+import { consumeApiKeyUse } from '../auth/api-key-uses';
 import { verifyApiKey } from '../auth/api-keys';
+import { allowListAddress } from '../net/ip-allow';
 import { looksLikeDebugToken } from '../auth/debug-tokens';
 import { readCookie } from '../auth/cookies';
 import { sameSecret } from '../auth/passwords';
+import { enrolmentRequired } from '../auth/policy';
 import { sessionUser } from '../auth/sessions';
-import { findUserByOidc, type UserRecord } from '../auth/users';
+import { findUserByOidc, getUser, type UserRecord } from '../auth/users';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry';
 import { effectiveTool, effectiveTools, effectiveTrigger, effectiveTriggers, pluginTools, type EffectiveTool, type EffectiveTrigger } from './grants';
 import { gatewayPublicUrl, instanceUrl, looksLikeLandflowMcpToken, mcpResourceRoot, parseTokenScopes, resolveTokenSubject, unverifiedClaims, verifyMcpToken } from './tokens';
+import { HttpError } from '../errors';
 
 export interface McpCaller {
   kind: 'gateway' | 'token' | 'idp' | 'apiKey' | 'session' | 'anonymous';
@@ -38,18 +44,22 @@ export interface McpCaller {
   role?: string;
   /** Token scopes (lib/shared/mcp.ts); everything for sessions, API keys and identity provider tokens. */
   scopes: string[];
+  /** B13: an API key's own scopes (`workflows:read`, `brain:write`…); the instance MCP server shows and allows only the tools they cover. Absent for every other caller: all tools. */
+  keyScopes?: ApiKeyScope[];
+  /** The API key's id (C08): audit rows of what it wrote name it. Never the key. */
+  keyId?: string;
   tokenId?: string;
   /** The project a Landflow MCP token is scoped to (the instance server then shows only that project's workflows). */
   projectId?: string;
   viaGateway: boolean;
 }
 
-export class McpAuthError extends Error {
-  readonly status: 401 | 403;
+export class McpAuthError extends HttpError {
+  static readonly errorName: string = 'McpAuthError';
+  declare readonly status: 401 | 403;
   readonly wwwAuthenticate?: string;
   constructor(message: string, status: 401 | 403 = 401, wwwAuthenticate?: string) {
-    super(message);
-    this.status = status;
+    super(message, status);
     this.wwwAuthenticate = wwwAuthenticate;
   }
 }
@@ -272,9 +282,18 @@ export async function authenticateMcpRequest(request: Request, resource: { plugi
     // A debug token reads one execution through /api/mcp and does nothing else (docs/specs/19-debug-token.md).
     if (looksLikeDebugToken(bearer)) throw new McpAuthError('A debug token works only for explain_failure, get_run_trace and get_execution at /api/mcp', 403, challenge);
     if (bearer.startsWith(API_KEY_PREFIX)) {
-      const checked = verifyApiKey(bearer);
+      const checked = verifyApiKey(bearer, { ip: allowListAddress(request) });
+      if (!checked.ok && (checked.reason === 'ip_not_allowed' || checked.reason === 'uses_exhausted')) {
+        noteKeyRefusal(checked.reason, checked.key);
+        throw new McpAuthError(KEY_REFUSAL_MESSAGE[checked.reason], 401, challenge);
+      }
       if (!checked.ok) throw new McpAuthError(checked.reason === 'expired' ? 'This API key has expired' : 'Invalid API key', 401, challenge);
-      return userCaller('apiKey', checked.user, { issuer: instanceUrl() });
+      // A capped key: this call is one of its uses.
+      if (checked.key.maxUses && !(await consumeApiKeyUse(checked.key)).ok) {
+        noteKeyRefusal('uses_exhausted', checked.key);
+        throw new McpAuthError(KEY_REFUSAL_MESSAGE.uses_exhausted, 401, challenge);
+      }
+      return userCaller('apiKey', checked.user, { issuer: instanceUrl(), keyScopes: checked.key.scopes, keyId: checked.key.id });
     }
     const claims = unverifiedClaims(bearer);
     if (!claims) throw new McpAuthError('Send a Landflow MCP token, an access token of the identity provider, or an API key as “Authorization: Bearer …”', 401, challenge);
@@ -305,7 +324,11 @@ export async function authenticateMcpRequest(request: Request, resource: { plugi
 
   // 3. The UI's own calls.
   const found = sessionUser(readCookie(request, SESSION_COOKIE));
-  if (found) return userCaller('session', found.user, { issuer: instanceUrl() });
+  if (found) {
+    // A covered account with no second factor yet may only enrol one (the guard's rule, which this public route would skip).
+    if (enrolmentRequired(found.user, found.session.method)) throw new McpAuthError('Add a second factor first: Sign-in & security', 403, challenge);
+    return userCaller('session', found.user, { issuer: instanceUrl() });
+  }
 
   throw new McpAuthError('Sign in, or send a Landflow MCP token, an access token of the identity provider, or an API key as “Authorization: Bearer …”', 401, challenge);
 }
@@ -316,7 +339,7 @@ const subjectsOfCaller = (caller: McpCaller) => ({ userId: caller.userId, role: 
 
 /** Owners and admins browsing from the UI (a session or an API key, not an agent) see every tool, to write grants. */
 function browsesEverything(caller: McpCaller): boolean {
-  return (caller.kind === 'session' || caller.kind === 'apiKey') && can({ role: caller.role as Role }, 'mcp:manage');
+  return (caller.kind === 'session' || caller.kind === 'apiKey') && can((caller.userId ? getUser(caller.userId) : undefined) ?? { role: caller.role as Role }, 'mcp:manage');
 }
 
 /** Whether `tools/list` on `pluginId` shows `toolName` to `caller`. */

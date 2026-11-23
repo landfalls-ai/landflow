@@ -7,6 +7,8 @@
 import { recordAudit } from '@/lib/server/audit';
 import { ensureProjectApprovers } from '@/lib/server/governance/project-approvers';
 import { getProjectSettings, projectSettingsPatchSchema, updateProjectSettings } from '@/lib/server/governance/scopes';
+import { agentStore } from '@/lib/server/agents/store';
+import { assertAgentSettingsPatch, availableAgentsView } from '@/lib/server/project-context/project-settings';
 import { json, parseBody } from '@/lib/server/http';
 import { registry } from '@/lib/server/plugins/registry';
 import { projectRoute, requireProject, routeActor } from '@/lib/server/projects/http';
@@ -23,8 +25,16 @@ function view(projectId: string, canEdit: boolean): ProjectSettingsView {
     canEdit,
     plugins: [...new Map(types.map((t) => [t.pluginId, { id: t.pluginId, name: t.pluginName }])).values()],
     nodeTypes: types.map((t) => ({ type: t.type, displayName: t.descriptor.displayName, pluginId: t.pluginId })),
+    // PC13: the agents available in the project, for the allow-list.
+    availableAgents: availableAgentsView(projectId, agentStore.list()),
+    // C07: the nodes a project can choose as its memory.
+    memoryProviders: types
+      .filter((t) => t.descriptor.memoryProvider)
+      .map((t) => ({ type: t.type, displayName: t.descriptor.displayName, pluginName: t.pluginName, credentialTypes: (t.descriptor.credentials ?? []).map((c) => (c.name.includes('.') ? c.name : `${t.pluginId}.${c.name}`)) })),
   };
 }
+
+const knowledgeTarget = (tool: NonNullable<ProjectSettingsView['settings']['knowledge']>['tool']) => (tool.source === 'node' ? tool.nodeType : tool.source === 'notion-brain' ? 'notion-brain' : tool.collection);
 
 export const GET = projectRoute(async (_request: Request, { params }: Ctx) => {
   ensureProjectApprovers();
@@ -38,12 +48,23 @@ export const PATCH = projectRoute(async (request: Request, { params }: Ctx) => {
   const project = requireProject(actor, (await params).id, 'manage');
   const body = await parseBody(request, projectSettingsPatchSchema);
   if (!body.ok) return body.response;
+  assertAgentSettingsPatch(project.id, body.data);
   const settings = updateProjectSettings(project.id, body.data, actor.id);
   recordAudit({
     action: 'project.settings.update',
     target: { type: 'project', id: project.id, name: project.name },
     summary: `Changed the settings of “${project.name}”`,
-    details: { nodesMode: settings.nodes.mode, plugins: settings.nodes.plugins, nodeTypes: settings.nodes.types, approvers: settings.approvers },
+    details: { nodesMode: settings.nodes.mode, plugins: settings.nodes.plugins, nodeTypes: settings.nodes.types, approvers: settings.approvers,
+      // PC13: the agent settings (the model's provider and name only; a knowledge base by its collection or node type).
+      defaultModel: settings.defaultModel ? `${settings.defaultModel.provider}/${settings.defaultModel.model}` : null,
+      knowledge: settings.knowledge?.enabled ? 'on' : 'off',
+      ...(settings.knowledge && { knowledgeTarget: knowledgeTarget(settings.knowledge.tool) }),
+      memory: settings.memory ? (settings.memory.backend === 'provider' ? settings.memory.nodeType : 'built-in') : 'built-in', // C07
+      agentsMode: settings.agents?.mode ?? 'off',
+      agentIds: settings.agents?.ids ?? [],
+      toolsMode: settings.agentTools?.mode ?? 'off',
+      toolKinds: settings.agentTools?.kinds ?? [],
+    },
   });
   return json(view(project.id, true));
 });

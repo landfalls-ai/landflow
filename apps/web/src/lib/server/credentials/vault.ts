@@ -1,7 +1,10 @@
 /**
- * Saved credentials, encrypted at rest with AES-256-GCM. The key comes from
- * LANDFLOW_ENCRYPTION_KEY (64 hex chars, or any passphrase, which is hashed) or
- * is generated once into <data dir>/encryption.key. Workflows only reference a
+ * Saved credentials, encrypted at rest with AES-256-GCM. Keys form a ring (./key-ring): LANDFLOW_ENCRYPTION_KEYS
+ * (`kid:key,…`, the first seals) and the legacy key, LANDFLOW_ENCRYPTION_KEY (64 hex chars, or a passphrase) or one
+ * generated once into <data dir>/encryption.key, as kid `k0`. Every blob names its key and is bound to its credential
+ * id; `rotateCredentials` re-seals them with the primary key. With a project resolver (C31, set at boot by
+ * projects/boot) a credential is sealed with its project's data key instead (version 3, ./project-key-store).
+ * Workflows only reference a
  * credential by id; decrypted values leave this module on their way to a node
  * (ExecuteRequest.credentials) or a TestCredentials call, never through the API.
  *
@@ -13,22 +16,28 @@
  * sent the refresh token. `refreshOAuth2` renews a token that is about to expire and saves it, and ./oauth2-runtime
  * calls it before a node runs (and once more when the node's API answered 401).
  */
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createHmac, randomBytes } from 'node:crypto';
+import { existsSync, linkSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { nanoid } from 'nanoid';
 import { isPropertyVisible, splitType, withPropertyDefaults, type CredentialTypeDescriptor, type JsonObject, type NodeDescriptor } from '@landflow/protocol';
 import type { CredentialRateLimit, WorkflowNode } from '@landflow/engine';
 import { MCP_OAUTH2_CREDENTIAL, OAUTH2_CREDENTIAL } from '../../shared/oauth2';
 import type { CredentialDetail, CredentialRateLimitSetting, CredentialSummary } from '../../shared/types';
+import { isActiveAdmin } from '../auth/users';
 import { configStoreKind, importOnce, onConfigChanged, writeJsonFile } from '../config-store';
 import { database, type Database } from '../db';
 import { registry } from '../plugins/registry';
-import { redactText } from '../secrets/redact';
+import { installRedaction } from '../secrets/install';
+import { redactText, rememberSecretValues } from '../secrets/redact';
 import { resolveSecretFields, resolveSecretsIn } from '../secrets/resolve';
 import { singleton } from '../singleton';
 import { store } from '../store';
+import { SECRET_KEY } from '../telemetry/config';
 import { logger } from '../telemetry/logger';
+import { buildKeyRing, dekOf, hkdfKey, kidOf, LEGACY_KID, LEGACY_SHA_KID, openWith, openWithDek, sealWith, sealWithDek, type KeyRing, type SealedValue } from './key-ring';
+import { ProjectKeyError, ProjectKeyStore } from './project-key-store';
 import {
   ACCOUNT_FIELD,
   clientCredentialsToken,
@@ -47,12 +56,19 @@ import {
   type OAuth2Config,
   type StoredToken,
 } from './oauth2';
+import { HttpError } from '../errors';
 
-export interface Sealed {
-  iv: string;
-  tag: string;
-  value: string;
-}
+/** Credential values shorter than this are not remembered: `postgres` or `changeme` would otherwise rewrite every node output that says so. */
+const CREDENTIAL_MIN_LENGTH = 12;
+
+/** A sealed credential blob: v2 names its key and is bound to the credential id (./key-ring); v1 has neither. */
+export type Sealed = SealedValue;
+
+/** AAD of a credential's data: a blob copied to another row no longer opens. */
+const credentialAad = (id: string) => `landflow:credential:${id}`;
+/** AAD of a sealed string (`sealSecret`) that names no purpose. */
+const DEFAULT_PURPOSE = 'secret';
+const secretAad = (purpose: string) => `landflow:${purpose}`;
 
 export interface StoredCredential {
   id: string;
@@ -65,6 +81,21 @@ export interface StoredCredential {
   rateLimit?: CredentialRateLimitSetting;
   createdAt: string;
   updatedAt: string;
+  /** The person who created it (absent: nobody, or a credential from before migration 2092). */
+  createdBy?: string;
+  /**
+   * The person who last changed its data (creating it counts): a form save that changes a value, a Git or environment
+   * pull. A change with no person behind it clears it; a save that changes nothing, a token refresh, an error note and a
+   * key rotation keep it. A token operation (Connect, Get token, Refresh now, Disconnect) never raises it: an owner's or
+   * admin's keeps it, anyone else's (or nobody's) records them. Absent: nobody, or a credential from before migration
+   * 2092. Shown as "Last changed by" in the credential dialog; nothing trusts a credential because of it.
+   */
+  updatedBy?: string;
+}
+
+/** Who makes a change to a credential's data: the person, or undefined for nobody (never the request around it). */
+export interface CredentialChange {
+  actor: string | undefined;
 }
 
 /** A rate limit as saved: a whole number of calls, an interval of 0.1 s to a day; anything else is no limit. */
@@ -76,21 +107,85 @@ export function cleanRateLimit(value: unknown): CredentialRateLimitSetting | und
   return { limit: Math.min(limit, 100_000), intervalSeconds: Math.min(intervalSeconds, 86_400) };
 }
 
-export class CredentialError extends Error {
+/** Record who changed a credential's data: the person, or nobody (the field is removed). */
+function changedBy(credential: StoredCredential, change: CredentialChange) {
+  if (change.actor) credential.updatedBy = change.actor;
+  else delete credential.updatedBy;
+}
+
+/**
+ * Record who made a token operation (Connect, Get token, Refresh now, Disconnect). It changes no field anyone reviewed,
+ * so it never raises trust: an active owner's or admin's leaves the changer as it was; anyone else's, or one with no
+ * person behind it, records them (a member's token may be for a workspace of their own).
+ */
+function tokenChangedBy(credential: StoredCredential, change: CredentialChange) {
+  if (isActiveAdmin(change.actor)) return;
+  changedBy(credential, change);
+}
+
+/**
+ * The fields a credential type fixes: every property of that name is `hidden` and has a default (an OAuth2 provider's
+ * grant, authorization and token URLs, oauth2Hidden in plugins/messaging/src/shared.ts). They are never stored, so the
+ * type's default always applies: nobody points a provider's token URL elsewhere through the API.
+ */
+function fixedFields(descriptor: CredentialTypeDescriptor | undefined): Set<string> {
+  const byName = new Map<string, boolean>();
+  for (const p of descriptor?.properties ?? []) byName.set(p.name, (byName.get(p.name) ?? true) && p.type === 'hidden' && p.default !== undefined);
+  return new Set([...byName].filter(([, fixed]) => fixed).map(([name]) => name));
+}
+
+/** `data` without the fields the type fixes (see fixedFields). */
+function withoutFixed<T extends Record<string, unknown>>(descriptor: CredentialTypeDescriptor | undefined, data: T): T {
+  const fixed = fixedFields(descriptor);
+  return fixed.size ? (Object.fromEntries(Object.entries(data).filter(([key]) => !fixed.has(key))) as T) : data;
+}
+
+/** `v2.<kid>.<iv>.<tag>.<ciphertext>` or the older `v1.<iv>.<tag>.<ciphertext>` as a sealed value; undefined for anything else. */
+export function parseSealedString(text: string): SealedValue | undefined {
+  const parts = text.split('.');
+  if (parts[0] === 'v1' && parts.length === 4 && parts[1] && parts[2]) return { iv: parts[1], tag: parts[2], value: parts[3]! };
+  if (parts[0] === 'v2' && parts.length === 5 && parts[1] && parts[2] && parts[3]) return { v: 2, kid: parts[1], iv: parts[2], tag: parts[3], value: parts[4]! };
+  return undefined;
+}
+
+export class CredentialError extends HttpError {
+  static readonly errorName: string = 'CredentialError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 
-function loadKey(dir: string): Buffer {
+/** The legacy key text (kid `k0`): the environment, else the key file. Generated only when no ring is configured. */
+function loadLegacyKey(dir: string, ringConfigured: boolean): string | undefined {
   const configured = process.env.LANDFLOW_ENCRYPTION_KEY?.trim();
-  if (configured) return /^[0-9a-f]{64}$/i.test(configured) ? Buffer.from(configured, 'hex') : createHash('sha256').update(configured).digest();
+  if (configured) return configured;
   const path = join(dir, 'encryption.key');
-  if (!existsSync(path)) writeFileSync(path, randomBytes(32).toString('hex'), { mode: 0o600 });
-  return Buffer.from(readFileSync(path, 'utf8').trim(), 'hex');
+  if (!existsSync(path)) {
+    if (ringConfigured) return undefined;
+    writeKeyOnce(path);
+  }
+  return readFileSync(path, 'utf8').trim();
+}
+
+/**
+ * Create the key file atomically: write a temporary file, then hard-link it into place. The link fails when the key
+ * already exists, so processes that start together (or test files sharing a data directory) agree on the first key,
+ * and a reader never sees an empty or half-written file. A filesystem without hard links falls back to a rename.
+ */
+function writeKeyOnce(path: string): void {
+  const temp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  writeFileSync(temp, randomBytes(32).toString('hex'), { mode: 0o600 });
+  try {
+    linkSync(temp, path);
+  } catch (error) {
+    // EEXIST: another process won, keep its key. Anything else (no hard links here): rename, unless a key appeared.
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST' && !existsSync(path)) renameSync(temp, path);
+  } finally {
+    rmSync(temp, { force: true });
+  }
 }
 
 /** A value that is exactly one `{{ … }}` expression reading `$secrets` (lib/server/secrets resolves it when the credential is used). */
@@ -165,6 +260,8 @@ type CredentialRow = {
   rate_limit?: string | null;
   created_at: string;
   updated_at: string;
+  created_by?: string | null;
+  updated_by?: string | null;
 };
 
 const credentialRow = (credential: StoredCredential): CredentialRow => ({
@@ -176,6 +273,8 @@ const credentialRow = (credential: StoredCredential): CredentialRow => ({
   rate_limit: credential.rateLimit ? JSON.stringify(credential.rateLimit) : null,
   created_at: credential.createdAt,
   updated_at: credential.updatedAt,
+  created_by: credential.createdBy ?? null,
+  updated_by: credential.updatedBy ?? null,
 });
 
 /** The `credentials` table (database mode, migration 1300): one row per credential; `file` is imported once. */
@@ -201,7 +300,7 @@ export class CredentialTable implements CredentialBackend {
     this.dirty = false;
     return db.all<CredentialRow>('SELECT * FROM credentials').flatMap((row) => {
       try {
-        return [{ id: row.id, name: row.name, type: row.type, secretFields: JSON.parse(row.secret_fields) as string[], data: JSON.parse(row.data) as Sealed, ...(cleanRateLimit(row.rate_limit && JSON.parse(row.rate_limit)) && { rateLimit: cleanRateLimit(JSON.parse(row.rate_limit!)) }), createdAt: row.created_at, updatedAt: row.updated_at }];
+        return [{ id: row.id, name: row.name, type: row.type, secretFields: JSON.parse(row.secret_fields) as string[], data: JSON.parse(row.data) as Sealed, ...(cleanRateLimit(row.rate_limit && JSON.parse(row.rate_limit)) && { rateLimit: cleanRateLimit(JSON.parse(row.rate_limit!)) }), createdAt: row.created_at, updatedAt: row.updated_at, ...(row.created_by && { createdBy: row.created_by }), ...(row.updated_by && { updatedBy: row.updated_by }) }];
       } catch {
         return [];
       }
@@ -227,11 +326,22 @@ export interface CredentialVaultOptions {
   /** The data directory (credentials.json, encryption.key); default LANDFLOW_DATA_DIR. */
   dir?: string;
   backend?: CredentialBackend;
+  /** The database holding the project keys (default: the host's); tests give each simulated process its own. */
+  keyDb?: () => Database;
+  /** The clock of the project key cache (tests). */
+  keyClock?: () => number;
 }
 
+/** Which key a credential is sealed with, for status and tests: `ring:<kid>` or `dek:<projectId>.<version>`. */
+export type SealedWith = `ring:${string}` | `dek:${string}`;
+
 export class CredentialVault {
-  private readonly key: Buffer;
+  private readonly ring: KeyRing;
   private readonly backend: CredentialBackend;
+  /** The data keys of the projects (C31). */
+  readonly projectKeys: ProjectKeyStore;
+  /** The home project of a credential, set once at boot (projects/boot): the vault never imports projects. Unset: everything seals on the ring. */
+  private projectOf?: (credentialId: string) => string | undefined;
   /** Loaded on first use: in Postgres mode the database opens after this module is imported. */
   private loaded?: Map<string, StoredCredential>;
   /** OAuth2 refreshes in flight, by credential id: concurrent nodes wait for the same one. */
@@ -239,7 +349,9 @@ export class CredentialVault {
 
   constructor(options: CredentialVaultOptions = {}) {
     const dir = options.dir ?? store.dir;
-    this.key = loadKey(dir);
+    const listed = process.env.LANDFLOW_ENCRYPTION_KEYS;
+    this.ring = buildKeyRing(listed, loadLegacyKey(dir, Boolean(listed?.trim())));
+    this.projectKeys = new ProjectKeyStore({ ring: this.ring, ...(options.keyDb && { db: options.keyDb }), ...(options.keyClock && { now: options.keyClock }) });
     const file = join(dir, 'credentials.json');
     this.backend = options.backend ?? (configStoreKind() === 'database' ? new CredentialTable(file) : new CredentialFile(file));
   }
@@ -271,48 +383,220 @@ export class CredentialVault {
     }
   }
 
-  private seal(data: JsonObject): Sealed {
-    return this.sealText(JSON.stringify(data));
+  /** From now on credentials are sealed with their project's key; `resolve` says which project (undefined: the ring). */
+  setProjectResolver(resolve: ((credentialId: string) => string | undefined) | undefined) {
+    this.projectOf = resolve;
   }
 
-  private sealText(text: string): Sealed {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.key, iv);
-    const value = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-    return { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), value: value.toString('base64') };
-  }
-
-  private openText(sealed: Sealed): string {
-    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(sealed.iv, 'base64'));
-    decipher.setAuthTag(Buffer.from(sealed.tag, 'base64'));
-    return Buffer.concat([decipher.update(Buffer.from(sealed.value, 'base64')), decipher.final()]).toString('utf8');
-  }
-
-  /** A key for another purpose (signing OAuth2 state, deriving PKCE verifiers), derived from the encryption key. */
-  deriveKey(label: string): Buffer {
-    return createHmac('sha256', this.key).update(`landflow:${label}`).digest();
-  }
-
-  /** Encrypt one secret for storage elsewhere (alert channel secrets): `v1.<iv>.<tag>.<ciphertext>`. */
-  sealSecret(value: string): string {
-    const { iv, tag, value: ciphertext } = this.sealText(value);
-    return `v1.${iv}.${tag}.${ciphertext}`;
-  }
-
-  /** The secret `sealSecret` returned; throws a CredentialError when it can't be decrypted (another key). */
-  openSecret(sealed: string): string {
-    const [version, iv, tag, value] = sealed.split('.');
-    if (version !== 'v1' || !iv || !tag || value === undefined) throw new CredentialError('Not a sealed secret', 500);
+  /** The project whose key seals this credential now, if any. */
+  private sealProject(id: string): string | undefined {
     try {
-      return this.openText({ iv, tag, value });
+      return this.projectOf?.(id);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private sealRing(data: JsonObject, id: string): Sealed {
+    return sealWith(this.ring, JSON.stringify(data), credentialAad(id));
+  }
+
+  /** Sealed with the project's active key, or undefined when this process has none yet (Postgres mode: the key is being made, see `ProjectKeyStore.activeFor`). */
+  private sealProjectKey(data: JsonObject, id: string, projectId: string): Sealed | undefined {
+    try {
+      const active = this.projectKeys.activeFor(projectId);
+      if (!active) return undefined;
+      return sealWithDek(active.key, `${projectId}.${active.version}`, JSON.stringify(data), credentialAad(id));
+    } catch (error) {
+      if (error instanceof ProjectKeyError) throw new CredentialError(`The encryption key of this credential's project can't be used: ${error.message}`, 500);
+      throw error;
+    }
+  }
+
+  /** A fresh credential id, so a caller can record the credential's project before it is sealed (the project's key seals it). */
+  newId(): string {
+    return `cred_${nanoid(12)}`;
+  }
+
+  private seal(data: JsonObject, id: string): Sealed {
+    const project = this.sealProject(id);
+    if (!project) return this.sealRing(data, id);
+    const sealed = this.sealProjectKey(data, id, project);
+    if (sealed) return sealed;
+    // No key for this project reached this process yet (queue mode): readable on the ring now, a key is made in Postgres in the background, and the next save or `migrate` moves it.
+    this.projectKeys.ensureInBackground(project);
+    return this.sealRing(data, id);
+  }
+
+  /** Make sure a credential's project has a key this process can use, before sealing (routes, migrate and moves wait for it). */
+  async ensureProjectKey(projectId: string): Promise<void> {
+    await this.projectKeys.ensure(projectId);
+  }
+
+  /** The project whose key would seal this credential (undefined: the ring). */
+  projectFor(id: string): string | undefined {
+    return this.sealProject(id);
+  }
+
+  /** Which key a credential is sealed with (undefined: no such credential). */
+  sealedWith(id: string): SealedWith | undefined {
+    const credential = this.credentials.get(id);
+    if (!credential) return undefined;
+    const dek = credential.data.v === 3 ? credential.data.dek : undefined;
+    return dek ? `dek:${dek}` : `ring:${kidOf(credential.data)}`;
+  }
+
+  /** Every credential id with the key it is sealed with. */
+  sealedWithAll(): Array<{ id: string; sealedWith: SealedWith }> {
+    return [...this.credentials.keys()].map((id) => ({ id, sealedWith: this.sealedWith(id)! }));
+  }
+
+  /** The credentials sealed with a project key: `[projectId, version]` per credential id (what must stay openable). */
+  projectKeyUse(): Map<string, [string, number]> {
+    // Another process may have saved credentials into the shared file since this one read it (a sweep must see them).
+    this.reloadIfChanged();
+    const use = new Map<string, [string, number]>();
+    for (const credential of this.credentials.values()) {
+      const dek = dekOf(credential.data);
+      if (dek) use.set(credential.id, dek);
+    }
+    return use;
+  }
+
+  /**
+   * Re-seal one credential, written on its own: `project` onto its project's active key, `ring` onto the ring's primary.
+   * `current` when it is there already; `skipped` when `project` has no project to seal with; `pending` when its project's key
+   * has not reached this process (queue mode; `ensureProjectKey` first). Throws when it can't be opened or written.
+   */
+  resealOne(id: string, target: 'project' | 'ring'): 'resealed' | 'current' | 'skipped' | 'pending' {
+    const credential = this.credentials.get(id);
+    if (!credential) return 'skipped';
+    let next: Sealed | undefined;
+    if (target === 'ring') {
+      if (credential.data.v === 2 && kidOf(credential.data) === this.ring.primary) return 'current';
+      next = this.sealRing(this.open(credential), id);
+    } else {
+      const project = this.sealProject(id);
+      if (!project) return 'skipped';
+      const have = dekOf(credential.data);
+      if (have && have[0] === project && have[1] === this.projectKeys.activeVersion(project)) return 'current';
+      next = this.sealProjectKey(this.open(credential), id, project);
+      if (!next) return 'pending';
+    }
+    // A new object, put back only if the write fails: the copy in memory never runs ahead of what is stored.
+    const resealed: StoredCredential = { ...credential, data: next };
+    this.credentials.set(id, resealed);
+    try {
+      this.persist({ saved: resealed });
+    } catch (error) {
+      this.credentials.set(id, credential);
+      throw error;
+    }
+    return 'resealed';
+  }
+
+  /** The key id new values are sealed with. */
+  get primaryKid(): string {
+    return this.ring.primary;
+  }
+
+  /** Whether a LANDFLOW_ENCRYPTION_KEYS ring is configured (rotation needs one). */
+  get ringConfigured(): boolean {
+    return Boolean(process.env.LANDFLOW_ENCRYPTION_KEYS?.trim());
+  }
+
+  /** A key for another purpose (resume URLs, OAuth2 state), HKDF-SHA256 from the primary key: one per label. */
+  deriveKey(label: string): Buffer {
+    return hkdfKey(this.ring, label);
+  }
+
+  /**
+   * Every key a derived value may have been signed with, newest first: the primary key's, the other ring keys' (so a
+   * rotation doesn't void links in flight) and the old HMAC derivation of the legacy key (values signed before HKDF).
+   */
+  deriveKeys(label: string): Buffer[] {
+    const legacy = this.ring.keys.get(LEGACY_SHA_KID) ?? this.ring.keys.get(LEGACY_KID);
+    const ring = [this.ring.primary, ...[...this.ring.keys.keys()].filter((kid) => kid !== this.ring.primary)].map((kid) => hkdfKey({ ...this.ring, primary: kid }, label));
+    // TODO(2027-02): remove this HMAC fallback once links signed before HKDF (2026-11) have expired.
+    return legacy ? [...ring, createHmac('sha256', legacy).update(`landflow:${label}`).digest()] : ring;
+  }
+
+  /**
+   * Encrypt one secret for storage elsewhere (alert channel secrets): `v2.<kid>.<iv>.<tag>.<ciphertext>`, bound to
+   * `purpose` (open it with the same one).
+   */
+  sealSecret(value: string, purpose = DEFAULT_PURPOSE): string {
+    const { kid, iv, tag, value: ciphertext } = sealWith(this.ring, value, secretAad(purpose));
+    return `v2.${kid}.${iv}.${tag}.${ciphertext}`;
+  }
+
+  /** The secret `sealSecret` returned (or a v1 string from before key ids); throws a CredentialError when it can't be decrypted (another key). */
+  openSecret(sealed: string, purpose = DEFAULT_PURPOSE): string {
+    const parsed = parseSealedString(sealed);
+    if (!parsed) throw new CredentialError('Not a sealed secret', 500);
+    try {
+      return openWith(this.ring, parsed, secretAad(purpose));
     } catch {
       throw new CredentialError('A stored secret can’t be decrypted — was LANDFLOW_ENCRYPTION_KEY changed?', 500);
     }
   }
 
+  /** The same secret sealed with the primary key, or undefined when it is on it already (rotation). Throws a CredentialError when it can't be opened. */
+  resealSecret(sealed: string, purpose = DEFAULT_PURPOSE): string | undefined {
+    const parsed = parseSealedString(sealed);
+    if (parsed && parsed.v === 2 && parsed.kid === this.ring.primary) return undefined;
+    return this.sealSecret(this.openSecret(sealed, purpose), purpose);
+  }
+
+  /**
+   * Re-seal every credential that is not v2 under the primary key, writing each one on its own (so an interruption
+   * leaves every credential readable). Returns how many were re-sealed, were already current, and could not be opened.
+   */
+  rotateCredentials(): { resealed: number; current: number; failed: string[] } {
+    const result = { resealed: 0, current: 0, failed: [] as string[] };
+    for (const credential of [...this.credentials.values()]) {
+      // A value on a project key stays: root rotation re-wraps the keys instead (./project-keys).
+      if (credential.data.v === 3 || (credential.data.v === 2 && kidOf(credential.data) === this.ring.primary)) {
+        result.current += 1;
+        continue;
+      }
+      try {
+        // A new object, put back only if the write fails: the copy in memory never runs ahead of what is stored.
+        // On the ring, never onto a project key: that is the owner's `migrate`, not a side effect of rotating.
+        const resealed: StoredCredential = { ...credential, data: this.sealRing(this.open(credential), credential.id) };
+        this.credentials.set(credential.id, resealed);
+        try {
+          this.persist({ saved: resealed });
+        } catch (error) {
+          this.credentials.set(credential.id, credential);
+          throw error;
+        }
+        result.resealed += 1;
+      } catch {
+        result.failed.push(credential.id);
+      }
+    }
+    return result;
+  }
+
   private open(credential: StoredCredential): JsonObject {
+    const dek = dekOf(credential.data);
+    if (dek) {
+      let key: Buffer;
+      try {
+        key = this.projectKeys.keyFor(dek[0], dek[1]);
+      } catch (error) {
+        const gone = error instanceof ProjectKeyError && error.reason === 'gone';
+        throw new CredentialError(`Credential "${credential.name}" can't be decrypted — ${gone ? "its project's key is gone" : "its project's key can't be unwrapped (is the key that wrapped it in LANDFLOW_ENCRYPTION_KEYS?)"}`, 500);
+      }
+      try {
+        return JSON.parse(openWithDek(key, credential.data, credentialAad(credential.id))) as JsonObject;
+      } catch {
+        throw new CredentialError(`Credential "${credential.name}" can't be decrypted — its project's key does not open it`, 500);
+      }
+    }
     try {
-      return JSON.parse(this.openText(credential.data)) as JsonObject;
+      return JSON.parse(openWith(this.ring, credential.data, credentialAad(credential.id))) as JsonObject;
     } catch {
       throw new CredentialError(`Credential "${credential.name}" can't be decrypted — was LANDFLOW_ENCRYPTION_KEY changed?`, 500);
     }
@@ -332,8 +616,8 @@ export class CredentialVault {
   }
 
   private summary(credential: StoredCredential, usedBy: Map<string, CredentialSummary['usedBy']>): CredentialSummary {
-    const { id, name, type, createdAt, updatedAt, rateLimit } = credential;
-    return { id, name, type, createdAt, updatedAt, usedBy: usedBy.get(id) ?? [], ...(rateLimit && { rateLimit }), ...this.oauth2StatusOf(credential) };
+    const { id, name, type, createdAt, updatedAt, createdBy, updatedBy, rateLimit } = credential;
+    return { id, name, type, createdAt, updatedAt, ...(createdBy && { createdBy }), ...(updatedBy && { updatedBy }), usedBy: usedBy.get(id) ?? [], ...(rateLimit && { rateLimit }), ...this.oauth2StatusOf(credential) };
   }
 
   /** core.oAuth2Api, a type extending it, or (its plugin offline) a credential that holds a token. */
@@ -354,10 +638,26 @@ export class CredentialVault {
   /** What nodes get: the type's defaults and the saved values; for OAuth2, the access token instead of the stored token. */
   private nodeData(credential: StoredCredential, descriptor: CredentialTypeDescriptor | undefined): JsonObject {
     const data = withDefaults(descriptor, this.open(credential));
-    if (!this.isOAuth2(credential, data)) return data;
+    if (!this.isOAuth2(credential, data)) return this.remember(credential, descriptor, data);
     const result = { ...withoutReserved(data), ...nodeTokenFields(storedToken(data[TOKEN_FIELD])) };
     oauthOrigins.set(result, credential.id);
-    return result;
+    return this.remember(credential, descriptor, result);
+  }
+
+  /**
+   * Handing secrets to a node: their values are remembered so redaction (secrets/redact) scrubs them from logs, run
+   * results and stored runs, the way `$secrets` values are. Password-typed fields, the credential's own secret fields
+   * and fields whose name says secret; a `$secrets` reference holds nothing. The remembered set is bounded and
+   * evicts the least recently resolved value (secrets/redact MAX_VALUES).
+   */
+  private remember(credential: StoredCredential, descriptor: CredentialTypeDescriptor | undefined, data: JsonObject): JsonObject {
+    installRedaction();
+    const names = new Set([...credential.secretFields, ...secretNames(descriptor)]);
+    for (const [key, value] of Object.entries(data)) {
+      if (typeof value !== 'string' || isSecretReference(value)) continue;
+      if (names.has(key) || SECRET_KEY.test(key)) rememberSecretValues(value, { min: CREDENTIAL_MIN_LENGTH, lines: value.includes('-----BEGIN') });
+    }
+    return data;
   }
 
   list(): CredentialSummary[] {
@@ -383,23 +683,26 @@ export class CredentialVault {
   /**
    * `options.id` keeps a given id (a promoted definition, planned before it is created); `options.partial` skips the
    * required-field check (a promoted definition comes without its secrets, which are filled in on this instance).
+   * `options.actor`: who creates it (createdBy and updatedBy); undefined records nobody.
    */
-  create(input: { name: string; type: string; data: JsonObject; rateLimit?: CredentialRateLimitSetting | null }, options: { id?: string; partial?: boolean } = {}): CredentialDetail {
+  create(input: { name: string; type: string; data: JsonObject; rateLimit?: CredentialRateLimitSetting | null }, options: { id?: string; partial?: boolean } & Partial<CredentialChange> = {}): CredentialDetail {
     const info = registry.credentialType(input.type);
     if (!info) throw new CredentialError(`Unknown credential type "${input.type}" — is its plugin running?`);
     if (options.id && this.credentials.has(options.id)) throw new CredentialError(`A credential with id ${options.id} exists already`, 409);
-    const data = withoutReserved(Object.fromEntries(Object.entries(input.data).filter(([, value]) => value !== null && value !== undefined)) as JsonObject);
+    const data = withoutFixed(info.descriptor, withoutReserved(Object.fromEntries(Object.entries(input.data).filter(([, value]) => value !== null && value !== undefined)) as JsonObject));
     if (!options.partial) this.validate(info.descriptor, data);
     const now = new Date().toISOString();
+    const id = options.id ?? `cred_${nanoid(12)}`;
     const credential: StoredCredential = {
-      id: options.id ?? `cred_${nanoid(12)}`,
+      id,
       name: input.name.trim() || info.descriptor.displayName,
       type: input.type,
       secretFields: secretNames(info.descriptor),
-      data: this.seal(data),
+      data: this.seal(data, id),
       ...(cleanRateLimit(input.rateLimit) && { rateLimit: cleanRateLimit(input.rateLimit) }),
       createdAt: now,
       updatedAt: now,
+      ...(options.actor && { createdBy: options.actor, updatedBy: options.actor }),
     };
     this.credentials.set(credential.id, credential);
     this.persist({ saved: credential });
@@ -430,18 +733,25 @@ export class CredentialVault {
   }
 
   /**
-   * Fields in `data` replace the saved ones. A secret left empty keeps its saved
-   * value (the form never receives it); `null` clears a field.
+   * Fields in `data` replace the saved ones; fields it leaves out stay. A secret left empty keeps its saved value (the
+   * form never receives it); `null` clears a field; a field the type fixes is ignored. When the merged data differs from
+   * the stored data, `change.actor` becomes `updatedBy` (none: nobody); a save that changes no value, a rename or a rate
+   * limit alone leaves it.
    */
-  update(id: string, input: { name?: string; data?: Record<string, unknown>; rateLimit?: CredentialRateLimitSetting | null }): CredentialDetail {
+  update(id: string, input: { name?: string; data?: Record<string, unknown>; rateLimit?: CredentialRateLimitSetting | null }, change: CredentialChange = { actor: undefined }): CredentialDetail {
     const credential = this.credentials.get(id);
     if (!credential) throw new CredentialError('Credential not found', 404);
     const descriptor = registry.credentialType(credential.type)?.descriptor;
     if (input.data) {
-      const merged = this.merge(credential, input.data);
+      const stored = this.open(credential);
+      const merged = this.merge(credential, input.data, stored);
       if (descriptor) this.validate(descriptor, merged);
-      credential.data = this.seal(merged);
       credential.secretFields = [...new Set([...credential.secretFields, ...secretNames(descriptor)])];
+      // Decrypted values, secrets included: a save that changes none of them keeps the last changer.
+      if (!isDeepStrictEqual(merged, stored)) {
+        credential.data = this.seal(merged, credential.id);
+        changedBy(credential, change);
+      }
     }
     if (input.name?.trim()) credential.name = input.name.trim();
     // null (or a limit of 0) takes the rate limit off.
@@ -470,17 +780,25 @@ export class CredentialVault {
     });
   }
 
+  /** Who last changed a credential's data (see StoredCredential.updatedBy), or undefined: nobody, or no such credential. */
+  lastChangedBy(id: string): string | undefined {
+    return this.credentials.get(id)?.updatedBy;
+  }
+
   delete(id: string): boolean {
     if (!this.credentials.delete(id)) return false;
     this.persist({ removed: id });
     return true;
   }
 
-  private merge(credential: StoredCredential, incoming: Record<string, unknown>): JsonObject {
-    const secret = new Set([...credential.secretFields, ...secretNames(registry.credentialType(credential.type)?.descriptor)]);
-    const merged: JsonObject = { ...this.open(credential) };
+  private merge(credential: StoredCredential, incoming: Record<string, unknown>, stored = this.open(credential)): JsonObject {
+    const descriptor = registry.credentialType(credential.type)?.descriptor;
+    const secret = new Set([...credential.secretFields, ...secretNames(descriptor)]);
+    const fixed = fixedFields(descriptor);
+    // A value saved for a fixed field before it was fixed goes: the type's default applies.
+    const merged: JsonObject = withoutFixed(descriptor, { ...stored });
     for (const [key, value] of Object.entries(incoming)) {
-      if (reserved.has(key)) continue;
+      if (reserved.has(key) || fixed.has(key)) continue;
       if (value === null) delete merged[key];
       else if (secret.has(key) && (value === '' || value === undefined)) continue;
       else if (value !== undefined) merged[key] = value as JsonObject[string];
@@ -504,8 +822,9 @@ export class CredentialVault {
   testData(type: string, data: Record<string, unknown>, id?: string): JsonObject {
     const credential = id ? this.credentials.get(id) : undefined;
     if (id && !credential) throw new CredentialError('Credential not found', 404);
-    const base = credential ? this.merge(credential, data) : withoutReserved(Object.fromEntries(Object.entries(data).filter(([, v]) => v !== null && v !== undefined)) as JsonObject);
-    const full = withDefaults(registry.credentialType(type)?.descriptor, base);
+    const descriptor = registry.credentialType(type)?.descriptor;
+    const base = credential ? this.merge(credential, data) : withoutFixed(descriptor, withoutReserved(Object.fromEntries(Object.entries(data).filter(([, v]) => v !== null && v !== undefined)) as JsonObject));
+    const full = withDefaults(descriptor, base);
     // An OAuth2 credential is tested with its access token, like a node would get it.
     return credential && this.isOAuth2(credential, full) ? { ...withoutReserved(full), ...nodeTokenFields(storedToken(full[TOKEN_FIELD])) } : full;
   }
@@ -600,22 +919,31 @@ export class CredentialVault {
     return oauthOrigins.get(data);
   }
 
-  private writeOAuth2(credential: StoredCredential, change: (data: JsonObject) => void) {
+  /**
+   * `by`: a token operation someone made (Connect, Disconnect, Get token, Refresh now), recorded by tokenChangedBy: it
+   * never raises trust. Without it (an automatic refresh, an error note, what discovery found) the changer stays.
+   */
+  private writeOAuth2(credential: StoredCredential, change: (data: JsonObject) => void, by?: CredentialChange) {
     const data = this.open(credential);
     change(data);
-    credential.data = this.seal(data);
+    credential.data = this.seal(data, credential.id);
+    if (by) tokenChangedBy(credential, by);
     credential.updatedAt = new Date().toISOString();
     this.persist({ saved: credential });
   }
 
-  /** Store a token (after Connect, a refresh or a client credentials grant); `account` replaces the shown account when given. */
-  saveOAuth2Token(id: string, token: StoredToken, account?: string): CredentialDetail {
+  /** Store a token: `by` names who asked for it (Connect, Get token; see writeOAuth2; without it the changer stays); `account` replaces the shown account when given. */
+  saveOAuth2Token(id: string, token: StoredToken, account?: string, by?: CredentialChange): CredentialDetail {
     const { credential } = this.oauth2Credential(id);
-    this.writeOAuth2(credential, (data) => {
-      data[TOKEN_FIELD] = token;
-      if (account) data[ACCOUNT_FIELD] = account;
-      delete data[ERROR_FIELD];
-    });
+    this.writeOAuth2(
+      credential,
+      (data) => {
+        data[TOKEN_FIELD] = token;
+        if (account) data[ACCOUNT_FIELD] = account;
+        delete data[ERROR_FIELD];
+      },
+      by,
+    );
     return this.get(id)!;
   }
 
@@ -630,12 +958,27 @@ export class CredentialVault {
     });
   }
 
+  /** Record a token operation that stored its token through refreshOAuth2 (Refresh now): see tokenChangedBy. */
+  noteTokenOperation(id: string, by: CredentialChange) {
+    const credential = this.credentials.get(id);
+    if (!credential) return;
+    const before = credential.updatedBy;
+    tokenChangedBy(credential, by);
+    if (credential.updatedBy === before) return;
+    credential.updatedAt = new Date().toISOString();
+    this.persist({ saved: credential });
+  }
+
   /** Forget the token (Disconnect). The client settings stay. */
-  disconnectOAuth2(id: string): CredentialDetail {
+  disconnectOAuth2(id: string, by?: CredentialChange): CredentialDetail {
     const { credential } = this.oauth2Credential(id);
-    this.writeOAuth2(credential, (data) => {
-      for (const field of RESERVED_FIELDS) if (field !== META_FIELD) delete data[field];
-    });
+    this.writeOAuth2(
+      credential,
+      (data) => {
+        for (const field of RESERVED_FIELDS) if (field !== META_FIELD) delete data[field];
+      },
+      by,
+    );
     return this.get(id)!;
   }
 

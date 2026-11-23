@@ -5,6 +5,7 @@
  * little CSS in Landflow's monochrome look and no client script; the browser's own validation
  * plus a server-side check. A submission becomes `{ <field>: value, submittedAt, formMode }`.
  */
+import { resumeFormPath } from './resume-signing';
 import type { BinaryRef, JsonObject, NodeItem } from '@landflow/protocol';
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { ExecutionRecord, FormCompletion } from '../shared/types';
@@ -177,7 +178,7 @@ export async function answerSubmission(
 
 /** The answer for a run that has finished or stopped to wait. */
 export function finishedResponse(record: ExecutionRecord, fallback: { title: string; message: string }): Response {
-  if (record.status === 'waiting' && record.wait?.resume === 'form') return redirect(`/form/waiting/${record.executionId}`);
+  if (record.status === 'waiting' && record.wait?.resume === 'form') return redirect(resumeFormPath(record.executionId));
   if (record.formCompletion) return completionResponse(record.formCompletion, fallback.title);
   if (record.status === 'error') return messagePage({ title: 'Something went wrong', message: 'There was a problem submitting your response. Please try again later.', status: 500 });
   if (record.status === 'canceled') return messagePage({ title: 'Form closed', message: 'This form is no longer accepting responses.', status: 410 });

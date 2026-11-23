@@ -11,7 +11,9 @@ import { indexedPorts } from '@landflow/protocol';
 import { Check, Hourglass, Pause, Pin, Plus, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { duration, languageMeta, TRANSPORT_META } from '@/lib/client/format';
+import { useDeveloperDetails } from '@/lib/client/developer-details';
 import { nodeColor, tint } from '@/lib/client/node-style';
+import { nodeSubtitle } from '@/lib/shared/node-subtitle';
 import type { NodeStatus } from '@/lib/client/run-data';
 import type { ConnectionType, NodeTypeInfo, PortDescriptor } from '@/lib/shared/types';
 import { AgentAvatar, type AvatarSource } from '../agents/avatar';
@@ -32,16 +34,6 @@ const AI_LABEL: Record<string, string> = {
 
 export function handleId(type: ConnectionType, index: number) {
   return `${type}:${index}`;
-}
-
-function subtitleOf(template: string | undefined, parameters: Record<string, unknown>) {
-  if (!template) return undefined;
-  const text = template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key: string) => {
-    const value = parameters[key];
-    return value === undefined || value === null ? '' : typeof value === 'object' ? '…' : String(value);
-  });
-  // An empty value leaves its separator behind ("insert · "): drop separators at either end.
-  return text.replace(/^[\s·|]+|[\s·|]+$/g, '') || undefined;
 }
 
 /**
@@ -103,7 +95,7 @@ export interface NodeTileProps {
    * `head` replaces the icon and name, `body` sits under them and grows the tile, and `color` tints the running frame.
    */
   live?: NodeLive;
-  /** Names for the sub-node slots by connection type, over the descriptor's: a team node's "Lead's model" (the new look). */
+  /** Names for the sub-node slots by connection type, over the descriptor's: a team node's "Lead's model". */
   slotNames?: Partial<Record<ConnectionType, string>>;
   /** Toolbars and overlays rendered inside the node. */
   children?: ReactNode;
@@ -200,15 +192,17 @@ export function NodeTile(props: NodeTileProps) {
   const isTrigger = kind === 'trigger';
   const unavailable = !info || !info.available;
   const color = nodeColor(info);
-  const subtitle = subtitleOf(descriptor?.subtitle, parameters);
+  const subtitle = useMemo(() => nodeSubtitle(descriptor, parameters), [descriptor, parameters]);
   const lang = info && info.pluginId !== 'core' ? languageMeta(info.language) : undefined;
   const ran = ranFor(status);
+  const developerDetails = useDeveloperDetails();
+  const showLang = Boolean(lang) && developerDetails;
   const style = { '--node': live?.color ?? color } as CSSProperties;
   const isImage = Boolean(descriptor?.icon && /^(https?:|data:)/.test(descriptor.icon));
 
-  const meta = (lang || unavailable || ran) && (
+  const meta = (showLang || unavailable || ran) && (
     <div className="mt-0.5 flex items-center justify-center gap-1 whitespace-nowrap font-mono text-[10px] text-t3">
-      {lang && (
+      {lang && showLang && (
         <>
           <span className="size-1.5 rounded-full" style={{ background: lang.color }} />
           {lang.short} · {TRANSPORT_META[info!.transport].label}
@@ -217,7 +211,7 @@ export function NodeTile(props: NodeTileProps) {
       {unavailable && <span className="text-warn">{info ? 'offline' : 'unknown type'}</span>}
       {ran && (
         <span>
-          {lang ? '· ' : ''}
+          {showLang ? '· ' : ''}
           {status!.reused ? 'reused' : duration(status!.durationMs)}
         </span>
       )}
@@ -237,7 +231,7 @@ export function NodeTile(props: NodeTileProps) {
   const pinMark = pinned && (
     <span
       title="Output is pinned: the node returns this data instead of running"
-      className="absolute -right-1.5 -top-1.5 z-20 grid size-[18px] place-items-center rounded-full border-2 border-sf bg-viz-7 text-white"
+      className="absolute -right-1.5 -top-1.5 z-20 grid size-[18px] place-items-center rounded-full border-2 border-sf bg-viz-7 text-bg"
     >
       <Pin className="size-2.5" strokeWidth={2.5} />
     </span>
@@ -315,7 +309,7 @@ export function NodeTile(props: NodeTileProps) {
           {face ? <AgentAvatar agent={face} size={36} round /> : <NodeIcon icon={descriptor?.icon} size={isImage ? 30 : 24} style={{ color }} strokeWidth={1.7} className="shrink-0" />}
           <div className="min-w-0">
             <div className={cn('truncate text-[13px] font-semibold text-t1', disabled && 'line-through')}>{name}</div>
-            <div className="truncate text-[11px] text-t3">{subtitle ?? descriptor?.displayName}</div>
+            <div className="truncate text-[11px] text-t3" title={subtitle}>{subtitle ?? descriptor?.displayName}</div>
           </div>
           <StatusMark status={status} compact />
           {status?.uses && status.uses > 1 && (
@@ -389,7 +383,7 @@ export function NodeTile(props: NodeTileProps) {
       {wide && (
         <div className="min-w-0">
           <div className={cn('truncate text-[14px] font-semibold text-t1', disabled && 'line-through')}>{name}</div>
-          <div className="truncate text-[12px] text-t3">{subtitle ?? descriptor?.displayName}</div>
+          <div className="truncate text-[12px] text-t3" title={subtitle}>{subtitle ?? descriptor?.displayName}</div>
         </div>
       )}
     </>
@@ -431,7 +425,13 @@ export function NodeTile(props: NodeTileProps) {
       {!wide && (
         <div className="pointer-events-none absolute left-1/2 top-full w-[170px] -translate-x-1/2 pt-2 text-center">
           <div className={cn('line-clamp-2 text-[13px] font-semibold leading-tight text-t1', disabled && 'line-through')}>{name}</div>
-          {subtitle && <div className="truncate text-[11px] text-t3">{subtitle}</div>}
+          {subtitle && (
+            <div className="truncate text-[11px] text-t3">
+              <span className="pointer-events-auto inline-block max-w-full truncate align-top" title={subtitle}>
+                {subtitle}
+              </span>
+            </div>
+          )}
           {meta}
         </div>
       )}

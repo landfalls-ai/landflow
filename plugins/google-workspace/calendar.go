@@ -53,6 +53,8 @@ func eventFields(withTimes bool) []landflow.PropertyDescriptor {
 func (CalendarNode) Description() landflow.NodeDescriptor {
 	getAll := show("event", "getAll")
 	paging := returnAllLimit(getAll, 50, 2500)
+	changed := show("event", "changedSince")
+	changedPaging := returnAllLimit(changed, 50, 2500)
 	return landflow.NodeDescriptor{
 		Name:             "googleCalendar",
 		DisplayName:      "Google Calendar",
@@ -72,7 +74,8 @@ func (CalendarNode) Description() landflow.NodeDescriptor {
 		UsableAsTool: true,
 		ToolDescription: "Manage Google Calendar events in `calendar` (default primary). operation=create needs start " +
 			"and end (ISO 8601) and takes additionalFields summary, description, location, attendees (comma-separated " +
-			"emails) and allday; getAll lists events between timeMin and timeMax (options.query searches text); get, " +
+			"emails) and allday; getAll lists events between timeMin and timeMax (options.query searches text); changedSince lists events " +
+			"changed after `since` as activity items with attendees; get, " +
 			"update (updateFields) and delete act on eventId.",
 
 		Properties: []landflow.PropertyDescriptor{
@@ -83,6 +86,8 @@ func (CalendarNode) Description() landflow.NodeDescriptor {
 				landflow.PropertyOption{Name: "Delete", Value: "delete", Description: "Delete an event", Action: "Delete an event"},
 				landflow.PropertyOption{Name: "Get", Value: "get", Description: "Retrieve an event", Action: "Get an event", Idempotent: true},
 				landflow.PropertyOption{Name: "Get Many", Value: "getAll", Description: "Retrieve many events from a calendar", Action: "Get many events", Idempotent: true},
+				landflow.PropertyOption{Name: "Get Many Changed Since", Value: "changedSince", Description: "Events created, changed or cancelled after a time, with attendees, as activity items (oldest change first)", Action: "Get events changed since", Idempotent: true,
+					OutputSchema: landflow.ActivityItemSchema()},
 				landflow.PropertyOption{Name: "Update", Value: "update", Description: "Update an event", Action: "Update an event"},
 			),
 			{
@@ -104,6 +109,12 @@ func (CalendarNode) Description() landflow.NodeDescriptor {
 			{Name: "options", DisplayName: "Options", Type: landflow.PropCollection, Default: map[string]any{},
 				Placeholder: "Add Option", DisplayOptions: show("event", "delete"),
 				Values: []landflow.PropertyDescriptor{sendUpdatesProperty}},
+			{Name: "since", DisplayName: "Since", Type: landflow.PropString, Default: "",
+				Placeholder: "2026-11-12T08:00:00Z", DisplayOptions: changed,
+				Description: "Events changed after this ISO time (or a cursor from an earlier item). Empty: the last 24 hours."},
+			changedPaging[0],
+			changedPaging[1],
+			calendarActivityOptions(changed),
 			paging[0],
 			paging[1],
 			{Name: "timeMin", DisplayName: "After", Type: landflow.PropDateTime, Default: "",
@@ -150,6 +161,8 @@ func (CalendarNode) Execute(ctx *landflow.ExecuteContext) ([][]landflow.Item, er
 			results, err = one(r.get(i))
 		case "getAll":
 			results, err = r.getMany(i)
+		case "changedSince":
+			results, err = r.changedSince(i)
 		case "update":
 			results, err = one(r.update(i))
 		case "delete":

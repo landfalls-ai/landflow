@@ -9,6 +9,7 @@ import type { BinaryRef, JsonObject } from '@landflow/protocol';
 import type { AgentTraceSummary } from '../../shared/agents';
 import { aiUsageMeter } from '../ai-usage';
 import { traceModelCalls } from './trace-calls';
+import { targetOfNode } from '../agents/tool-target'; // AG14:
 import { mergeConnections, toolInput, type ActorConnection, type JournalDraft, type JournalEvent, type RunActor, type RunCheck, type SpanKind, type SpanStatus, type TokenCounts } from '../../shared/run-trace';
 
 /** Nodes that are agents when they run in the main flow. */
@@ -59,6 +60,8 @@ interface SpanState {
   note?: string;
   /** A delegate's remote run. */
   remote?: Remote;
+  /** C05: a provider limit stopped the remote task; kept on the span when it ends in error. */
+  blocked?: { kind: string; message: string; label?: string };
 }
 
 interface Remote {
@@ -160,6 +163,7 @@ export function createTranslator(options: TranslatorOptions) {
     const paused = span.remote?.state === 'input-required' || span.remote?.state === 'auth-required';
     if (!paused) for (const child of spans.values()) if (child.open && child.parent === id) end(child.id, child.kind === 'wait' ? 'success' : 'canceled', { ...(result.at && { at: result.at }) });
     span.open = false;
+    const attrsOut = status === 'error' && span.blocked ? { ...result.attrs, blocked: span.blocked } : result.attrs;
     emit({
       type: 'span.ended',
       spanId: id,
@@ -167,7 +171,7 @@ export function createTranslator(options: TranslatorOptions) {
       ...(result.output !== undefined && { output: result.output }),
       ...(result.error && { error: result.error }),
       ...(result.usage && { usage: result.usage }),
-      ...(result.attrs && filled(result.attrs) && { attrs: result.attrs }),
+      ...(attrsOut && filled(attrsOut) && { attrs: attrsOut }),
       ...(result.at && { at: result.at }),
     });
   }
@@ -287,7 +291,7 @@ export function createTranslator(options: TranslatorOptions) {
         const why = str(reason);
         start({ ...base, kind: 'delegate', actor, parent, name: e.nodeName, caller: rootActor, ...(e.input !== undefined && { input: why ? asked : e.input }), attrs: { nodeType: node.type, ...(why && { reason: short(why, 600) }) }, remote: freshRemote() });
       } else {
-        start({ ...base, kind: 'tool', actor: rootActor, parent, name: e.nodeName, ...(e.input !== undefined && { input: e.input }), attrs: { ...(node && { nodeType: node.type }) } });
+        start({ ...base, kind: 'tool', actor: rootActor, parent, name: e.nodeName, ...(e.input !== undefined && { input: e.input }), attrs: { ...(node && { nodeType: node.type }), ...(node && toolTargetAttr(node)) } }); // AG14:
       }
     } else {
       // Memory, retrievers, embeddings…: the agent's plumbing, kept for the trace but out of the story.
@@ -379,6 +383,10 @@ export function createTranslator(options: TranslatorOptions) {
         remote[key] = value;
         attrs[key] = value;
       }
+    }
+    if (isObject(data.blocked) && str(data.blocked.kind)) {
+      span.blocked = { kind: String(data.blocked.kind), message: str(data.blocked.message) ?? '', ...(str(data.blocked.label) && { label: String(data.blocked.label) }) };
+      attrs.blocked = span.blocked;
     }
     const state = str(data.state);
     const pause = (s: string | undefined) => s === 'input-required' || s === 'auth-required';
@@ -552,8 +560,15 @@ export function createTranslator(options: TranslatorOptions) {
       attrs.wait = 'approval';
       attrs.channel = approval.channel;
       attrs.calls = calls.map((c) => ({ id: c.id, tool: c.tool, input: c.input }));
+      if (isObject(data.inbox)) attrs.inbox = true; // AP03: a request in the approval inbox: the card offers no edit of its input
       const tools = calls.map((c) => String(c.tool)).filter(Boolean);
       name = tools.length ? `Approve ${tools.join(', ')}` : 'Approve a tool call';
+      // Ask a Person: the question and the draft, answered with Approve, Edit or Reject.
+      const confirm = isObject(approval.confirm) ? approval.confirm : undefined;
+      if (confirm) {
+        attrs.confirm = confirmAttrs(confirm);
+        name = `Waiting for ${Array.isArray(confirm.approvers) && confirm.approvers.length ? confirm.approvers.map(String).join(', ') : 'a person'}: ${String(confirm.title)}`;
+      }
       // A team member's tool (Run a Team): who wants it, and what with.
       const team = isObject(data.teamApproval) ? data.teamApproval : undefined;
       if (team) {
@@ -686,4 +701,25 @@ export function createTranslator(options: TranslatorOptions) {
   }
 
   return { feed, seed, spanOfNode, actorOfNode, openSpans: () => [...spans.values()].filter((s) => s.open).map((s) => s.id) };
+}
+
+/** AG14: where a sub-node tool's call went (its credential and parameters, never a secret) as a span attribute; a target is a courtesy, never an error. */
+function toolTargetAttr(node: WorkflowNode): { target?: unknown } {
+  try {
+    return { target: targetOfNode(node.type, node.credentials, node.parameters) };
+  } catch {
+    return {};
+  }
+}
+
+/** What the Run Trace's Ask a Person card gets of a waiting `confirm` request: the question, the draft, who may answer and (C35) the pick list of Answer Choices. */
+export function confirmAttrs(confirm: Record<string, unknown>): Record<string, unknown> {
+  const choices = Array.isArray(confirm.choices) ? confirm.choices.filter((c): c is { value: string; label: string } => isObject(c) && typeof c.value === 'string' && typeof c.label === 'string') : [];
+  return {
+    title: confirm.title,
+    text: confirm.text,
+    allowEdit: confirm.allowEdit !== false,
+    ...(Array.isArray(confirm.approvers) && confirm.approvers.length && { approvers: confirm.approvers }),
+    ...(choices.length && { choices }),
+  };
 }

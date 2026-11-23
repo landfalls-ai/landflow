@@ -13,6 +13,7 @@
  */
 import { isIPv4, isIPv6 } from 'node:net';
 import type { LanguageModel } from '@landflow/engine';
+import { withCallPurpose } from './ai-usage/call-context';
 import { generateStructured, type JsonSchema } from './nodes/structured';
 import { traceGuardrails } from './telemetry';
 
@@ -206,6 +207,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { type: 'GOOGLE_API_KEY', pattern: /\bAIza[0-9A-Za-z_-]{35}(?![\w-])/g, level: 'permissive' },
   { type: 'STRIPE_KEY', pattern: /\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,}\b/g, level: 'permissive' },
   { type: 'HUGGINGFACE_TOKEN', pattern: /\bhf_[A-Za-z0-9]{30,}\b/g, level: 'permissive' },
+  { type: 'NOTION_KEY', pattern: /(?<![A-Za-z0-9])(?:ntn_|secret_)[A-Za-z0-9]{40,}/g, level: 'permissive' }, // NB08:
   { type: 'NPM_TOKEN', pattern: /\bnpm_[A-Za-z0-9]{36}\b/g, level: 'permissive' },
   { type: 'SENDGRID_API_KEY', pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g, level: 'permissive' },
   { type: 'JWT', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, level: 'permissive' },
@@ -479,7 +481,8 @@ export async function modelVerdict(model: LanguageModel, instructions: string, t
 
 /** The verdict from the judge when there is one, else from the chat model. */
 const judgeText = (options: GuardrailsOptions, instructions: string, text: string, context?: string): Promise<Verdict> =>
-  options.judge ? options.judge(instructions, text, options.signal, context) : modelVerdict(options.model as LanguageModel, instructions, text, options.signal, context);
+  // SP02: the verdict's model call (the chat model's or the judge's) is a guardrail check.
+  withCallPurpose('guardrail', () => (options.judge ? options.judge(instructions, text, options.signal, context) : modelVerdict(options.model as LanguageModel, instructions, text, options.signal, context)));
 
 // ---------------------------------------------------------------------------
 // Masking and replacement

@@ -84,7 +84,7 @@ export function CreateTableDialog({ onClose, existingNames, projectId }: { onClo
             Cancel
           </Button>
           <Button variant="primary" onClick={create} loading={busy} disabled={!name.trim() || Boolean(problem)}>
-            <Plus className="size-3.5" /> Create table
+            Create table
           </Button>
         </>
       }

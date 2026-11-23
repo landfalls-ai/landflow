@@ -6,7 +6,7 @@ and starts flows when records change. Part of the [Landflow docs](README.md); th
 [plugin's README](../plugins/sap/README.md).
 
 ```sh
-pnpm plugin:sap                                        # HTTP :7116 (MCP at /mcp), gRPC :7216
+pnpm plugin:sap                                        # HTTP :7123 (MCP at /mcp), gRPC :7223
 pnpm fake-s4                                           # the fake S/4HANA server on loopback (PORT)
 pnpm --filter @landflow/plugin-sap test                # against the fake; no SAP system is called
 ```

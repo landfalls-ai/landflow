@@ -1,0 +1,83 @@
+# The code runner. The container is the security boundary: read-only root with a noexec /tmp, no capabilities, no privilege
+# escalation, capped processes, memory and CPU. The NetworkPolicy lets only the host's pods in and nothing out (it needs a CNI
+# that enforces policies; without one the pod limits above still apply).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landflow-code-runner
+  labels: { app.kubernetes.io/name: landflow-code-runner, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: code-runner }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: landflow-code-runner }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: landflow-code-runner, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: code-runner }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001 # the image's `runner` user
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: runner
+          image: landflow/code-runner:k8s-dev
+          imagePullPolicy: Never
+          ports:
+            - { name: http, containerPort: 7300 }
+          env:
+            - name: CODE_RUNNER_SECRET
+              valueFrom: { secretKeyRef: { name: landflow-host, key: code-runner-secret } }
+            - { name: CODE_RUNNER_TIMEOUT_MS, value: "60000" }
+            - { name: CODE_RUNNER_MEMORY_MB, value: "256" }
+            - { name: CODE_RUNNER_MAX_BINARY_BYTES, value: "6291456" }
+            - { name: CODE_RUNNER_CONCURRENCY, value: "2" }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "2", memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landflow-code-runner
+  labels: { app.kubernetes.io/name: landflow-code-runner, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: code-runner }
+spec:
+  selector: { app.kubernetes.io/name: landflow-code-runner }
+  ports:
+    - { name: http, port: 7300, targetPort: http }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: landflow-code-runner
+  labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: code-runner }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: landflow-code-runner }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: landflow-host }
+      ports:
+        - { port: 7300 }
+  egress: []

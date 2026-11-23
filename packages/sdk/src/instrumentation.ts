@@ -185,7 +185,9 @@ export function sanitizeUrl(url: URL): string {
   return scrub(`${url.protocol}//${url.host}${url.pathname}`);
 }
 
-export function createTracedFetch(telemetry: Telemetry, options: { base?: Context; signal?: AbortSignal } = {}): TracedFetch {
+export function createTracedFetch(telemetry: Telemetry, options: { base?: Context; signal?: AbortSignal; fetch?: typeof fetch } = {}): TracedFetch {
+  // The host injects a guarded fetch (its outbound policy) for in-process nodes; remote plugins use the global one.
+  const send = options.fetch ?? fetch;
   const base = options.base ?? context.active();
   return async (input, init = {}) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
@@ -207,7 +209,7 @@ export function createTracedFetch(telemetry: Telemetry, options: { base?: Contex
     const metricAttributes: Attributes = { 'http.request.method': method, 'server.address': url.hostname, 'server.port': port };
     try {
       const response = await context.with(trace.setSpan(parent, span), () =>
-        fetch(input, { ...init, method, headers, ...(signals.length && { signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) }) }),
+        send(input, { ...init, method, headers, ...(signals.length && { signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) }) }),
       );
       span.setAttribute('http.response.status_code', response.status);
       metricAttributes['http.response.status_code'] = response.status;

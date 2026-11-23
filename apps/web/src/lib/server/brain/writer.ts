@@ -9,19 +9,28 @@
  * - `persona`: Always and Never rules from what people said, as the agent change.
  * - `draft`: a draft workflow from the requests, by the flow builder ("Describe a workflow").
  */
+import { createHash } from 'node:crypto';
 import type { LanguageModel, Workflow } from '@landflow/engine';
 import type { PortDigest, RunDigest } from '../../shared/assistant-ops';
 import { clip } from '../../shared/assistant-ops';
 import { agentStore } from '../agents/store';
+import { database } from '../db';
 import { assistantModel, DEFAULT_ASSISTANT_MODEL, modelLabel } from '../assistant/model';
 import { nodeDocs, availableTypes } from '../assistant/research';
 import { suggestAfterRun } from '../assistant/suggest';
-import { buildFlow, type FlowDraft } from '../flow-builder';
+import type { FlowDraft } from '../flow-builder';
+import { buildPlanFirst } from '../assistant/build-plan'; // sb3 integration: the brain's flows are planned first too
 import { getProjectSettings } from '../governance/scopes';
 import { homeProjectId } from '../projects/store';
 import { store } from '../store';
 import { logger } from '../telemetry/logger';
 import type { Enrichment, Finding } from './detectors';
+
+/**
+ * How many findings a pass builds a draft workflow for. Each draft is a plan call, one call per step (at most 12) and a
+ * send-back for the plan and each step: up to 26 calls, usually 5 to 15, on the brain's model.
+ */
+export const MAX_DRAFTS_PER_PASS = 3;
 
 /** LANDFLOW_BRAIN_MODEL: `off`, a model name (`provider/model` or an Ollama model), or the builder model. */
 export function brainModelName(): string | undefined {
@@ -57,8 +66,8 @@ async function ask(model: LanguageModel, prompt: string, signal?: AbortSignal): 
 }
 
 /** The latest failing run of a node, as the assistant reads runs: counts always, items only with the project's opt-in. */
-function failingRun(workflow: Workflow, nodeId: string, executionId: string | undefined, message: string): RunDigest {
-  const record = executionId ? store.getExecution(executionId) : undefined;
+async function failingRun(workflow: Workflow, nodeId: string, executionId: string | undefined, message: string): Promise<RunDigest> {
+  const record = executionId ? await store.loadExecution(executionId) : undefined;
   const run = record?.runData[nodeId]?.findLast((r) => r.error) ?? record?.runData[nodeId]?.at(-1);
   const payloads = getProjectSettings(homeProjectId('workflow', workflow.id)).brainPayloads === true;
   const port = (items: unknown[] | undefined): PortDigest => ({ count: items?.length ?? 0, sample: payloads ? (items ?? []).slice(0, 3).map((i) => clip((i as { json?: unknown }).json)) : [] });
@@ -91,7 +100,7 @@ async function enrichOne(finding: Finding, enrich: Enrichment, model: LanguageMo
     case 'fix': {
       const workflow = store.getWorkflow(enrich.workflowId);
       if (!workflow) return finding;
-      const result = await suggestAfterRun({ workflow, nodeId: enrich.nodeId, run: failingRun(workflow, enrich.nodeId, enrich.executionId, enrich.message), model, signal });
+      const result = await suggestAfterRun({ workflow, nodeId: enrich.nodeId, run: await failingRun(workflow, enrich.nodeId, enrich.executionId, enrich.message), model, signal });
       const fix = result.suggestions.find((s) => s.ops.length) ?? result.suggestions[0];
       if (!fix) return finding;
       return {
@@ -149,11 +158,36 @@ async function enrichOne(finding: Finding, enrich: Enrichment, model: LanguageMo
     case 'draft': {
       const name = brainModelName();
       if (!name || name.includes('/')) return finding;
-      const draft = await buildFlow(enrich.prompt, name);
+      const draft = await buildPlanFirst(enrich.prompt, name);
       if (!draft.nodes.length) return finding;
-      return { ...finding, proposal: { ...p, draft: draftWorkflow(draft), why: `${p.why} Applying creates a draft workflow “${draft.name}” to start from.`.slice(0, 2_000), model: draft.model } };
+      return { ...finding, proposal: { ...p, draft: draftWorkflow(draft), draftPromptHash: promptHash(enrich.prompt), why: `${p.why} Applying creates a draft workflow “${draft.name}” to start from.`.slice(0, 2_000), model: draft.model } };
     }
   }
+}
+
+/** A short hash of the prompt a draft was built from: a draft is kept only while the prompt is the same. */
+function promptHash(prompt: string): string {
+  return createHash('sha256').update(prompt).digest('hex').slice(0, 16);
+}
+
+/**
+ * The draft an open or snoozed detector suggestion with this fingerprint and detector already carries, when it was built
+ * from this same prompt: a pass that finds the same request again keeps it instead of building the draft once more (a draft
+ * is 5 to 15 model calls). A prompt that changed (unmet demand lists example requests that leave its 30-day window) or a
+ * draft saved before the hash was kept is rebuilt. Undefined when there is none.
+ */
+function savedDraft(fingerprint: string | undefined, detector: string, prompt: string): { draft: Workflow; model?: string } | undefined {
+  if (!fingerprint) return undefined;
+  try {
+    const rows = database().all<{ data: string }>("SELECT data FROM proposals WHERE fingerprint = ? AND source = 'detector' AND detector = ? AND status IN ('open', 'snoozed')", fingerprint, detector);
+    for (const row of rows) {
+      const saved = JSON.parse(row.data) as { draft?: Workflow; model?: string; draftPromptHash?: string };
+      if (saved.draft && saved.draftPromptHash === promptHash(prompt)) return { draft: saved.draft, model: saved.model };
+    }
+  } catch {
+    // Unreadable or no table: build the draft.
+  }
+  return undefined;
 }
 
 /** Enrich the findings that ask for it. Each call is on its own: one failing leaves the others. */
@@ -161,11 +195,23 @@ export async function enrichFindings(findings: Finding[], options: { model?: Lan
   const model = brainModel(options.model);
   if (!model) return findings;
   const out: Finding[] = [];
+  let drafts = 0;
   for (const finding of findings) {
-    if (!finding.enrich || options.signal?.aborted) {
+    // A draft is built planned first: one plan call and one call per step, each with its send-back, on the brain's local
+    // model. So a pass drafts only a few; the rest are kept as they are and drafted by a later pass.
+    // A request already drafted (its suggestion is still open) keeps its draft: it is neither rebuilt nor counted.
+    const draftPrompt = finding.enrich?.kind === 'draft' ? finding.enrich.prompt : undefined;
+    const saved = draftPrompt !== undefined && finding.proposal.detector ? savedDraft(finding.proposal.fingerprint, finding.proposal.detector, draftPrompt) : undefined;
+    if (saved) {
+      out.push({ ...finding, proposal: { ...finding.proposal, draft: saved.draft, draftPromptHash: promptHash(draftPrompt!), why: `${finding.proposal.why} Applying creates a draft workflow “${saved.draft.name}” to start from.`.slice(0, 2_000), ...(saved.model && { model: saved.model }) } });
+      continue;
+    }
+    const skipDraft = finding.enrich?.kind === 'draft' && drafts >= MAX_DRAFTS_PER_PASS;
+    if (!finding.enrich || options.signal?.aborted || skipDraft) {
       out.push(finding);
       continue;
     }
+    if (finding.enrich.kind === 'draft') drafts++;
     try {
       out.push(await enrichOne(finding, finding.enrich, model, options.signal));
     } catch (error) {

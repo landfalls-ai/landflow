@@ -14,6 +14,7 @@ import { Button } from '../ui/button';
 import { Switch } from '../ui/inputs';
 import { applyChanges, editorLookup, readAutoSuggest, suggestionKey, useSuggestions, writeAutoSuggest, type Suggestion, type SuggestionKind } from './assistant';
 import { useEditor } from './store';
+import { ChangeDiff, useCanvas } from './change-diff'; // SB08:
 
 export const KIND_META: Record<SuggestionKind, { label: string; tone: Tone }> = {
   fix: { label: 'Fix', tone: 'danger' },
@@ -25,10 +26,44 @@ export const KIND_META: Record<SuggestionKind, { label: string; tone: Tone }> = 
 /** What applying a change would leave dangling. */
 export function Warnings({ warnings }: { warnings?: string[] }) {
   if (!warnings?.length) return null;
+  // SB04: "Waits for you: removes “X”" is why Spotlight did not apply it alone, not something the change leaves undone.
+  const waits = warnings.filter((w) => w.startsWith('Waits for you'));
+  const left = warnings.filter((w) => !w.startsWith('Waits for you'));
   return (
-    <div className="flex items-start gap-1.5 text-[11px] leading-snug text-warn">
-      <TriangleAlert className="mt-px size-3 shrink-0" />
-      <span>Leaves {warnings.join('; ')}.</span>
+    <>
+      {waits.length > 0 && (
+        <div className="flex items-start gap-1.5 text-[11px] leading-snug text-warn">
+          <TriangleAlert className="mt-px size-3 shrink-0" />
+          <span>{waits.join('; ')}.</span>
+        </div>
+      )}
+      {left.length > 0 && (
+        <div className="flex items-start gap-1.5 text-[11px] leading-snug text-warn">
+          <TriangleAlert className="mt-px size-3 shrink-0" />
+          <span>Leaves {left.join('; ')}.</span>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** What a change left out, with a "why" that opens the reasons in place (a hover can't be reached by touch or keys). */
+export function LeftOut({ reasons, label }: { reasons: string[]; label?: string }) {
+  const [open, setOpen] = useState(false);
+  if (!reasons.length) return null;
+  return (
+    <div className="text-[11px] leading-snug text-t3">
+      <span>{label ?? `${reasons.length} part${reasons.length === 1 ? '' : 's'} left out`}</span>{' '}
+      <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="font-semibold text-ac hover:underline max-md:min-h-11 max-md:px-1">
+        {open ? 'Hide why' : 'Why?'}
+      </button>
+      {open && (
+        <ul className="mt-1 list-disc space-y-0.5 pl-4 [overflow-wrap:anywhere]">
+          {reasons.map((reason) => (
+            <li key={reason}>{reason}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -48,6 +83,13 @@ export function OpsDiff({ ops, className }: { ops: Suggestion['ops']; className?
   );
 }
 
+/** SB08: the after-run suggestion's diff, read against this canvas. */
+function SuggestionDiff({ ops, applied }: { ops: Suggestion['ops']; applied: boolean }) {
+  const canvas = useCanvas();
+  // Applied, the canvas holds the change: the lines of its ops say what it did.
+  return applied ? <OpsDiff ops={ops} /> : <ChangeDiff before={canvas} ops={ops} />;
+}
+
 function SuggestionRow({ suggestion, state, onApply, onDismiss }: { suggestion: Suggestion; state?: 'applied' | 'dismissed'; onApply: () => void; onDismiss: () => void }) {
   const meta = KIND_META[suggestion.kind];
   return (
@@ -57,17 +99,15 @@ function SuggestionRow({ suggestion, state, onApply, onDismiss }: { suggestion: 
           {meta.label}
         </Badge>
         <span className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-t1">{suggestion.title}</span>
-        <span className="font-mono text-[11px] text-t3" title="How sure the model is">
-          {Math.round(suggestion.confidence * 100)}%
+        <span className="whitespace-nowrap text-[11px] text-t3" title="How sure the model is">
+          {Math.round(suggestion.confidence * 100)}% sure
         </span>
       </div>
       {suggestion.detail && <p className="text-[12px] leading-relaxed text-t2">{suggestion.detail}</p>}
-      {suggestion.ops.length > 0 && <OpsDiff ops={suggestion.ops} />}
+      {suggestion.ops.length > 0 && <SuggestionDiff ops={suggestion.ops} applied={state === 'applied'} />}{/* SB08: */}
       <Warnings warnings={suggestion.warnings} />
       {!suggestion.ops.length && suggestion.dropped?.length ? (
-        <p className="text-[11px] text-t3" title={suggestion.dropped.join('\n')}>
-          Advice only: the change the model proposed doesn’t fit this workflow.
-        </p>
+        <LeftOut reasons={suggestion.dropped} label="Advice only: the change the model proposed doesn’t fit this workflow." />
       ) : null}
       <div className="flex items-center gap-1.5 pt-0.5">
         {state === 'applied' ? (

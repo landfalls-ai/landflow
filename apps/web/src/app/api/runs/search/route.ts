@@ -19,7 +19,7 @@ export const GET = handler(async (request: Request) => {
   const flag = (key: string) => ['1', 'true', 'yes'].includes((q.get(key) ?? '').toLowerCase());
   const visible = visibleIds(routeActor(), 'workflow', store.listWorkflows().map((w) => w.id));
   return json(
-    searchRuns(
+    await searchRuns(
       {
         text: q.get('text') ?? undefined,
         workflowId: q.get('workflowId') ?? undefined,

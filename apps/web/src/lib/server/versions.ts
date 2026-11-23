@@ -4,12 +4,16 @@
  * A save that leaves nodes, connections, settings, sticky notes and groups unchanged (same hash) adds no
  * version, and only the newest MAX_VERSIONS are kept per workflow (plus the published one: lib/server/publications.ts).
  * Executions record the version they started on (`versionFor`), and resume on it after a restart.
+ * Each version records its author (the `author` column, migration 2091): the person whose save made it, or nobody for a
+ * save without one (a background or system save, an import, versions from before 2091). A save that changes nothing that
+ * counts adds no version, so it never changes who wrote one: moving, renaming, publishing or activating leaves it alone.
  *
  * This module must not import the store: the store calls recordVersion().
  */
 import { createHash, randomBytes } from 'node:crypto';
 import type { Workflow, WorkflowConnection, WorkflowNode } from '@landflow/engine';
 import type { VersionDiff, WorkflowVersion, WorkflowVersionSummary } from '../shared/types';
+import { singleton } from './singleton'; // AG21:
 import { database } from './db';
 import { parse, versionRow } from './db/rows';
 import { publishedVersionId } from './publications';
@@ -17,6 +21,9 @@ import { logger } from './telemetry/logger';
 
 /** Versions kept per workflow; older ones are deleted. */
 export const MAX_VERSIONS = 50;
+
+/** Autosaves by one person within this long of each other are one version (one editing session). */
+export const AUTOSAVE_WINDOW_MS = 10 * 60 * 1000;
 
 const ID = /^[\w-]+$/;
 
@@ -38,7 +45,8 @@ function stableStringify(value: unknown): string {
  */
 export function versionHash(workflow: Workflow): string {
   const material = {
-    nodes: workflow.nodes ?? [],
+    // AG21: the pins a production copy carries on its agent nodes are not part of the graph.
+    nodes: (workflow.nodes ?? []).map(withoutPins),
     connections: workflow.connections ?? [],
     settings: workflow.settings ?? {},
     stickyNotes: workflow.stickyNotes ?? [],
@@ -46,6 +54,23 @@ export function versionHash(workflow: Workflow): string {
   };
   return createHash('sha256').update(stableStringify(material)).digest('hex');
 }
+
+/**
+ * AG21: the internal parameters a production copy carries on its agent nodes (the pins; `PIN_PARAM` and `PINS_PARAM` of
+ * lib/shared/agent-versions.ts, spelled here so this module, which http.ts reaches, stays small; a test keeps them equal).
+ */
+export const PIN_KEYS = ['agentVersion', 'agentVersions'] as const;
+
+/** AG21: a node without the internal agent pins. */
+function withoutPins<T extends { parameters?: Record<string, unknown> }>(node: T): T {
+  const parameters = node.parameters;
+  if (!parameters || !PIN_KEYS.some((key) => key in parameters)) return node;
+  const rest = Object.fromEntries(Object.entries(parameters).filter(([key]) => !(PIN_KEYS as readonly string[]).includes(key)));
+  return { ...node, parameters: rest };
+}
+
+/** AG21: how `productionWorkflow` puts each agent node's pin on the production copy; set by lib/server/agents/versions.ts when it loads (boot loads it before any trigger runs). */
+export const productionPins = singleton('production-pins', () => ({ apply: undefined as undefined | ((workflow: Workflow, versionId: string) => Workflow) }));
 
 /** A node without its position and id: what "changed" compares. */
 function nodeContent(node: WorkflowNode): string {
@@ -137,6 +162,7 @@ export function versionFor(workflow: Workflow): WorkflowVersionSummary | undefin
     if (!ID.test(workflow.id)) return undefined;
     const hash = versionHash(workflow);
     const published = publishedVersionId(workflow.id);
+    // AG21: the newest of equal hashes (a re-pin records the same graph again).
     const row =
       (published && database().get<{ summary: string }>('SELECT summary FROM workflow_versions WHERE id = ? AND hash = ?', published, hash)) ||
       database().get<{ summary: string }>('SELECT summary FROM workflow_versions WHERE workflow_id = ? AND hash = ? ORDER BY number DESC LIMIT 1', workflow.id, hash);
@@ -147,31 +173,75 @@ export function versionFor(workflow: Workflow): WorkflowVersionSummary | undefin
 }
 
 /**
+ * Who saved a version: the user whose save made it, or undefined when nobody did (a save with no person behind it, an
+ * import, or a version from before authors were recorded). Read from its own column, never from the summary a file can carry.
+ */
+export function versionAuthor(workflowId: string, versionId: string): string | undefined {
+  if (!ID.test(workflowId) || !ID.test(versionId)) return undefined;
+  return database().get<{ author: string | null }>('SELECT author FROM workflow_versions WHERE id = ? AND workflow_id = ?', versionId, workflowId)?.author ?? undefined;
+}
+
+/** Whether anything refers to a version by id: a run, an open publish request, a pending schedule or the published one. */
+function isReferenced(workflowId: string, versionId: string): boolean {
+  const db = database();
+  const hit = (sql: string, ...params: string[]) => !!db.get<{ n: number }>(sql, ...params);
+  return (
+    publishedVersionId(workflowId) === versionId ||
+    // By workflow too, so it uses the executions_workflow index: autosave runs this on every save.
+    hit('SELECT 1 AS n FROM executions WHERE workflow_id = ? AND version_id = ? LIMIT 1', workflowId, versionId) ||
+    hit("SELECT 1 AS n FROM publish_requests WHERE (version_id = ? OR draft_version_id = ?) AND status = 'pending' LIMIT 1", versionId, versionId) ||
+    hit("SELECT 1 AS n FROM scheduled_publishes WHERE version_id = ? AND status IN ('pending', 'awaiting_approval') LIMIT 1", versionId)
+  );
+}
+
+/**
  * Record a saved workflow as a new version, unless nothing that counts changed since the newest one.
+ * An autosave (`options.autosave`) replaces the newest version (same number, a new id, the old row deleted) when that
+ * was an autosave by the same person within AUTOSAVE_WINDOW_MS and nothing refers to it (a run, an open publish
+ * request, a schedule, the published one), so an editing session is one version, not one per drag. Manual saves,
+ * publishes and tab-leave saves always add a version. A decided publish request or the publish log may still name a
+ * folded-away id; their readers already allow a missing version (the 50-version cap removes them too).
+ * `options.author`: who saved it (see versionAuthor); undefined records nobody.
  * Never throws: a save must not fail because of its history.
  */
-export function recordVersion(workflow: Workflow): WorkflowVersionSummary | undefined {
+export function recordVersion(workflow: Workflow, options: { autosave?: { by: string }; author?: string; force?: boolean; summary?: string } = {}): WorkflowVersionSummary | undefined {
   try {
     if (!ID.test(workflow.id)) return undefined;
     const db = database();
     const newest = readIndex(workflow.id)[0];
     const hash = versionHash(workflow);
-    if (newest?.hash === hash) return undefined;
-    const previous = newest ? getVersion(workflow.id, newest.id)?.workflow : undefined;
+    // AG21: `force` records the same graph again (a re-pin, an agent update): one version is one graph and one set of agent versions.
+    if (newest?.hash === hash && !options.force) return undefined;
+    const createdAt = workflow.updatedAt ?? new Date().toISOString();
+    const auto = options.autosave;
+    const replaces =
+      auto &&
+      newest?.autosave?.by === auto.by &&
+      newest.id !== publishedVersionId(workflow.id) &&
+      Math.abs(Date.parse(createdAt) - Date.parse(newest.createdAt)) < AUTOSAVE_WINDOW_MS &&
+      !isReferenced(workflow.id, newest.id)
+        ? newest
+        : undefined;
+    // A replaced version is compared with the one before it, so its line still says everything the session changed.
+    const base = replaces ? readIndex(workflow.id)[1] : newest;
+    const previous = base ? getVersion(workflow.id, base.id)?.workflow : undefined;
     const diff = diffWorkflows(previous, workflow);
     const summary: WorkflowVersionSummary = {
       id: `v_${Date.now().toString(36)}${randomBytes(3).toString('hex')}`,
       workflowId: workflow.id,
-      number: (newest?.number ?? 0) + 1,
-      createdAt: workflow.updatedAt ?? new Date().toISOString(),
+      number: replaces?.number ?? (newest?.number ?? 0) + 1,
+      createdAt,
       name: workflow.name,
       nodeCount: workflow.nodes.length,
       hash,
-      summary: summarizeDiff(diff, !newest),
+      summary: options.summary ?? summarizeDiff(diff, !base), // AG21: summary
       diff,
+      ...(auto && { autosave: auto }),
     };
     db.transaction(() => {
-      db.upsert('workflow_versions', versionRow({ ...summary, workflow }));
+      db.upsert('workflow_versions', { ...versionRow({ ...summary, workflow }), author: options.author ?? null });
+      // The replacement has a new id, so a pending request or schedule that named the old one notices; the old row goes.
+      if (replaces) db.delete('workflow_versions', { id: replaces.id });
       const stale = db.all<{ id: string }>('SELECT id FROM workflow_versions WHERE workflow_id = ? ORDER BY number DESC LIMIT -1 OFFSET ?', workflow.id, MAX_VERSIONS);
       // The published version stays however old it is: production triggers run it.
       const published = publishedVersionId(workflow.id);

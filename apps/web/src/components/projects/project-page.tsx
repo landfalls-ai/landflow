@@ -1,68 +1,56 @@
 'use client';
 /**
- * /projects/<id>: what a project owns and what is shared with it, by kind (workflows, credentials, data tables,
- * agents), creating things in it, its variables, its audit log (project admins) and its settings (name, members and
- * roles, the nodes its workflows may use, who approves its publish requests, delete). Each item's menu has Share and
- * "Move to project" when the viewer may (lib/shared/projects.ts `resourceCan`). Its folders are on /workflows?project=<id>.
+ * /projects/<id>: five tabs. Overview counts what the project owns (workflows, credentials, data tables, agents), each
+ * count opening the global page filtered to the project; Tasks; Members; Settings (name, the nodes its workflows may use, who
+ * approves its publish requests, MCP, variables; the delete card last); Audit log (project admins). An earlier `?tab=` value maps
+ * to its new tab (project-tabs.ts). Its folders are on /workflows?project=<id>.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRightLeft, Bot, FolderOpen, KeyRound, LayoutTemplate, MoreHorizontal, Network, Plus, Share2, Table2, Trash2, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
+import { ArrowRight, ArrowRightLeft, Bot, MoreHorizontal, Plus, KeyRound, Table2, Trash2, UserPlus, Workflow as WorkflowIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { useWorkflowsReadOnly } from '@/lib/client/environment';
-import { timeAgo } from '@/lib/client/format';
+import { plural } from '@/lib/client/format';
 import type { UserView } from '@/lib/shared/auth';
-import { PROJECT_ROLES, projectRoleCan, resourceCan, type ProjectDetail, type ProjectRole, type ResourceKind, type ResourceOwnership } from '@/lib/shared/projects';
+import { PROJECT_ROLES, projectRoleCan, resourceCan, type ResourceKind, type ResourceOwnership, type ProjectDetail, type ProjectRole } from '@/lib/shared/projects';
 import type { ProjectMcpView } from '@/lib/shared/mcp';
 import { EMPTY_NODE_POLICY, PROJECT_APPROVER_LABELS, type ProjectApprovers, type ProjectSettingsView, type ScopedNodePolicy } from '@/lib/shared/project-policy';
 import { ScopedNodeList } from '@/components/governance/scoped-node-list';
 import { VariablesSettings } from '@/components/settings/variables-settings';
+import { ProjectWorkspaceCard } from './project-workspace-card'; // PC16
+import { ExportProjectButton } from './export-project-dialog'; // PC21
 import { useViewer } from '@/components/auth/viewer';
-import { CredentialDialog, CredentialTypeIcon } from '@/components/credentials/credential-dialog';
-import { useCredentials } from '@/components/credentials/use-credentials';
-import { CreateTableDialog } from '@/components/data-tables/create-table-dialog';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { AuditLog } from '@/components/settings/audit-settings';
-import { ProtectedGate } from '@/components/shell/protected-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { FieldLabel, Input, Select, Switch, Textarea } from '@/components/ui/inputs';
+import { CredentialDialog } from '@/components/credentials/credential-dialog';
+import { CreateTableDialog } from '@/components/data-tables/create-table-dialog';
+import { useWorkflowsReadOnly } from '@/lib/client/environment';
 import { MenuItem, Popover } from '@/components/ui/popover';
-import { DeleteProjectDialog, describeCounts } from './project-dialogs';
-import { MoveToProjectDialog, RESOURCE_PATH, ShareDialog } from './share-dialog';
+import { MoveToProjectDialog, RESOURCE_PATH } from './share-dialog';
+import { DeleteProjectDialog, deletionNotice } from './project-dialogs';
 import { rememberProject } from './current-project';
 import { projectLabel, useProjectStore } from './use-projects';
+import { Segmented } from '../ui/segmented';
+import { ProjectBriefCard } from './project-brief-card';
+import type { ProjectBriefView } from '@/lib/shared/goals';
+import { ProjectAgentSettings } from './project-agent-settings';
+import { ProjectBudgetCard } from './project-budget-card';
+import { BrainCard } from './brain-card'; // NB07:
+import { EventSubscriptionsCard } from './event-subscriptions-card'; // C19:
+import { CollectionsCard } from './collections-card'; // C21:
+import { TasksTab } from './tasks/tasks-tab'; // PC20
+import { OVERVIEW_KINDS, PROJECT_TABS, projectTab, type ProjectTab } from './project-tabs';
 
-type Tab = 'workflows' | 'credentials' | 'dataTables' | 'agents' | 'variables' | 'audit' | 'settings';
-const TABS: Array<{ id: Tab; label: string; kind?: ResourceKind }> = [
-  { id: 'workflows', label: 'Workflows', kind: 'workflow' },
-  { id: 'credentials', label: 'Credentials', kind: 'credential' },
-  { id: 'dataTables', label: 'Data tables', kind: 'dataTable' },
-  { id: 'agents', label: 'Agents', kind: 'agent' },
-  { id: 'variables', label: 'Variables' },
-  // Project admins (and owners and admins) read the project's audit events.
-  { id: 'audit', label: 'Audit log' },
-  { id: 'settings', label: 'Settings' },
-];
 const ROLE_HINT: Record<ProjectRole, string> = {
   admin: 'Manages members, shares and moves its items',
   editor: 'Creates, edits and runs its items',
   viewer: 'Opens its items and their executions',
 };
-
-/** An item of any kind as the list routes return it (with `ownership`). */
-interface Item {
-  id: string;
-  name: string;
-  updatedAt?: string;
-  ownership?: ResourceOwnership;
-  type?: string;
-  active?: boolean;
-}
 
 export function ProjectPage({ projectId }: { projectId: string }) {
   const router = useRouter();
@@ -70,7 +58,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
   const viewer = useViewer();
   const [project, setProject] = useState<ProjectDetail>();
   const [error, setError] = useState<string>();
-  const tab = (TABS.find((t) => t.id === params.get('tab'))?.id ?? 'workflows') as Tab;
+  const tab = projectTab(params.get('tab'));
 
   const loadProject = useCallback(
     () =>
@@ -86,12 +74,12 @@ export function ProjectPage({ projectId }: { projectId: string }) {
     if (project) rememberProject(project.id);
   }, [project]);
 
-  const setTab = (next: Tab) => router.replace(`/projects/${encodeURIComponent(projectId)}${next === 'workflows' ? '' : `?tab=${next}`}`);
+  const setTab = (next: ProjectTab) => router.replace(`/projects/${encodeURIComponent(projectId)}${next === 'overview' ? '' : `?tab=${next}`}`);
   const role = project?.role;
 
   if (error) {
     return (
-      <PageBody className="max-w-[980px]">
+      <PageBody width="narrow">
         <Card>
           <EmptyState title="Project not available" hint={error} action={<Link href="/projects" className="text-[13px] text-ac hover:underline">All projects</Link>} />
         </Card>
@@ -102,83 +90,76 @@ export function ProjectPage({ projectId }: { projectId: string }) {
   return (
     <>
       <PageHeader
+        back={{ href: '/projects', label: 'Projects' }}
         title={project ? projectLabel(project, viewer?.id) : 'Project'}
         meta={
           project && (
             <>
               <Badge tone={project.type === 'personal' ? 'muted' : 'accent'}>{project.type === 'personal' ? 'Personal' : 'Team'}</Badge>
               {role && <span>Your role: {role}</span>}
-              <span>· {project.memberCount} {project.memberCount === 1 ? 'member' : 'members'}</span>
+              <span>· {plural(project.memberCount, 'member')}</span>
             </>
           )
         }
+        actions={
+          project && (
+            // One box for both, so a phone's header puts them together on the title's row (it moves only the last action there), as every other tab's one action is.
+            <div className="flex items-center gap-2">
+              {/* PC21: */}<ExportProjectButton project={project} />
+              {tab === 'overview' && projectRoleCan.create(project.role) && <NewInProject project={project} onChanged={() => void loadProject()} />}
+            </div>
+          )
+        }
       />
-      <PageBody className="max-w-[980px]">
+      <PageBody width="narrow">
         {project?.description && <p className="mb-4 text-[13px] text-t2">{project.description}</p>}
-        <div role="tablist" className="mb-4 flex w-fit items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-          {TABS.filter((t) => t.id !== 'audit' || projectRoleCan.manage(role)).map((t) => (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={t.id === tab}
-              onClick={() => setTab(t.id)}
-              className={cn('h-7 rounded-full px-3.5 text-[13px] text-t2 transition-all duration-200 hover:text-t1', t.id === tab && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]')}
-            >
-              {t.label}
-              {t.kind && project?.counts?.[t.kind] ? <span className="ml-1.5 font-mono text-[11px] font-normal text-t3">{project.counts[t.kind]}</span> : null}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="Project"
+          className="mb-4"
+          value={tab}
+          onChange={setTab}
+          options={PROJECT_TABS.filter((t) => t.id !== 'audit' || projectRoleCan.manage(role)).map((t) => ({ value: t.id, label: t.label }))}
+        />
+        {project && tab === 'overview' && <Overview project={project} onChanged={() => void loadProject()} />}
+        {project && tab === 'tasks' && /* PC20: */ <TasksTab projectId={project.id} />}
         {project && tab === 'audit' && projectRoleCan.manage(role) && <AuditLog projectId={project.id} />}
-        {project && tab === 'variables' && <VariablesSettings projectId={project.id} />}
-        {project && TABS.find((t) => t.id === tab)?.kind && <ResourceList key={tab} project={project} kind={TABS.find((t) => t.id === tab)!.kind!} onChanged={() => void loadProject()} />}
-        {project && tab === 'settings' && <ProjectSettings project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />}
+        {project && tab === 'members' && <ProjectSettings section="members" project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />}
+        {project && tab === 'settings' && (
+          <div className="space-y-4">
+            <ProjectSettings section="settings" project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />
+            {/* PC15: */}<ProjectAgentSettings projectId={project.id} />
+            {/* PC15: */}<ProjectBudgetCard projectId={project.id} />
+            {/* PC16: */}<ProjectWorkspaceCard projectId={project.id} />
+            <Card>
+              <div className="mb-3 text-[13px] font-semibold text-t1">Variables</div>
+              <VariablesSettings projectId={project.id} />
+            </Card>
+            {/* PC20: the red card comes last */}
+            <ProjectSettings section="danger" project={project} onChanged={(next) => (next ? setProject(next) : void loadProject())} />
+          </div>
+        )}
       </PageBody>
     </>
   );
 }
 
-const LIST_KEY: Record<ResourceKind, string> = { workflow: 'workflows', credential: 'credentials', dataTable: 'tables', agent: 'agents', agentTeam: 'teams' };
-const HREF: Partial<Record<ResourceKind, (id: string) => string>> = { workflow: (id) => `/workflows/${id}`, dataTable: (id) => `/data-tables/${id}`, agent: (id) => `/agents/${id}`, agentTeam: (id) => `/agents/teams/${id}` };
-const ICON: Record<ResourceKind, typeof WorkflowIcon> = { workflow: WorkflowIcon, credential: KeyRound, dataTable: Table2, agent: Bot, agentTeam: Network };
-const EMPTY: Record<ResourceKind, string> = {
-  workflow: 'No workflows in this project yet.',
-  credential: 'No credentials in this project yet. Credentials shared with the project show here too; its workflows can use them.',
-  dataTable: 'No data tables in this project yet.',
-  agent: 'No agents in this project yet.',
-  agentTeam: 'No agent teams in this project yet.',
-};
+const ICON: Record<string, typeof WorkflowIcon> = { workflow: WorkflowIcon, credential: KeyRound, dataTable: Table2, agent: Bot };
 
-function ResourceList({ project, kind, onChanged }: { project: ProjectDetail; kind: ResourceKind; onChanged: () => void }) {
+/** Header "New ▾": a workflow, credential, data table or agent made in this project. */
+function NewInProject({ project, onChanged }: { project: ProjectDetail; onChanged: () => void }) {
   const router = useRouter();
-  const { types } = useCredentials();
-  const [items, setItems] = useState<Item[]>();
-  const [dialog, setDialog] = useState<{ kind: 'share' | 'move'; item: Item } | { kind: 'credential'; id?: string } | { kind: 'table' }>();
-  const [creating, setCreating] = useState(false);
-  const canCreate = projectRoleCan.create(project.role);
-  // A protected environment: no new workflows here (the API refuses them).
+  const [dialog, setDialog] = useState<'credential' | 'table'>();
+  const [busy, setBusy] = useState(false);
   const readOnly = useWorkflowsReadOnly();
-
-  const load = useCallback(
-    () =>
-      api<Record<string, Item[]>>(`${RESOURCE_PATH[kind]}?projectId=${encodeURIComponent(project.id)}`)
-        .then((r) => setItems(r[LIST_KEY[kind]] ?? []))
-        .catch((e: Error) => toast.error(e.message)),
-    [kind, project.id],
-  );
-  useEffect(() => {
-    void load();
-  }, [load]);
-  const changed = () => {
-    void load();
-    onChanged();
-    void useProjectStore.getState().refresh();
+  const [tableNames, setTableNames] = useState<string[]>([]);
+  const openTable = () => {
+    api<{ tables: { name: string }[] }>(`/api/data-tables?projectId=${encodeURIComponent(project.id)}`)
+      .then((r) => setTableNames((r.tables ?? []).map((t) => t.name)))
+      .catch(() => undefined)
+      .finally(() => setDialog('table'));
   };
-
-  const create = async () => {
-    if (kind === 'credential') return setDialog({ kind: 'credential' });
-    if (kind === 'dataTable') return setDialog({ kind: 'table' });
-    setCreating(true);
+  const make = async (kind: 'workflow' | 'agent') => {
+    setBusy(true);
     try {
       const query = `?projectId=${encodeURIComponent(project.id)}`;
       if (kind === 'workflow') {
@@ -190,132 +171,135 @@ function ResourceList({ project, kind, onChanged }: { project: ProjectDetail; ki
       }
     } catch (e) {
       toast.error((e as Error).message);
-      setCreating(false);
+      setBusy(false);
     }
   };
-  const sorted = useMemo(() => [...(items ?? [])].sort((a, b) => Number(Boolean(a.ownership?.shared)) - Number(Boolean(b.ownership?.shared)) || a.name.localeCompare(b.name)), [items]);
-  const Icon = ICON[kind];
-  const noun = { workflow: 'workflow', credential: 'credential', dataTable: 'data table', agent: 'agent', agentTeam: 'agent team' }[kind];
-
   return (
     <>
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-[12px] text-t3">{items ? `${items.length} ${items.length === 1 ? noun : `${noun}s`}` : 'Loading…'}</span>
-        {kind === 'workflow' && (
-          <>
-            <Link href={`/workflows?project=${encodeURIComponent(project.id)}`} className="inline-flex items-center gap-1 text-[12px] text-ac hover:underline">
-              <FolderOpen className="size-3.5" /> Folders
-            </Link>
-            <Link href={`/templates?project=${encodeURIComponent(project.id)}`} className="inline-flex items-center gap-1 text-[12px] text-ac hover:underline">
-              <LayoutTemplate className="size-3.5" /> Templates
-            </Link>
-          </>
-        )}
-        {canCreate && (
-          <span className="ml-auto">
-            <ProtectedGate reason={kind === 'workflow' ? readOnly : undefined}>
-              <Button variant="primary" size="sm" onClick={() => void create()} loading={creating} disabled={kind === 'workflow' && Boolean(readOnly)}>
-                <Plus className="size-3.5" /> New {noun}
-              </Button>
-            </ProtectedGate>
-          </span>
-        )}
-      </div>
-      {items && items.length === 0 ? (
-        <Card>
-          <EmptyState compact title={EMPTY[kind]} />
-        </Card>
-      ) : (
-        <div className="overflow-hidden rounded-2xl border border-hair bg-sf">
-          {sorted.map((item) => {
-            const access = item.ownership?.access;
-            const sharedIn = item.ownership && item.ownership.projectId !== project.id;
-            const info = kind === 'credential' ? types?.find((t) => t.type === item.type) : undefined;
-            const href = HREF[kind]?.(item.id);
-            const body = (
-              <>
-                {kind === 'credential' ? <CredentialTypeIcon info={info} size={28} /> : <Icon className="size-4 shrink-0 text-t3" strokeWidth={1.7} />}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-semibold text-t1">{item.name}</span>
-                  <span className="block truncate text-[12px] text-t3">
-                    {sharedIn ? `Shared from ${item.ownership!.projectName}` : kind === 'credential' ? (info?.descriptor.displayName ?? item.type) : 'Owned by this project'}
-                  </span>
-                </span>
-                {sharedIn && <Badge tone="muted">{access?.role === 'user' ? 'can use' : access?.role === 'viewer' ? 'can view' : 'can edit'}</Badge>}
-                {item.active && <Badge tone="success">Published</Badge>}
-                {item.updatedAt && <span className="w-24 shrink-0 text-right text-[12px] text-t3">{timeAgo(item.updatedAt)}</span>}
-              </>
-            );
-            const rowClass = 'flex min-w-0 flex-1 items-center gap-3 px-4 py-2.5 text-left';
-            return (
-              <div key={item.id} className="group flex items-center border-b border-hair transition-colors last:border-b-0 hover:bg-acdim">
-                {href ? (
-                  <Link href={href} className={rowClass}>
-                    {body}
-                  </Link>
-                ) : (
-                  <button className={rowClass} onClick={() => (resourceCan(access, 'update') ? setDialog({ kind: 'credential', id: item.id }) : toast.info('Shared for use in workflows: its settings stay hidden'))}>
-                    {body}
-                  </button>
-                )}
-                <ItemMenu kind={kind} item={item} onShare={() => setDialog({ kind: 'share', item })} onMove={() => setDialog({ kind: 'move', item })} />
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {dialog?.kind === 'share' && (kind === 'workflow' || kind === 'credential') && <ShareDialog kind={kind} id={dialog.item.id} name={dialog.item.name} onClose={() => setDialog(undefined)} onChanged={changed} />}
-      {dialog?.kind === 'move' && <MoveToProjectDialog kind={kind} id={dialog.item.id} name={dialog.item.name} currentProjectId={dialog.item.ownership?.projectId} onClose={() => setDialog(undefined)} onMoved={changed} />}
-      {dialog?.kind === 'credential' && <CredentialDialog credentialId={dialog.id} projectId={project.id} onClose={() => setDialog(undefined)} onSaved={changed} />}
-      {dialog?.kind === 'table' && <CreateTableDialog projectId={project.id} existingNames={(items ?? []).map((t) => t.name)} onClose={() => setDialog(undefined)} />}
-    </>
-  );
-}
-
-function ItemMenu({ kind, item, onShare, onMove }: { kind: ResourceKind; item: Item; onShare: () => void; onMove: () => void }) {
-  const access = item.ownership?.access;
-  const shareable = kind === 'workflow' || kind === 'credential';
-  const canMove = resourceCan(access, 'move');
-  if (!shareable && !canMove) return <div className="w-10" />;
-  return (
-    <div className="pl-2 pr-2.5">
       <Popover
-        trigger={({ open, toggle }) => (
-          <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label={`${item.name} menu`} className={cn('text-t3 opacity-0 focus-visible:opacity-100 group-hover:opacity-100', open && 'opacity-100')}>
-            <MoreHorizontal className="size-4" />
+        trigger={({ toggle }) => (
+          <Button variant="primary" size="sm" onClick={toggle} loading={busy}>
+            {!busy && <Plus className="size-3.5" />} New
           </Button>
         )}
       >
         {(close) => (
           <>
-            {shareable && (
-              <MenuItem
-                onClick={() => {
-                  close();
-                  onShare();
-                }}
-              >
-                <Share2 /> {resourceCan(access, 'share') ? 'Share…' : 'Who has access…'}
-              </MenuItem>
-            )}
-            {canMove && (
-              <MenuItem
-                onClick={() => {
-                  close();
-                  onMove();
-                }}
-              >
-                <ArrowRightLeft /> Move to project…
-              </MenuItem>
-            )}
+            <MenuItem disabled={!!readOnly} hint={readOnly} onClick={() => { close(); void make('workflow'); }}><WorkflowIcon /> Workflow</MenuItem>
+            <MenuItem onClick={() => { close(); setDialog('credential'); }}><KeyRound /> Credential</MenuItem>
+            <MenuItem onClick={() => { close(); openTable(); }}><Table2 /> Data table</MenuItem>
+            <MenuItem onClick={() => { close(); void make('agent'); }}><Bot /> Agent</MenuItem>
           </>
         )}
       </Popover>
+      {dialog === 'credential' && <CredentialDialog projectId={project.id} onClose={() => setDialog(undefined)} onSaved={onChanged} />}
+      {dialog === 'table' && <CreateTableDialog projectId={project.id} existingNames={tableNames} onClose={() => { setDialog(undefined); onChanged(); }} />}
+    </>
+  );
+}
+
+type OwnedItem = { id: string; name: string; ownership?: ResourceOwnership };
+const OWNED: Array<{ kind: 'dataTable' | 'agent'; title: string; href: (id: string) => string }> = [
+  { kind: 'dataTable', title: 'Data tables', href: (id) => `/data-tables/${id}` },
+  { kind: 'agent', title: 'Agents', href: (id) => `/agents/${id}` },
+];
+
+/** What the project owns, by kind: each count opens the global page for it; data tables and agents also list here with Move to project. */
+function Overview({ project, onChanged }: { project: ProjectDetail; onChanged: () => void }) {
+  return (
+    <div className="space-y-4">
+      <ProjectBriefCard projectId={project.id} brief={(project as ProjectDetail & { brief?: ProjectBriefView }).brief} onChanged={onChanged} />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {OVERVIEW_KINDS.map(({ kind, label, href }) => {
+          const Icon = ICON[kind];
+          const count = project.counts?.[kind] ?? 0;
+          return (
+            <Link key={kind} href={href(project.id)} className="group flex items-center gap-3.5 rounded-2xl border border-hair bg-sf px-4 py-4 transition-colors hover:border-ac">
+              <span className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-hair bg-wl text-t2">
+                <Icon className="size-4" strokeWidth={1.7} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[22px] font-semibold leading-none tabular-nums text-t1">{count}</span>
+                <span className="mt-1 block text-[12px] text-t3">{label}</span>
+              </span>
+              <ArrowRight className="size-4 shrink-0 text-t3 transition-colors group-hover:text-ac" />
+            </Link>
+          );
+        })}
+      </div>
+      {OWNED.map((o) => (
+        <OwnedList key={o.kind} project={project} {...o} onChanged={onChanged} />
+      ))}
     </div>
   );
 }
 
-function ProjectSettings({ project, onChanged }: { project: ProjectDetail; onChanged: (next?: ProjectDetail) => void }) {
+/** The data tables or agents the project owns, each with its Move to project menu (their global lists have none). */
+function OwnedList({ project, kind, title, href, onChanged }: { project: ProjectDetail; kind: ResourceKind; title: string; href: (id: string) => string; onChanged: () => void }) {
+  const [items, setItems] = useState<OwnedItem[]>();
+  const [moving, setMoving] = useState<OwnedItem>();
+  const k = kind === 'dataTable' ? 'tables' : 'agents';
+  const load = useCallback(
+    () =>
+      api<Record<string, OwnedItem[]>>(`${RESOURCE_PATH[kind]}?projectId=${encodeURIComponent(project.id)}`)
+        .then((r) => setItems(r[k] ?? []))
+        .catch((e: Error) => toast.error(e.message)),
+    [kind, k, project.id],
+  );
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const sorted = useMemo(() => [...(items ?? [])].sort((a, b) => a.name.localeCompare(b.name)), [items]);
+  if (!sorted.length) return null;
+  return (
+    <div>
+      <div className="mb-2 text-[12px] font-semibold text-t2">{title}</div>
+      <div className="overflow-hidden rounded-2xl border border-hair bg-sf">
+        {sorted.map((item) => (
+          <div key={item.id} className="group flex items-center border-b border-hair last:border-b-0 hover:bg-acdim">
+            <Link href={href(item.id)} className="min-w-0 flex-1 truncate px-4 py-2.5 text-[13px] font-semibold text-t1">
+              {item.name}
+            </Link>
+            {resourceCan(item.ownership?.access, 'move') && (
+              <div className="pr-2.5">
+                <Popover
+                  trigger={({ toggle }) => (
+                    <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label={`${item.name} menu`} className="text-t3">
+                      <MoreHorizontal className="size-4" />
+                    </Button>
+                  )}
+                >
+                  {(close) => (
+                    <MenuItem onClick={() => { close(); setMoving(item); }}>
+                      <ArrowRightLeft /> Move to project…
+                    </MenuItem>
+                  )}
+                </Popover>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {moving && (
+        <MoveToProjectDialog
+          kind={kind}
+          id={moving.id}
+          name={moving.name}
+          currentProjectId={moving.ownership?.projectId}
+          onClose={() => setMoving(undefined)}
+          onMoved={() => {
+            void load();
+            onChanged();
+            void useProjectStore.getState().refresh();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** The members tab (`section="members"`: who is in the project) or the settings tab (name, governance, MCP, delete). */
+function ProjectSettings({ project, section, onChanged }: { project: ProjectDetail; section: 'members' | 'settings' | 'danger'; onChanged: (next?: ProjectDetail) => void }) {
   const router = useRouter();
   const viewer = useViewer();
   const manage = projectRoleCan.manage(project.role);
@@ -364,22 +348,44 @@ function ProjectSettings({ project, onChanged }: { project: ProjectDetail; onCha
     }
   };
 
-  if (!team) {
-    return (
-      <div className="space-y-4">
-        <Card>
-          <p className="text-[13px] text-t1">A personal project belongs to {project.ownerId === viewer?.id ? 'you' : project.name} and has no other members.</p>
-          <p className="mt-1 text-[12px] text-t3">To work with others, share workflows and credentials with them, or move them to a team project.</p>
+  if (section === 'danger') {
+    return manage && team ? (
+      <>
+        <Card className="flex items-center gap-3 border-rdbd">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] font-semibold text-t1">Delete this project</span>
+            <span className="block text-[12px] text-t3">{Object.values(deletionNotice(project)).join(' ')}</span>
+          </span>
+          <Button variant="danger" size="sm" onClick={() => setDeleting(true)}>
+            Delete project
+          </Button>
         </Card>
+        {deleting && <DeleteProjectDialog project={project} onClose={() => setDeleting(false)} onDeleted={() => router.push('/projects')} />}
+      </>
+    ) : null;
+  }
+
+  if (!team) {
+    return section === 'members' ? (
+      <Card>
+        <p className="text-[13px] text-t1">A personal project belongs to {project.ownerId === viewer?.id ? 'you' : project.name} and has no other members.</p>
+        <p className="mt-1 text-[12px] text-t3">To work with others, share workflows and credentials with them, or move them to a team project.</p>
+      </Card>
+    ) : (
+      <div className="space-y-4">
         <GovernanceCard project={project} />
+        {/* NB07: */}
+        <BrainCard projectId={project.id} canEdit={projectRoleCan.create(project.role)} />
         <McpCard project={project} />
+        {/* C19: */}
+        <EventSubscriptionsCard projectId={project.id} />
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      {manage && (
+      {section === 'settings' && manage && (
         <Card className="space-y-3">
           <div>
             <FieldLabel>Name</FieldLabel>
@@ -397,6 +403,7 @@ function ProjectSettings({ project, onChanged }: { project: ProjectDetail; onCha
         </Card>
       )}
 
+      {section === 'members' && (
       <Card>
         <div className="mb-3 flex items-center gap-2">
           <span className="text-[13px] font-semibold text-t1">Members</span>
@@ -483,23 +490,20 @@ function ProjectSettings({ project, onChanged }: { project: ProjectDetail; onCha
           </div>
         )}
       </Card>
-
-      <GovernanceCard project={project} />
-
-      <McpCard project={project} />
-
-      {manage && (
-        <Card className="flex items-center gap-3 border-rdbd">
-          <span className="min-w-0 flex-1">
-            <span className="block text-[13px] font-semibold text-t1">Delete this project</span>
-            <span className="block text-[12px] text-t3">{describeCounts(project.counts) ? `What it owns (${describeCounts(project.counts)}) moves to a project you choose.` : 'It owns nothing.'}</span>
-          </span>
-          <Button variant="danger" size="sm" onClick={() => setDeleting(true)}>
-            Delete project
-          </Button>
-        </Card>
       )}
-      {deleting && <DeleteProjectDialog project={project} onClose={() => setDeleting(false)} onDeleted={() => router.push('/projects')} />}
+
+      {section === 'settings' && <GovernanceCard project={project} />}
+
+      {/* NB07: */}
+      {section === 'settings' && <BrainCard projectId={project.id} canEdit={projectRoleCan.create(project.role)} />}
+
+      {section === 'settings' && <McpCard project={project} />}
+
+      {/* C19: */}
+      {section === 'settings' && <EventSubscriptionsCard projectId={project.id} />}
+
+      {/* C21: */}
+      {section === 'settings' && <CollectionsCard projectId={project.id} />}
     </div>
   );
 }

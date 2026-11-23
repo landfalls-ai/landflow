@@ -3,6 +3,7 @@
  * four-eyes publishing (a publish, rollback or unpublish needs a second person's approval). Shapes shared by the API
  * (/api/settings/governance, /api/publish-requests), Settings → Governance and the editor. No runtime imports.
  */
+import type { NodeMatcher } from '@landflow/protocol';
 import type { PublicationStatus } from './publish';
 
 /** `off`: no rule. `allow`: only what the list names. `block`: everything except what the list names. */
@@ -44,11 +45,38 @@ export interface FourEyesPolicy {
   channelIds: string[];
 }
 
+/**
+ * A rule about where nodes may live: nodes matching `match` must sit inside a composite frame matching `composite`
+ * (`require-inside`), or must not (`forbid-inside`). `error` blocks publishing; `warn` is shown on save only.
+ */
+export interface GovernanceCompositeRule {
+  id: string;
+  name: string;
+  kind: 'require-inside' | 'forbid-inside';
+  match: NodeMatcher;
+  composite: NodeMatcher;
+  /** A frame nested in a matching frame counts (default true). */
+  nested?: boolean;
+  severity: 'error' | 'warn';
+  message?: string;
+}
+
+/** The ready-made rule: a node with a chat-model input sits inside an AI step. */
+export const AI_STEP_RULE: GovernanceCompositeRule = {
+  id: 'ai-calls-in-ai-step',
+  name: 'AI calls only inside an AI step',
+  kind: 'require-inside',
+  match: { input: 'ai_languageModel' },
+  composite: { composite: 'core.aiStep' },
+  severity: 'error',
+};
+
 export interface GovernancePolicy {
   nodes: NodePolicy;
   http: HttpHostPolicy;
   mcp: McpPolicy;
   fourEyes: FourEyesPolicy;
+  compositeRules: GovernanceCompositeRule[];
   updatedAt?: string;
   updatedBy?: string;
 }
@@ -58,6 +86,7 @@ export const DEFAULT_GOVERNANCE_POLICY: GovernancePolicy = {
   http: { mode: 'off', hosts: [] },
   mcp: { mode: 'off', urls: [] },
   fourEyes: { enabled: false, approverRole: 'member', unpublish: true, notifyEmail: true, channelIds: [] },
+  compositeRules: [],
 };
 
 /** A node the policy doesn't allow. */
@@ -65,7 +94,10 @@ export interface PolicyViolation {
   nodeId: string;
   nodeName: string;
   nodeType: string;
-  rule: 'node' | 'plugin' | 'code' | 'http' | 'mcp';
+  rule: 'node' | 'plugin' | 'code' | 'http' | 'mcp' | 'composite';
+  /** Composite rules only: `warn` is shown on save but does not block publishing. */
+  severity?: 'error' | 'warn';
+  ruleId?: string;
   message: string;
 }
 

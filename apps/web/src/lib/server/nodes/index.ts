@@ -7,11 +7,26 @@ import { definePlugin } from '@landflow/sdk';
 import { a2aAgentNode } from './a2a';
 import { runTeamNode } from './run-team';
 import { messageAgentNode, workflowTrigger } from './agents';
-import { landflowUsageNode, suggestImprovementNode, usageTriggerNode } from './usage';
+import { brainEntityNode } from './entities';
+import { memoryAddNode, memoryForgetNode, memoryProfileNode, memorySearchNode } from './memory'; // C07:
+import { memoryExtractNode } from './memory-extract'; // C28:
+import { briefingNodes } from './briefing';
+// LL05:
+import { applyCapRaiseNode, capRaiseTriggerNode } from './cap-raise';
+// C35:
+import { accessDecisionNode, accessRequestTriggerNode, fileAccessRequestNode } from './access';
+// B32:
+import { proposeFlowsNode, velocitySignalsNode } from './velocity';
+import { detectorTriggerNode, findSimilarNode, landflowUsageNode, recordEventNode, suggestImprovementNode, suggestionDecidedTriggerNode, usageTriggerNode } from './usage';
+import { practiceDraftNode } from './practices'; // PR03:
+import { practiceCheckNode } from './practice-check'; // PR08:
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
+import { aiJudgeNode } from './judge'; // C13:
+import { decideNode } from './decide'; // C34:
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
 import { aiStep } from './composites';
-import { anthropicApiCredential, cohereApiCredential, httpBasicAuthCredential, httpBearerAuthCredential, httpHeaderAuthCredential, jwtAuthCredential, openAiApiCredential, strandsDeciderApiCredential, typesafeApiCredential } from './credentials';
+import { anthropicApiCredential, cohereApiCredential, httpBasicAuthCredential, httpBearerAuthCredential, httpHeaderAuthCredential, jwtAuthCredential, openAiApiCredential, s3ApiCredential, strandsDeciderApiCredential, typesafeApiCredential } from './credentials';
+import { oidcClientCredential } from './oidc-client-credential';
 import { oAuth2ApiCredential } from './oauth2-credential';
 import { mcpOAuth2ApiCredential } from './mcp-oauth-credential';
 import { sshPrivateKeyCredential } from './ssh-credential';
@@ -23,6 +38,7 @@ import { kagentCredential } from './kagent-credential';
 import { microsoftBotCredential } from './microsoft-bot-credential';
 import { evaluationNode, evaluationTrigger } from './evaluation';
 import { convertToFileNode, extractFromFileNode, readWriteFileNode } from './files';
+import { confirmDraftNode } from './confirm';
 import { filterNode, ifNode, limitNode, mergeNode, noOpNode, respondToWebhookNode, sortNode, splitInBatchesNode, stopAndErrorNode, switchNode, waitNode } from './flow';
 import { formNode, formTrigger } from './forms';
 import { guardrailsNode } from './guardrails';
@@ -45,6 +61,7 @@ import { chatTrigger, errorTrigger, manualTrigger, scheduleTrigger, webhookTrigg
 import { executeWorkflowNode } from './workflows';
 import { findRunbookNode } from './runbooks';
 import { runReportNode } from './run-report';
+import { githubWorkEventNode } from './github-work'; // B31:
 
 export const corePlugin = definePlugin({
   info: {
@@ -82,6 +99,7 @@ export const corePlugin = definePlugin({
     renameKeysNode,
     dateTimeNode,
     waitNode,
+    confirmDraftNode,
     splitInBatchesNode,
     executeWorkflowNode,
     findRunbookNode,
@@ -99,10 +117,33 @@ export const corePlugin = definePlugin({
     runTeamNode,
     a2aAgentNode,
     landflowUsageNode,
+    recordEventNode,
+    brainEntityNode,
+    memorySearchNode,
+    memoryAddNode,
+    memoryExtractNode, // C28:
+    memoryForgetNode,
+    memoryProfileNode,
+    githubWorkEventNode, // B31:
+    practiceDraftNode, // PR03:
+    practiceCheckNode, // PR08:
+    findSimilarNode,
     usageTriggerNode,
+    suggestionDecidedTriggerNode,
+    detectorTriggerNode,
     suggestImprovementNode,
+    // LL05:
+    capRaiseTriggerNode,
+    accessRequestTriggerNode,
+    accessDecisionNode,
+    fileAccessRequestNode,
+    applyCapRaiseNode,
+    // B30:
+    ...briefingNodes,
     chainLlmNode,
     textClassifierNode,
+    aiJudgeNode, // C13:
+    decideNode, // C34:
     informationExtractorNode,
     openAiNode,
     anthropicChatModelNode,
@@ -127,7 +168,10 @@ export const corePlugin = definePlugin({
     runReportNode,
     evaluationTrigger,
     evaluationNode,
+    // B32:
+    velocitySignalsNode,
+    proposeFlowsNode,
   ],
   composites: [aiStep],
-  credentialTypes: [openAiApiCredential, anthropicApiCredential, typesafeApiCredential, strandsDeciderApiCredential, cohereApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, mcpOAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential, microsoftBotCredential, sshPrivateKeyCredential, kagentCredential],
+  credentialTypes: [openAiApiCredential, anthropicApiCredential, typesafeApiCredential, strandsDeciderApiCredential, cohereApiCredential, httpBearerAuthCredential, httpHeaderAuthCredential, postgresCredential, oAuth2ApiCredential, mcpOAuth2ApiCredential, httpBasicAuthCredential, jwtAuthCredential, imapCredential, microsoftBotCredential, sshPrivateKeyCredential, kagentCredential, s3ApiCredential, oidcClientCredential],
 });

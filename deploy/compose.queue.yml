@@ -24,6 +24,8 @@
 name: landflow-queue
 
 x-host-env: &host-env
+  # These stacks run the development secrets from deploy/.env.example; a real deployment sets production (docs/deployment.md).
+  LANDFLOW_PROFILE: development
   LANDFLOW_EXECUTIONS_MODE: queue
   LANDFLOW_DB: postgres
   DATABASE_URL: postgres://landflow:landflow-dev-only@postgres:5432/${LANDFLOW_QUEUE_DATABASE:-landflow_queue}
@@ -39,6 +41,8 @@ x-host-env: &host-env
   LANDFLOW_DATA_DIR: /data
   # Every main and worker decrypts the same credentials and signs file links the same way.
   LANDFLOW_ENCRYPTION_KEY: ${LANDFLOW_QUEUE_ENCRYPTION_KEY:-landflow-queue-dev-only-encryption-key}
+  # The key ring for rotation (kid:key, the new key first), the same on every process. Empty: the key above only.
+  LANDFLOW_ENCRYPTION_KEYS: ${LANDFLOW_QUEUE_ENCRYPTION_KEYS:-}
   LANDFLOW_BINARY_SECRET: ${LANDFLOW_QUEUE_BINARY_SECRET:-landflow-queue-dev-only-binary-secret}
   # Item files in the infra stack's MinIO (explicit endpoint and keys: never the AWS default credential chain).
   LANDFLOW_BINARY_STORE: s3
@@ -102,6 +106,8 @@ x-worker-health: &worker-health
 services:
   main-1:
     <<: *host
+    # Longer than LANDFLOW_SHUTDOWN_SECONDS (25): Docker's default 10 s would kill the main before it flushes.
+    stop_grace_period: 30s
     build:
       context: ..
       dockerfile: deploy/docker/host.Dockerfile
@@ -117,6 +123,8 @@ services:
 
   main-2:
     <<: *host
+    # Longer than LANDFLOW_SHUTDOWN_SECONDS (25): Docker's default 10 s would kill the main before it flushes.
+    stop_grace_period: 30s
     ports:
       - "127.0.0.1:${LANDFLOW_QUEUE_MAIN2_PORT:-53082}:3000"
     environment:
@@ -170,7 +178,8 @@ services:
       LANDFLOW_WORKER_CONCURRENCY: ${LANDFLOW_WORKER_CONCURRENCY:-10}
       OTEL_SERVICE_NAME: landflow-worker
     healthcheck: *worker-health
-    stop_grace_period: 40s
+    # Past the worker's own deadline (LANDFLOW_WORKER_SHUTDOWN_SECONDS + 10 s = 40 s), so SIGKILL never lands mid-close.
+    stop_grace_period: 45s
     depends_on:
       main-1:
         condition: service_healthy
@@ -186,7 +195,8 @@ services:
       LANDFLOW_WORKER_CONCURRENCY: ${LANDFLOW_WORKER_CONCURRENCY:-10}
       OTEL_SERVICE_NAME: landflow-worker
     healthcheck: *worker-health
-    stop_grace_period: 40s
+    # Past the worker's own deadline (LANDFLOW_WORKER_SHUTDOWN_SECONDS + 10 s = 40 s), so SIGKILL never lands mid-close.
+    stop_grace_period: 45s
     depends_on:
       main-1:
         condition: service_healthy

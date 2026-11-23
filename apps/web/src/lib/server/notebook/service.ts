@@ -13,9 +13,14 @@ import type { TraceContent } from '../../shared/run-trace';
 import { NOTE_KINDS, type NoteKind, type NoteHit, type NoteScope, type NoteSource, type TeamNote } from '../../shared/notebook';
 import { agentTeamStore } from '../agent-teams/store';
 import { fingerprintOf, upsertProposal } from '../brain/proposals';
+import type { BrainChangeOrigin } from '../../shared/brain-store'; // NB01
 import { homeProjectId } from '../projects/store';
+import { supersedeNote } from './lifecycle';
 import { NoteError } from './approve';
 import { embedModel, embedTexts } from './embed';
+import { createHash } from 'node:crypto';
+import { SAW_MEMORY_MAX_ITEMS, type SawMemorySource } from '../../shared/what-it-saw';
+import { wrapMemory } from '../../shared/memory-fence';
 import { searchNotes } from './search';
 import { expiryOf, noteStore } from './store';
 
@@ -238,7 +243,7 @@ function mustHave(teamId: string, id: string): TeamNote {
 }
 
 /** A person adds a note to the team's notebook (it stands as verified: they said it). */
-export async function personAdd(teamId: string, by: string, input: { kind?: unknown; text: unknown }): Promise<TeamNote> {
+export async function personAdd(teamId: string, by: string, input: { kind?: unknown; text: unknown; url?: string }, origin?: BrainChangeOrigin): Promise<TeamNote> {
   const text = clean(input.text);
   if (!text) throw new NoteError('Write the note first');
   if (text.length > MAX_TEXT) throw new NoteError(`Keep a note under ${MAX_TEXT} characters`);
@@ -249,10 +254,9 @@ export async function personAdd(teamId: string, by: string, input: { kind?: unkn
     kind,
     text,
     scope: 'team',
-    status: kind === 'open_question' ? 'open' : 'verified',
+    // NB01: a note pulled from Notion is unverified and tainted until a person verifies it.
+    ...(origin === 'notion' ? { status: 'unverified' as const, tainted: true, source: { tool: 'notion', ...(input.url && { url: input.url }) } } : { status: kind === 'open_question' ? ('open' as const) : ('verified' as const), verifiedBy: by, source: {} }),
     author: by,
-    verifiedBy: by,
-    source: {},
   });
   await embedNote(note);
   return noteStore.get(note.id)!;
@@ -315,16 +319,8 @@ export function resolveDispute(teamId: string, id: string, keep: string, by: str
   if (!second) throw new NoteError('Nothing disputes this note', 409);
   if (keep !== first.id && keep !== second.id) throw new NoteError('Keep one of the two notes in the dispute', 400);
   const dropped = keep === first.id ? second : first;
-  const now = new Date().toISOString();
-  noteStore.patch(dropped.id, { status: 'expired', superseded_by: keep, expires_at: now });
-  const kept = noteStore.patch(keep, {
-    status: 'verified',
-    verified_at: now,
-    verified_by: by,
-    dispute_of: null,
-    ...((first.id === keep ? first : second).scope === 'team' && { expires_at: null }),
-  })!;
-  return { kept, dropped: noteStore.get(dropped.id)! };
+  // C02: both writes in one transaction, so a failure leaves neither note changed (notebook/lifecycle.ts).
+  return supersedeNote(keep === first.id ? first : second, dropped, by);
 }
 
 export function remove(teamId: string, id: string): void {
@@ -347,21 +343,40 @@ export function lineOf(note: TeamNote & { score?: number }): string {
   return `- [${note.id}] ${note.kind.replace('_', ' ')} (${standing}, ${scope}, by ${note.author}${note.tainted && !note.verifiedAt ? ', from outside: unchecked' : ''}): ${note.text}${note.answer ? ` -> Answer: ${note.answer}` : ''}${note.disputes ? ` (disputes ${note.disputes})` : ''}`;
 }
 
+/** The mark on a note's line when it came from outside the team and no person has checked it. */
+const outsideMark = (n: TeamNote) => (n.tainted && !n.verifiedAt ? ' (from outside: unchecked)' : '');
+
 /**
  * A short block for the start of a request: the team's open questions and decisions, so members don't re-ask or undo them.
  * Empty when the notebook has neither. Reading them counts as using them.
  */
 export function notebookBlock(binding: NotebookBinding): string {
+  return notebookBlockFor(binding).text;
+}
+
+/**
+ * `notebookBlock` with what What it saw records of it (C11): the shown notes' ids and kinds, the number shown and a hash
+ * of the text (SHA-256, 16 hex). `saw` is absent when nothing was shown. The text is byte for byte `notebookBlock`'s.
+ */
+export function notebookBlockFor(binding: NotebookBinding): { text: string; saw?: SawMemorySource } {
   const visibleNotes = noteStore.list({ teamId: binding.team.id, ...(binding.projectId && { projectId: binding.projectId }), runId: binding.runId, limit: 200 });
   const open = visibleNotes.filter((n) => n.kind === 'open_question' && n.status === 'open').slice(0, 5);
   const decisions = visibleNotes.filter((n) => n.kind === 'decision' && n.status !== 'disputed').slice(0, 5);
   const disputed = visibleNotes.filter((n) => n.status === 'disputed' && n.kind !== 'open_question').slice(0, 3);
-  if (!open.length && !decisions.length && !disputed.length) return '';
+  if (!open.length && !decisions.length && !disputed.length) return { text: '' };
   noteStore.touch([...open, ...decisions]);
-  return [
+  // C03: the intro line stays outside; the groups sit in one fence, each line escaped whole.
+  const text = [
     'Team notebook (shared notes: search it with note_search before you start, add what you learn with note_add):',
-    ...(decisions.length ? ['Decisions so far:', ...decisions.map((n) => `- ${n.text}`)] : []),
-    ...(open.length ? ['Open questions:', ...open.map((n) => `- ${n.text}`)] : []),
-    ...(disputed.length ? ['Disputed (do not rely on these):', ...disputed.map((n) => `- ${n.text}`)] : []),
+    wrapMemory('team-notebook', [
+      ...(decisions.length ? ['Decisions so far:', ...decisions.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
+      ...(open.length ? ['Open questions:', ...open.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
+      ...(disputed.length ? ['Disputed (do not rely on these):', ...disputed.map((n) => `- ${n.text}${outsideMark(n)}`)] : []),
+    ]),
   ].join('\n');
+  const shown = [...decisions, ...open, ...disputed];
+  return {
+    text,
+    saw: { source: 'team-notebook', count: shown.length, items: shown.slice(0, SAW_MEMORY_MAX_ITEMS).map((n) => ({ id: n.id, kind: n.kind })), hash: createHash('sha256').update(text).digest('hex').slice(0, 16) },
+  };
 }

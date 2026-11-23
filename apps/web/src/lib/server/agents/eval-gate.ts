@@ -6,12 +6,14 @@
  */
 import { nanoid } from 'nanoid';
 import {
-  gateVerdict,
+  compareRuns,
+  lowCasesOf,
   MAX_EVAL_CASES,
   meanScore,
   type AgentEvalCase,
   type AgentEvalResult,
   type AgentEvalRun,
+  type GateLowCase,
   type GateVerdict,
 } from '../../shared/agent-eval';
 import { database } from '../db';
@@ -22,17 +24,22 @@ import { getOnlineConfig } from '../evaluations/store';
 import { agentModel } from './models';
 import { runAgent, newSession } from './runtime';
 import { agentStore } from './store';
+import { assistantScope, runInUsageScope } from '../ai-usage'; // AG15:
+import { withCallNote } from '../ai-usage/call-context'; // AG15:
+import { currentActorId } from '../auth/context'; // AG15:
+import { HttpError } from '../errors';
 
 const db = () => database();
 const MAX_RUNS_PER_AGENT = 30;
 const clip = (text: string, limit = 4_000) => (text.length > limit ? `${text.slice(0, limit)}…` : text);
 
-export class EvalGateError extends Error {
+export class EvalGateError extends HttpError {
+  static readonly errorName: string = 'EvalGateError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 
@@ -42,14 +49,35 @@ export function listCases(agentId: string): AgentEvalCase[] {
     .flatMap((row) => parse<AgentEvalCase>(row.data) ?? []);
 }
 
+/** ag3 carryover: cases added in the same millisecond (a design saves several at once) keep the order they were added in (listCases sorts by created_at, then a random id). */
+let lastCaseAt = 0;
+
 export function addCase(agentId: string, input: { input: string; expected?: string }): AgentEvalCase {
   const text = input.input.trim();
   if (!text) throw new EvalGateError('A test case needs a question');
   if (listCases(agentId).length >= MAX_EVAL_CASES) throw new EvalGateError(`An agent keeps at most ${MAX_EVAL_CASES} test cases`);
   const expected = input.expected?.trim();
-  const testCase: AgentEvalCase = { id: `ec_${nanoid(10)}`, input: clip(text), ...(expected && { expected: clip(expected) }), createdAt: new Date().toISOString() };
+  const testCase: AgentEvalCase = { id: `ec_${nanoid(10)}`, input: clip(text), ...(expected && { expected: clip(expected) }), createdAt: new Date((lastCaseAt = Math.max(Date.now(), lastCaseAt + 1))).toISOString() };
   db().upsert('agent_eval_cases', { id: testCase.id, agent_id: agentId, created_at: testCase.createdAt, data: JSON.stringify(testCase) });
   return testCase;
+}
+
+/**
+ * Replace some of an agent's cases with new ones in one transaction: every id to remove must be the agent's, and the result must
+ * fit the cap; on any failure nothing changes. Returns the agent's cases after.
+ */
+export function replaceCases(agentId: string, removeIds: string[], add: Array<{ input: string; expected?: string }>): AgentEvalCase[] {
+  // A replace that adds nothing would leave the agent with fewer cases, perhaps none (the publish gate skips an agent with no cases).
+  if (removeIds.length && !add.length) throw new EvalGateError('A replace must add at least one case; delete a case on its own to remove it', 400);
+  return db().transaction(() => {
+    const have = new Set(listCases(agentId).map((c) => c.id));
+    const missing = removeIds.filter((id) => !have.has(id));
+    if (missing.length) throw new EvalGateError('A test case to replace is no longer there', 409);
+    if (have.size - new Set(removeIds).size + add.length > MAX_EVAL_CASES) throw new EvalGateError(`An agent keeps at most ${MAX_EVAL_CASES} test cases`);
+    for (const id of new Set(removeIds)) deleteCase(agentId, id);
+    for (const c of add) addCase(agentId, c);
+    return listCases(agentId);
+  });
 }
 
 export function deleteCase(agentId: string, id: string): boolean {
@@ -84,8 +112,21 @@ export function baselineOf(agentId: string, version: number): number | undefined
   return db().get<{ average: number }>('SELECT average FROM agent_eval_runs WHERE agent_id = ? AND version = ? ORDER BY created_at DESC LIMIT 1', agentId, String(version))?.average;
 }
 
+/** AG24: the run a publish adopted for a version (the newest run saved for it): what a draft is compared with, case by case. */
+export function adoptedRunOf(agentId: string, version: number): AgentEvalRun | undefined {
+  const row = db().get<{ data: string }>('SELECT data FROM agent_eval_runs WHERE agent_id = ? AND version = ? ORDER BY created_at DESC, id DESC LIMIT 1', agentId, String(version));
+  return row ? parse<AgentEvalRun>(row.data) : undefined;
+}
+
 /** Run every case on the draft or a published version, judge the replies and save the run. */
-export async function runEval(agentId: string, version: 'draft' | number = 'draft', options: { signal?: AbortSignal } = {}): Promise<AgentEvalRun> {
+export function runEval(agentId: string, version: 'draft' | number = 'draft', options: { signal?: AbortSignal } = {}): Promise<AgentEvalRun> {
+  // AG15: the gate's runs and the judge's calls are the agent's tests: surface `agent-test`.
+  const by = currentActorId();
+  const scope = assistantScope({ surface: 'agent-test', agentId, ...(by && { userId: by }) });
+  return runInUsageScope(scope, () => withCallNote({ purpose: 'eval' }, () => runEvalCases(agentId, version, options)));
+}
+
+async function runEvalCases(agentId: string, version: 'draft' | number, options: { signal?: AbortSignal }): Promise<AgentEvalRun> {
   const agent = agentStore.get(agentId);
   if (!agent) throw new EvalGateError('Agent not found', 404);
   const cases = listCases(agentId);
@@ -135,6 +176,8 @@ export async function runEval(agentId: string, version: 'draft' | number = 'draf
 export interface GateResult {
   verdict: GateVerdict;
   run?: AgentEvalRun;
+  /** AG24: a held verdict's lowest cases (at most three; no reply text). */
+  lowCases?: GateLowCase[];
   /** The agent has no test cases: nothing was checked. */
   skipped?: boolean;
 }
@@ -143,9 +186,11 @@ export interface GateResult {
 export async function checkPublish(agentId: string, options: { signal?: AbortSignal } = {}): Promise<GateResult> {
   if (!listCases(agentId).length) return { verdict: { ok: true, average: 0 }, skipped: true };
   const agent = agentStore.get(agentId);
-  const baseline = agent?.published ? baselineOf(agentId, agent.published.version) : undefined;
+  // AG24: the draft is compared with the published version on the cases both ran (the adopted run's case ids), else judged on the threshold.
+  const adopted = agent?.published ? adoptedRunOf(agentId, agent.published.version) : undefined;
   const run = await runEval(agentId, 'draft', options);
-  return { verdict: gateVerdict(run.average, baseline), run };
+  const verdict = compareRuns(run, adopted);
+  return { verdict, run, ...(!verdict.ok && { lowCases: lowCasesOf(run) }) };
 }
 
 /** After a publish: the run that let it through is the new version's baseline. */

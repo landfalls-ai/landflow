@@ -1,0 +1,337 @@
+# Landflow constitution
+
+The rules every research and every implementation in this repository starts from. Part of the
+[Landflow docs](README.md). [CLAUDE.md](../CLAUDE.md) imports this page, so Claude Code reads it at the start of every
+session; people read it before they start a feature too.
+
+## How to use it
+
+- Read it before you research or build anything, then follow the [feature workflow](#the-feature-workflow).
+- Each rule points at the doc or code that shows the pattern. Paths that start with `lib/`, `components/` or `app/`
+  are under `apps/web/src/`. Open the pointer before you invent a new way.
+- The backend refactor (the "Backend hardening" section of [roadmap.md](roadmap.md), packages P01-P30) has landed:
+  every rule here describes code that exists. A new convention that is not built yet is not written here as a rule;
+  it goes in the roadmap until it lands.
+- Every rule wins over the code: if the code breaks it, don't copy the break; fix it or say why not.
+- When a convention changes, change this page in the same commit.
+
+## Non-negotiables
+
+- **A person in the loop.** Nothing merges, deletes or sends on a person's behalf without their yes: AI changes are
+  proposals with **Apply** ([assistant.md](assistant.md)), tool calls wait for **Approve**, agents open draft PRs and
+  never merge on their own.
+- **Private by default.** Private channels, DMs and email bodies are off unless a node option turns them on
+  explicitly ([protocol.md §16](protocol.md#16-activity-items), [features/integrations.md](features/integrations.md)).
+- **No real tokens.** Use only the development credentials in `deploy/.env.example`. Never enter, commit or log a real
+  vendor token; the person creates real credentials themselves, in the UI.
+- **Local only.** Run and deploy only on this machine: OrbStack Docker and its Kubernetes (`--context orbstack`,
+  namespace `landflow-dev`). Never deploy to a cloud, never push images. AWS goes only to LocalStack at
+  `http://127.0.0.1:54566` with dummy keys and `AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null`.
+- **Shared engine.** Touch only the `landflow-*` compose projects and the `landflow-dev` namespace. Never prune.
+  Build with `COMPOSE_BAKE=false`; cluster images with `docker --context orbstack buildx build --builder orbstack --load`.
+- **Live data.** Never hand-edit `apps/web/.data` (database, `credentials.json`, `encryption.key`); use the UI, API or
+  CLI, and a scratch data directory for checks ([development.md](development.md#checking-a-change-live)).
+- **Public repo.** Everything pushed is public at once. Scan the diff for secrets, personal names, emails, home-folder
+  paths, internal links and session ids before every push (the command is in
+  [.claude/skills/landflow-feature](../.claude/skills/landflow-feature/SKILL.md)). The scan covers file contents; the
+  `Claude-Session:` trailer in commit messages is the accepted exception. Never commit `.data`, kubeconfigs, the
+  encryption key or agent notes (`MEMORY.md`).
+- **Ask first.** Commit, push, open a PR or merge only when the person asks. Work on a branch, never on `main`.
+
+## Research before building
+
+1. Find the feature in the [feature map](README.md#feature-map), then read its page.
+2. Read [limitations.md](limitations.md), [roadmap.md](roadmap.md) and [history.md](history.md) for what exists, what
+   was decided and why.
+3. Find the existing pattern (grep for a sibling route, store, node or component) and reuse it. Two ways of doing one
+   thing is a bug.
+4. For any Next.js code, read the guide in `apps/web/node_modules/next/dist/docs/` first: this Next.js (16) differs from
+   older ones ([apps/web/AGENTS.md](../apps/web/AGENTS.md)).
+5. Write down what you will change, which files, and why, before you edit. A larger feature gets a spec in
+   [specs/](specs/README.md).
+
+## Architecture
+
+**Routes and access**
+
+- Wrap every route in `handler()`; answer with `json()` / `error()`; validate bodies with `parseBody()` and zod
+  (`apps/web/src/lib/server/http.ts`, shared schemas in `lib/server/schemas.ts`). Never call `request.json()` directly.
+- Validate query strings with `parseQuery()` (`lib/server/http.ts`, a zod schema; 400 on a bad value) and page with
+  `pageSchema` / `limitParam()` from `lib/server/pagination.ts` (`limit` 1-500, an opaque `cursor`); never
+  `Number(param)` straight into a query.
+- Decide who may call a route in `lib/server/auth/policy.ts`. A route with no entry falls to a default (`fallback: true`)
+  that is open to every signed-in member, so every route has a policy entry or an in-handler check (`requireResource`,
+  `filterVisible` in `lib/server/projects/access.ts`); `test/policy-coverage.test.ts` fails a mutating route with
+  neither.
+- Public paths are listed in `lib/shared/auth-paths.ts` and authenticate their own way (signed token, webhook auth).
+  Public API routes are described in `lib/server/openapi.ts` (`test/openapi.test.ts` checks it).
+- Throw `HttpError` (`lib/server/errors.ts`: message, status, `{ code, details, expose }`) and let `handler()` map it to
+  `{ error, code, ...details }`; a ZodError answers 400 and anything else a generic 500 (`Internal error` with the
+  request id; the message goes to the log only). A domain error extends `HttpError` with its own default status; a
+  route family may name a thin wrapper (`projectRoute`, `dataTableRoute`, `marketplaceRoute`), which maps nothing.
+  Don't catch a domain error in a route to answer it: `handler()` does, with a `code` (the class name in snake_case)
+  and the class's `details`. Every subclass names itself with a literal, `static readonly errorName: string = 'ItsName';`
+  on the first line of its body (`code` and `name` come from it: the production bundle minifies class names, and
+  `instanceof` matches an error from another copy of the module by it, see below), and
+  `test/error-mapping.test.ts` fails one without it; `test/error-mapping.test.ts` fails a class that carries a status outside the `HttpError`
+  tree (only errors with an optional upstream status, such as `McpClientError` and `OAuth2Error`, stay plain). The
+  production server bundles a module once per layer, and a `singleton()` store throws the classes of the layer that
+  made it, so `HttpError` overrides `instanceof`: an error branded by any copy matches `HttpError`, and a subclass by
+  its `errorName` (give each class a name of its own). Never send an unexpected error's text (SQL, paths, stacks) to
+  the client.
+
+**Configuration and process state**
+
+- Read configuration only through `lib/server/config` (`envInt`, `envNumber`, `envFlag`, `envUrl`, `envString`:
+  parsed at call time, never NaN, an invalid value falls back with a `config.invalid` warning; `envWithAliases()` for a
+  renamed variable, which reads the catalog's deprecated aliases; `publicUrl()`,
+  `ollamaUrl()`; `checkConfig()` runs first at boot). Add no new ad-hoc `process.env` reads. Every variable is an
+  entry of `lib/server/config/catalog.ts` (default, description, group, secret flag, production requirement, aliases),
+  and `docs/reference/configuration.md` is generated from it (`pnpm --filter @landflow/web gen:config-docs`);
+  `test/config-catalog.test.ts` fails on an uncatalogued name, a stale page or more files reading `process.env`
+  outside `lib/server/config` than its budget.
+- Stricter defaults (a required secret, a refused request) apply only in the production profile (`profile()`,
+  `isProduction()` from `lib/server/config`), so `pnpm dev`, the scratch host and the offline tests keep working.
+- Hold process-wide state only through `singleton()` (`lib/server/singleton.ts`), with one exported key per object; no
+  `globalThis.__x` and no mutable module-level state (Next.js compiles routes into separate module graphs).
+- Background services are entries of `SERVICES` in `lib/server/runtime.ts`, the one service table the main and the
+  worker both boot from (`roles`, `required`, `leader`, `stop` with its shutdown phase). Leader-only work runs through
+  `leaderService()` (`lib/server/cluster/index.ts`); shutdown goes through the lifecycle registry `onShutdown()`
+  (`lib/server/lifecycle.ts`). Routes don't import the runtime: `handler()` waits on `whenReady()`.
+
+**Layers**
+
+- The store does not call up into features: emit an event and let the feature subscribe at boot (`onExecutionFinished` in
+  `lib/server/store.ts`, subscribed in `lib/server/execution-reactions.ts`; the bus is `lib/server/bus.ts`).
+- No server → UI imports, no `lib/shared` → server value imports, no client component importing server values, no
+  routes touching `lib/server/db` (go through the store or a domain module, as `store.promoteExecution` does), no new
+  import cycles, and `packages/` never import `apps/`: `pnpm check:deps` (dependency-cruiser, `.dependency-cruiser.cjs`)
+  fails each; the known violations it tolerates are listed in `.dependency-cruiser-known-violations.json` and may only
+  shrink. Routes also hold no SQL, and `engine` and `protocol` read no environment (by review). `pnpm check` is the
+  local gate (typecheck, `pnpm test`, check:deps); there is no hosted CI by decision.
+- The `landflow-sync/v1` file layout (names and path rules) lives in `packages/protocol/src/sync-format.ts`, shared by
+  the host (`lib/server/sync/files.ts`) and the CLI (`packages/cli/src/sync/files.ts`); change it there, not in one side.
+- Split a file that grows past about 800 lines along its own section comments rather than adding to it.
+
+**Data**
+
+- Migrations: append to `MIGRATIONS` in `lib/server/db/schema.ts`, with a version above the current maximum (grep
+  it; versions are not in file order; `test/migrations-order.test.ts` fails one that isn't). One SQL text for SQLite
+  and Postgres; never edit a shipped migration; a new table also goes in `TABLES`; a column a shipped table gained goes
+  in `addColumns`.
+- Prepared statements are cached per SQL text in a bounded LRU (`LANDFLOW_DB_STATEMENT_CACHE`, `db/database.ts`):
+  write SQL with `?` parameters, never values pasted into the text, or every call is a new cache entry.
+- Writes go through the `Database` write methods (`upsert`, `insertNew`, `delete`, `deleteBefore`) so Postgres
+  mode can replay them (`lib/server/db/database.ts`, `db/postgres.ts`). A change of several rows runs in one
+  `transaction()`.
+- No unbounded list reads: every list takes a capped limit and pages with a keyset cursor (the model is
+  `GET /api/executions`: `lib/server/executions-query.ts` over `pagination.ts`'s `encodeCursor` / `decodeCursor`,
+  answering `nextCursor`). Filter by visibility in SQL, not after a fetch.
+- Code that may read a finished run reads it through the async seam: `store.loadExecution`,
+  `store.executionsMentioningAsync` and the journal's `*Async` readers (`lib/server/journal/store.ts`), all over
+  `lib/server/db/reads.ts` (`readExecutionData`, `readExecutionEvents`, `readRows`). `store.getExecution` is for runs in
+  flight and the runner's own bookkeeping; `test/execution-reads.test.ts` fails a new caller outside its allow-list,
+  and does the same for the journal's synchronous readers. In Postgres mode the in-memory copy holds only hot runs
+  (in flight, finished within `LANDFLOW_PG_HOT_MINUTES`, with a retry waiting, or a child of a run in flight;
+  `lib/server/db/hot-mirror.ts`): a cold run's `data` is '' and its journal is in Postgres only, so the sync readers
+  see it as empty. Code that writes to a run that may be cold (a rerun, retry, replay, a check on its journal) awaits
+  `store.promoteExecution(id)` first.
+- Nothing on a hot path (saving a run, a request) does work proportional to history: prune and aggregate in SQL on a
+  timer or every N events (executions: `pruneExecutions` and `retentionTick` in `lib/server/settings.ts`).
+- `IN (…)` lists and access checks inside loops are N+1 once reads move to Postgres: batch them. For lists, check
+  access once per kind with `visibleIds`, `filterVisible` or `withOwnership` (`lib/server/projects/access.ts`), not
+  `canResource` per item.
+
+## Security baseline
+
+- **Least privilege.** Per route (policy.ts) and per project: every id a caller sends is checked against the caller's
+  projects (`requireResource`, `canResource`, `visibleProjectIds`); a 404 rather than a 403 when the caller may not
+  know the resource exists. Instance-wide actions need an admin action in the policy table.
+- **Audit in the library.** Every security-relevant change (members, roles, shares, transfers, secrets, keys,
+  settings, provisioning) records a domain event with `recordAudit()` (`lib/server/audit/index.ts`) in the library
+  function, not the route, with actor, target, project and `from` / `to` values. Denied and failed access is recorded
+  too: failed SSO sign-ins in their routes, and a read refused with 401/403 as `api.denied` (`lib/server/audit/http.ts`,
+  at most once a minute per caller and route and 60 a minute in all). Exports (Git sync, data tables) are events. The generic `api.request`
+  event is a fallback, not coverage. A high-value change (roles, API keys, credentials, audit settings, SCIM
+  provisioning) records its event as required: inside `auditedTransaction()` when the change is database writes (the
+  event joins the transaction) or through `auditedChange()` when it is not, so `LANDFLOW_AUDIT_FAIL_CLOSED=true`
+  refuses it with 503 (`AuditUnavailableError`) when the event cannot be stored (key rotation and a person's own
+  password change stay fail-open on purpose; a new high-value action is added to the list deliberately). A failed audit write is counted
+  (`landflow.audit.write_failures`, `lib/server/audit/metrics.ts`), never only logged.
+- **Secrets stay secret.** Never put a credential value, token or key in a log line, error message, span attribute,
+  audit detail or run data. Logs redact by key name (`SECRET_KEY` in `lib/server/telemetry/config.ts`), `$secrets`
+  values and the credential values handed to a node are scrubbed (`lib/server/secrets/redact.ts`), and the logger
+  rewrites secret-shaped values in every string (`redactPatterns`: Bearer tokens, `lf_` keys, URL userinfo, PEM
+  keys); widen these when you add a new kind of secret. The API returns a credential's status, never its value. Bearer secrets are stored hashed and shown once;
+  compare them with `sameSecret()` (`lib/server/auth/passwords.ts`).
+- **Keys.** Values at rest are sealed by the vault's key ring (`lib/server/credentials/key-ring.ts`, `sealWith` /
+  `openWith`: version 2 names its key and binds the credential id or a purpose as associated data;
+  `LANDFLOW_ENCRYPTION_KEYS`, first key seals; a passphrase is stretched with scrypt). A key for another purpose comes
+  from `vault.deriveKey(label)` (HKDF per label) and is verified against `vault.deriveKeys(label)`, so a rotation
+  (`rotateEncryption()` in `credentials/rotate.ts`) doesn't void links in flight. Never hash or slice the encryption key
+  yourself.
+- **Sessions.** `sessionUser()` (`lib/server/auth/sessions.ts`) enforces the absolute and idle limits
+  (`LANDFLOW_SESSION_TTL_HOURS`, `LANDFLOW_SESSION_IDLE_HOURS`) and marks the session used; a check the person did not
+  make (a stream's re-check, a timer) resolves with `touch: false` (`resolvePrincipal(request, { touch: false })`); in
+  the browser a poll, a heartbeat or a reload after a live event calls `api(path, { background: true })`, which sends
+  `X-Landflow-Background: 1`, and `guardRequest()` resolves it (and `GET /api/events`) without the touch. A new client
+  timer that reads the API must pass `background: true`, or an open tab keeps its session alive. A
+  password change ends the user's other sessions; password sign-in follows `LANDFLOW_LOCAL_SIGN_IN`
+  (`localSignInAllowed()` in `auth/local-sign-in.ts`); `guardRequest()` refuses a cookie-authenticated write with a
+  foreign `Origin`, or with none and a cross-site `Sec-Fetch-Site`.
+- **Outbound calls.** Every request to a URL a user, a webhook or a model can influence goes through `safeFetch`
+  (`lib/server/net/safe-fetch.ts`): in the production profile loopback, private, link-local, CGNAT and metadata
+  addresses are refused unless `LANDFLOW_OUTBOUND_ALLOW` lists them, names are checked at DNS lookup and every redirect
+  hop is checked again (with the governance host list, `lib/server/governance/policy.ts`). In-process nodes get it as
+  `ctx.http` / `ContextExtras.fetch`. Never add a bare `fetch` to a user-supplied URL; the callers still outside it are
+  listed in [limitations.md](limitations.md).
+- **Untrusted code.** Expressions and Code nodes never see host objects. Expressions run in a sealed realm
+  (`packages/engine/src/sandbox/realm.ts`: a `node:vm` context with code generation off, only JSON text crossing in
+  and out; `async`, `await` and `import(` are refused). In the production profile Code nodes run in the code runner
+  (`services/code-runner`, `lib/server/code-runner.ts`) unless `LANDFLOW_CODE_IN_PROCESS=true`. Never pass a host
+  object, function or Buffer into the expression realm. The in-process Code node (development, or
+  `LANDFLOW_CODE_IN_PROCESS=true`) is the known exception: its context still holds host helpers
+  ([limitations.md](limitations.md)), which is why production runs Code nodes in the runner. `LANDFLOW_EXPRESSION_SANDBOX=isolate`
+  runs expressions on the optional isolated-vm backend (`packages/engine/src/sandbox/isolate.ts`, the same bootstrap
+  and bridge, a heap cap `LANDFLOW_EXPRESSION_MEMORY_MB`); `realm` is the default. A change to what an expression may
+  do changes both backends, and `packages/engine/test/expression-isolate.test.ts` runs the shared contract on the
+  isolate (`LANDFLOW_INTEGRATION=isolate`).
+- **Bounded input.** Bodies validated with zod and capped in size (`parseBody` refuses more than
+  `LANDFLOW_MAX_BODY_BYTES` with 413 while streaming); the API is rate-limited per principal and the public triggers
+  per client address and route group (`lib/server/rate-limit/api-limiter.ts`, `LANDFLOW_RATE_LIMIT_API` /
+  `LANDFLOW_RATE_LIMIT_PUBLIC`, on in the production profile; sign-in limits in `lib/server/auth/rate-limit.ts`).
+- **Client address** comes from `clientAddress()` (`lib/server/net/client-address.ts`, `LANDFLOW_TRUSTED_PROXIES`),
+  never straight from `X-Forwarded-For`. Emailed links use `emailedOrigin()` (`lib/server/auth/cookies.ts`: the
+  configured public URL, never a request header in production); resume URLs are signed (`lib/server/resume-signing.ts`).
+- **Headers.** Pages and API responses carry the security headers and a nonce CSP from `apps/web/src/proxy.ts`
+  (`LANDFLOW_CSP`, `LANDFLOW_HSTS`); a new embeddable path goes in its `EMBEDDABLE` list.
+  The production CSP has no `'unsafe-eval'`, and zod 4 probes `new Function` when it builds an object schema: a module
+  the browser loads either builds no zod schemas (keep them in a server-side `*-schema.ts`, as
+  `lib/shared/preferences-schema.ts` does) or sets `if (typeof window !== 'undefined') z.config({ jitless: true })`
+  before its first `z.object` (as `lib/shared/ui-spec.ts` does). Check a new client module with a production-profile
+  host and `LANDFLOW_CSP=enforce`: unit tests and `next dev` don't show the violation.
+- **Plugin registration** is closed outside development: announces need `LANDFLOW_REGISTRY_SECRET` in the production
+  profile unless `LANDFLOW_REGISTRY_OPEN=true` (`registryOpen()` and the address and join rules in
+  `lib/server/plugins/registry-policy.ts`).
+
+## Observability baseline
+
+- Log with `logger` from `lib/server/telemetry` (one JSON line, trace id), never `console.*` in server code.
+- Structured fields with OpenTelemetry names (`url.path`, `error`, `landflow.*`); a message is a short fixed phrase,
+  values go in fields.
+- Every log line written in an API request carries `request_id`, `http.route`, `user.id` and `landflow.api_key.id`
+  (`requestLogFields()` in `lib/server/audit/context.ts`), and the request span gets them too (`landflow.request_id`,
+  `http.route`, `enduser.id`, `landflow.api_key.id`); `/api` responses return `X-Request-Id` and `traceparent`. Outside a request (runs, timers), put the ids you have in fields.
+- Server-sent events go through `sseResponse()` (`lib/server/sse.ts`): it bounds a slow client's unread bytes, writes
+  `id:` lines and heartbeats and cleans up; a stream that must survive a reconnect replays from the bus ring after
+  `Last-Event-ID` (`lib/server/events-stream.ts`) and re-checks the viewer's access while it runs.
+- Metrics follow [observability.md](observability.md) and `lib/server/telemetry/metrics.ts`; labels have bounded
+  cardinality: no workflow, execution, user or other ids as labels (put ids on spans; `landflow.workflow.id` is a
+  counter label only with `LANDFLOW_METRICS_WORKFLOW_LABEL=true`, never on a histogram). Database calls go through the
+  `Database` methods, which time each one (`landflow.db.query.duration` by operation, a `db.query` span only over
+  `LANDFLOW_DB_SLOW_MS`); read requests are traced only when slow (`LANDFLOW_TRACE_SLOW_READ_MS`) or failed
+  (`telemetry/processors.ts`); process saturation comes from `telemetry/runtime-metrics.ts`.
+- Errors: log a caught error as `{ error }` (the `Error` itself) so the logger adds `exception.type`, the stack and
+  `exception.fingerprint` (`telemetry/fingerprint.ts`); fail a span with `failSpan()` (`telemetry/spans.ts`), which
+  records the same. A new metric worth paging on ships with its alert rule and dashboard panel
+  (`deploy/observability/prometheus-rules.yml`, `landflow-dashboard.json`, copied into
+  `deploy/k8s/components/observability/`; a test checks the copies match and that every metric they name exists).
+- Health: `/api/health/live` (no I/O) and `/api/health/ready` (boot and draining, database, write queue, schema
+  version, Valkey in queue mode; `readiness()` in `lib/server/health.ts`, each check bounded and answering only ok and
+  milliseconds); a new dependency that must be up to serve traffic joins readiness.
+- Flush on shutdown: anything that buffers (telemetry, the Postgres queue, the audit outbox) registers a shutdown step
+  (`onShutdown()` in its phase, or `stop` and `shutdownPhase` on its `SERVICES` entry).
+
+## UI and UX
+
+- Use the words, type scale, page layout, dialogs, empty states and controls in [ui-review.md](ui-review.md#words) and
+  the shared components in `apps/web/src/components/ui` (`Dialog`, `EmptyState`, `Segmented`, `SearchInput`,
+  `FilterChip`, `StatCard`, `Sheet`, `chat.tsx`) and `components/shell/page-header.tsx`. Never draw a second one.
+- Phone layout sits behind `max-md:` or `usePhone()` (`lib/client/use-phone.ts`) and never changes the desktop
+  ([mobile.md](mobile.md)). Check every UI change at 1440×900 and at 390×844 and compare desktop with shots taken
+  before the change.
+- While AI builds or debugs, the canvas stays visible: the conversation folds to a side card or strip, never over the
+  flow (`components/editor/spotlight.tsx`).
+- Change workflows through the editor's Spotlight, not scripts that PUT JSON; where Spotlight falls short, fix
+  Spotlight.
+- Show runs and UI checks in a visible (headed) browser at `http://localhost:<port>` (not `127.0.0.1`: Next dev blocks
+  its scripts there); restart a long-running dev host after renaming files or changing a singleton.
+
+## Agents and AI features
+
+- Landflow agents export to the Claude Code plugin marketplace format, not only import from it: keep new agent fields
+  mappable to an agent `.md` and `skills/<name>/SKILL.md` (`lib/server/marketplace/map.ts`, `export.ts`).
+- Claude Code harnesses use one common toolchain image and fetch project dependencies over egress; no per-project
+  images, no per-run toolchain installs ([a2a.md](a2a.md#a-toolchain-image-for-claude-code)).
+- Every sub-agent, A2A call and artifact is visible in the Run Trace; don't hide agent-to-agent work inside one node
+  ([run-trace.md](run-trace.md)).
+- A model reply never changes state by itself: it proposes ops the server validates against the live registry
+  (`lib/shared/assistant-ops.ts`).
+
+## Testing and the regression gate
+
+- Tests sit next to their package (`apps/web/test`, `packages/*/test`, `*_test.go`, `sdks/python/tests`).
+- Route tests import the handler and call it with a `Request`; `test/setup.ts` signs in a synthetic owner;
+  `disableTestAuth()` for auth tests. Set env vars (a fresh `LANDFLOW_DATA_DIR` from `mkdtempSync`) before a dynamic
+  `await import(...)`.
+- Tests that need a real service skip unless `LANDFLOW_INTEGRATION` names them; run Postgres-backed files one at a
+  time ([development.md](development.md#integration-tests-landflow_integration)).
+- Every change adds or updates tests: the bug it fixes fails without the change.
+- Before a PR: `(cd apps/web && npx vitest run) && pnpm typecheck` and `pnpm test`, plus the Go and Python suites for
+  what you touched ([development.md](development.md#verification)). Compare the counts with the last green run on
+  `main`; never accept a new failure.
+- A test file that writes or deletes shared state (marketplaces, agents, settings, folders under the data directory such
+  as `oci/`) sets its own `LANDFLOW_DATA_DIR` before its
+  imports, and no test reaches the network: the suite's default data directory is shared by every file that doesn't.
+  (`marketplace.test.ts` was flaky for that reason, not load; if it fails again, rerun it alone and report both.)
+- A change to the boot (`lib/server/runtime.ts`, `bootstrap.ts`, `lifecycle.ts`), `instrumentation.ts`, the proxy
+  (`proxy.ts`) or anything the worker imports (`lib/server/cluster/worker-main.ts` and what it reaches) must also pass
+  `next build` (`cd apps/web && rm -rf .next && npx next build`, then restore `next-env.d.ts`) and the queue stack
+  (`compose.queue.yml` built locally, then `python3 deploy/scripts/queue-e2e.py`) before it merges: wave 2 broke both
+  while the unit gate stayed green.
+- When several agents share the machine, run typecheck and the targeted files, and leave the full host suite to the
+  integrator.
+
+## Docs move with the code
+
+- The feature's page; [reference/api.md](reference/api.md) for routes and
+  [reference/configuration.md](reference/configuration.md) for variables (generated: add the variable to
+  `lib/server/config/catalog.ts` and run `pnpm --filter @landflow/web gen:config-docs`).
+- [limitations.md](limitations.md) when a limit is added or lifted; [roadmap.md](roadmap.md) when an item closes or
+  opens; history rows (`| (this change) | what changed, in plain words | [page](link) |`) in a fragment in
+  `docs/history.d/`, never edited into [history.md](history.md) on a package branch; the integrator runs
+  `pnpm history:assemble` once per wave, and outside a wave the branch's author runs it as the last commit before
+  merging (format: [development.md](development.md#history-fragments)).
+- New pages go in [README.md](README.md). Write short, plain sentences: what and why; no marketing.
+
+## Definition of done
+
+- [ ] The brief or spec is written: what, why, files, tests, docs, acceptance criteria.
+- [ ] The existing pattern was found and reused; no second way of doing one thing.
+- [ ] Access, audit, secrets, outbound and input rules above hold for every new route and library function.
+- [ ] Tests added; the targeted files pass; the regression gate is green against the baseline.
+- [ ] Docs updated (feature page, reference, limitations, roadmap, history fragment, README for new pages).
+- [ ] UI: checked in a headed browser at 1440×900 and 390×844, desktop unchanged unless meant.
+- [ ] The diff was scanned for secrets and personal data.
+- [ ] The PR body lists what a user sees change, and what changes on a desktop.
+
+## The feature workflow
+
+Run it with the `landflow-feature` skill ([.claude/skills/landflow-feature](../.claude/skills/landflow-feature/SKILL.md));
+the agents are in [.claude/agents](../.claude/agents) and described in
+[development.md](development.md#working-with-claude-code-constitution-agents-feature-skill).
+
+1. **Research**: `landflow-researcher` maps the area and what to reuse, with file:line.
+2. **Plan**: `landflow-planner` writes the brief: packages with disjoint files, tests, docs, acceptance criteria.
+3. **Implement**: `landflow-implementer` per package, each in its own worktree from `origin/main`, a few at a time;
+   the specialists (`landflow-data-engineer`, `landflow-ui-engineer`, `landflow-ai-assistant-engineer`,
+   `landflow-plugin-engineer`, `landflow-observability-engineer`, `landflow-test-engineer`, `landflow-docs-writer`)
+   take the packages in their area.
+4. **Review**: `landflow-security-reviewer` and `landflow-code-reviewer`, at most two reviewers at a time; fix and
+   review again until both approve.
+5. **Integrate**: `landflow-integrator` merges the packages and runs the full gate; UI changes are checked at desktop
+   and phone.
+6. **Ship**: secret scan, then a PR when the person asks; merge only when they say so. `landflow-local-ops` runs
+   anything on Docker or the cluster.
+
+Sub-agents never start sub-agents of their own.

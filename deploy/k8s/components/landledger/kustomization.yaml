@@ -1,0 +1,9 @@
+# The Landledger plugin (plugins/landledger) and `landledger-api`, an ExternalName Service for Landledger's API on the Mac
+# (host.orb.internal:4810), so the credential's default URL works in the cluster (docs/features/landledger.md). A component
+# so the base stays as it is; the orbstack-clickland overlay includes it. Build the image first:
+#   docker --context orbstack buildx build --builder orbstack --load -f deploy/docker/node-plugin.Dockerfile \
+#     --build-arg PLUGIN=landledger --build-arg HTTP_PORT=7120 --build-arg GRPC_PORT=7220 -t landflow/plugin-landledger:k8s-dev .
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - landledger.yaml

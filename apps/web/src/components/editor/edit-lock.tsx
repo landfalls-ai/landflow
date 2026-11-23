@@ -35,6 +35,8 @@ interface LockState {
   workflowId?: string;
   /** Someone else (or this user's other tab) holds the lock: the canvas is read-only. */
   readOnly: boolean;
+  /** The lock has been asked for at least once for this workflow: until then `readOnly` is only the starting guess (false). */
+  known: boolean;
   /** Who holds it when it isn't this tab. */
   holder?: EditLockView;
   /** Projects: the viewer can see this workflow but not change it (a project viewer, or shared to view). */
@@ -43,7 +45,7 @@ interface LockState {
   protectedEnvironment?: string;
 }
 
-export const useEditLock = create<LockState>(() => ({ tabId: newTabId(), readOnly: false }));
+export const useEditLock = create<LockState>(() => ({ tabId: newTabId(), readOnly: false, known: false }));
 
 /** Headers for a save from this tab. */
 export const editorTabHeaders = (): Record<string, string> => ({ [EDITOR_TAB_HEADER]: useEditLock.getState().tabId });
@@ -152,8 +154,8 @@ function setReadOnly(on: boolean) {
 }
 
 /** Load the saved workflow again (someone else may have changed it while this tab was read-only). */
-async function reload(workflowId: string) {
-  const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`);
+async function reload(workflowId: string, background = false) {
+  const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`, { background });
   const nodeTypes = Object.values(useEditor.getState().nodeTypes) as NodeTypeInfo[];
   useEditor.getState().load(workflow, nodeTypes);
   return workflow;
@@ -165,7 +167,7 @@ type LockResponse = { mine: boolean; lock: EditLockView; heartbeatMs: number };
  * Hold (or wait for) the workflow's edit lock while the editor is open. Returns `takeOver`, for the banner.
  */
 export function useEditLockSync(workflowId: string, loaded: boolean) {
-  const sync = useCallback(
+  const syncOnce = useCallback(
     async (takeover = false) => {
       const { tabId, readOnly } = useEditLock.getState();
       // A protected environment: read-only for good, no lock to hold (lib/server/environments/protection.ts).
@@ -177,7 +179,8 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
       }
       let answer: LockResponse;
       try {
-        answer = await api<LockResponse>(`/api/workflows/${workflowId}/lock`, { method: 'POST', json: { tabId, ...(takeover && { takeover: true }) } });
+        // The heartbeat is not use of the session; a takeover is (a person pressed the button).
+        answer = await api<LockResponse>(`/api/workflows/${workflowId}/lock`, { method: 'POST', json: { tabId, ...(takeover && { takeover: true }) }, background: !takeover });
       } catch (caught) {
         // A viewer of the workflow's project (or a view-only share): read-only for good, no lock to hold.
         if (caught instanceof ApiError && caught.status === 403) {
@@ -191,7 +194,7 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
       if (mine) {
         if (readOnly) {
           // Back to editing: start from what's saved, then allow edits.
-          await reload(workflowId);
+          await reload(workflowId, !takeover);
           setReadOnly(false);
         }
         useEditLock.setState({ holder: undefined });
@@ -206,11 +209,20 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
     },
     [workflowId],
   );
+  // The first answer (any answer, including read-only) settles what `readOnly` means; a failed ask leaves it unknown.
+  const sync = useCallback(
+    async (takeover = false) => {
+      await syncOnce(takeover);
+      // An answer for a workflow the editor has since left says nothing about the one now open.
+      if (useEditLock.getState().workflowId === workflowId) useEditLock.setState({ known: true });
+    },
+    [syncOnce, workflowId],
+  );
 
   // Ask for the lock when the workflow has loaded, heartbeat, and release it when the editor closes.
   useEffect(() => {
     if (!loaded) return;
-    useEditLock.setState({ workflowId });
+    useEditLock.setState({ workflowId, known: false });
     let stopped = false;
     let lastSeen: string | undefined;
     const beat = async () => {
@@ -218,8 +230,8 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
         await sync();
         // Read-only tabs follow the editor's saves.
         if (useEditLock.getState().readOnly && !stopped) {
-          const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`);
-          if (lastSeen && workflow.updatedAt !== lastSeen) await reload(workflowId);
+          const { workflow } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`, { background: true });
+          if (lastSeen && workflow.updatedAt !== lastSeen) await reload(workflowId, true);
           lastSeen = workflow.updatedAt;
         }
       } catch {
@@ -239,7 +251,7 @@ export function useEditLockSync(workflowId: string, loaded: boolean) {
       window.removeEventListener('pagehide', release);
       release();
       setReadOnly(false);
-      useEditLock.setState({ workflowId: undefined, holder: undefined, viewOnly: false, protectedEnvironment: undefined });
+      useEditLock.setState({ workflowId: undefined, known: false, holder: undefined, viewOnly: false, protectedEnvironment: undefined });
     };
   }, [loaded, workflowId, sync]);
 

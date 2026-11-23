@@ -1,0 +1,65 @@
+'use client';
+/**
+ * A sheet: a dialog that rises from the bottom on a phone and sits in the middle on a desktop (docs/mobile.md). It has
+ * the dialog role, keeps the focus inside while open (Tab wraps), closes on Escape or a tap on the backdrop, and gives
+ * the focus back to what opened it. Portalled to <body>, so no scroll container clips it.
+ */
+import { useId, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { useDialogFocus } from './use-dialog-focus';
+
+/** `title` is the heading; without one (a menu), `label` names the dialog for a screen reader. */
+export function Sheet({
+  open,
+  onClose,
+  title,
+  label,
+  children,
+  footer,
+  className,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title?: ReactNode;
+  label?: string;
+  children: ReactNode;
+  footer?: ReactNode;
+  className?: string;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialogFocus(panel, open, { onEscape: onClose, lockScroll: true });
+  if (!open || typeof document === 'undefined') return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-end justify-center md:items-center">
+      <div className="absolute inset-0 bg-overlay animate-in" onClick={onClose} aria-hidden />
+      <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : label}
+        className={cn(
+          'relative flex max-h-[85dvh] w-full flex-col overflow-hidden border border-hair bg-sf shadow-pop animate-fade-up',
+          'rounded-t-2xl pb-[env(safe-area-inset-bottom)] md:max-w-[480px] md:rounded-2xl md:pb-0',
+          className,
+        )}
+      >
+        <span className="mx-auto mt-2 block h-1 w-9 shrink-0 rounded-full bg-hair md:hidden" aria-hidden />
+        <div className="flex shrink-0 items-center gap-2 px-4 pb-2 pt-2 md:pt-3">
+          <h2 id={titleId} className="min-w-0 flex-1 truncate text-[16px] font-semibold text-t1">
+            {title}
+          </h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="grid size-11 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1">
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">{children}</div>
+        {footer && <div className="shrink-0 border-t border-hair px-4 py-3">{footer}</div>}
+      </div>
+    </div>,
+    document.body,
+  );
+}

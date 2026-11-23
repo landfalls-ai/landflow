@@ -5,9 +5,10 @@
  * (`AttemptLimiter`; if Valkey is unreachable the main's own memory counts, so the limit never disappears). Failed
  * sign-ins count; a successful one clears the email's window.
  */
+import { clientAddress } from '../net/client-address';
 import { clusterActive, coordinator } from '../cluster/state';
 import { singleton } from '../singleton';
-import { logger } from '../telemetry';
+import { logger, recordAuthLimited, recordSignInFailure } from '../telemetry';
 
 export interface RateLimitResult {
   ok: boolean;
@@ -81,6 +82,12 @@ export class AttemptLimiter {
   }
 
   async check(key: string, now = Date.now()): Promise<RateLimitResult> {
+    const result = await this.measure(key, now);
+    if (!result.ok) recordAuthLimited(this.name);
+    return result;
+  }
+
+  private async measure(key: string, now: number): Promise<RateLimitResult> {
     if (!this.shared()) return this.local.check(key, now);
     try {
       const valkey = coordinator();
@@ -96,6 +103,8 @@ export class AttemptLimiter {
   }
 
   async hit(key: string, now = Date.now()): Promise<void> {
+    // The sign-in route hits the email limiter once per failed attempt (the form limiters count other forms).
+    if (this.name === 'email') recordSignInFailure();
     // Always counted here too: it's the fallback while Valkey is away.
     this.local.hit(key, now);
     if (!this.shared()) return;
@@ -134,8 +143,7 @@ export const loginLimits = () =>
 /** Other unauthenticated forms (setup, invites, resets, forgot password): attempts per IP in 15 minutes. */
 export const formLimit = () => singleton('auth-form-limit', () => new AttemptLimiter('form', 30, WINDOW_MS));
 
-/** The caller's IP: the first X-Forwarded-For entry, X-Real-IP, else `local`. */
+/** The caller's IP behind LANDFLOW_TRUSTED_PROXIES proxies (see net/client-address.ts), else `local`. */
 export function clientIp(request: Request): string {
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return (forwarded || request.headers.get('x-real-ip')?.trim() || 'local').slice(0, 64);
+  return clientAddress(request);
 }

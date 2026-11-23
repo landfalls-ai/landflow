@@ -3,7 +3,7 @@
 Agents are standalone assistants that use your connected tools and data: you give one a persona,
 a model, skills and capabilities, test it in a chat, publish it, and it then answers on a
 schedule, in Telegram or Slack, or from a workflow. They are modelled on n8n's **Agents (Preview)** (see
-[research/03-n8n-ai-agents.md](research/03-n8n-ai-agents.md) §8 for the n8n walkthrough). They are
+the n8n AI agents research note in the repository, §8, for the n8n walkthrough). They are
 separate from the **AI Agent** node, which runs inside a workflow.
 
 | | AI Agent node | Agent |
@@ -16,20 +16,23 @@ separate from the **AI Agent** node, which runs inside a workflow.
 
 ## The roster
 
-**Agents** in the sidebar lists your agents as cards: the avatar, name, role, description, tone words, whether it's
-published (and has unpublished changes), where the published version runs (Landflow, kagent, its channels and
-schedules), the model, the number of tools and skills, sessions and when it last changed. Cards are grouped by
-[team](#teams) (**Group by** → **None** shows one list), and the filters show all agents, published ones, drafts, those
-on kagent, or those **From marketplace**: agents a [marketplace plugin](marketplace.md#how-a-plugin-maps-to-an-agent)
-installed carry a "From <plugin>" link. Search matches the name, role, description, team and tones. Each card's **⋯**
-menu opens it, saves it as a template or exports its JSON.
+**Agents** in the sidebar lists your agents as plain cards: the avatar, the name, what it does (the description, or the
+role when there is none) and whether it's published (and has unpublished changes). The model, tools, sessions, channels
+and tone words live on the agent's own page. Cards are grouped by [team](#teams) (**Group by** → **None** shows one
+list; the control only shows once an agent has a team). One row of filters shows all agents, published ones, drafts,
+those on kagent, or those **From marketplace**, and a filter with no agents behind it is hidden (the row goes when only
+**All** is left). Search matches the name, role, description, team and tones. Each card's **⋯** menu opens it, saves it
+as a template or exports its JSON. The Teams view's cards follow the same rule: the name, the goal and the status.
 
-Above the cards, **Start from a persona** shows the first built-in templates; **All templates** and **New agent** open
-the New agent dialog, and **Ask the Agent architect** opens [the architect](#agent-architect).
+With no agents yet, **Start from a persona** shows the first built-in templates above the empty state; **All templates**
+and **New agent** open the New agent dialog, and **Ask the Agent architect** opens [the architect](#agent-architect).
+Once there are agents the strip is gone.
 
 ### Templates
 
-The **New agent** dialog starts an agent from a persona template, grouped by category: the built-in ones (Support lead,
+The **New agent** dialog has three ways in at its top: **From a persona** (the gallery below; pressing it moves the focus to the chosen card), **Design with AI** (the
+[Agent architect](#agent-architect)) and **From a file**, which imports an agent exported as JSON and opens it (this was
+**Import JSON** in the page header). The gallery starts an agent from a persona template, grouped by category: the built-in ones (Support lead,
 Researcher, Incident responder, Release notes writer, Data analyst, Onboarding guide, Account researcher, and a blank
 persona) and **Your templates**. Each card shows the face, description, tone words and how many rules and examples it
 has. Below them you set the name, the [team](#teams) and the [avatar](#avatars), then **Create agent**: a draft with the
@@ -46,10 +49,14 @@ project when it's transferred.
 
 ### Agent architect
 
+AG19 (wave ag4): the architect also sees the agents the caller can read (with ids) and may propose `reuse` instead of a new agent; it finds plugin tools by what the job needs (a read-only tool the ask implies, such as Extract IOCs for an alert, is kept without the ask naming it), attaches an existing knowledge base as it is (`runbooks`, keyword search), and says when the model the person named is not available on the host.
+
 Instead of filling in a template, you can describe the agent to the **Agent architect**: a specialist with its own face
 that designs it with you. Open it from **New agent** → **Design it with the Agent architect**, or **Ask the Agent
 architect** on the roster. The chat is on the left; the draft it proposes stays on the right, whole: avatar, name, role,
 tone words, Always / Never rules, instructions, tools, and what you still have to finish.
+
+The architect runs on the model Spotlight uses (Settings → AI → Spotlight, [assistant.md](assistant.md#the-model-spotlight-uses)): the dialog sends none, so the server's default applies. Spotlight's own "new agent" design (`POST /api/agents/design`) takes the model picked in its header. **The model an agent Spotlight designs runs on** is that one (the picker's, else the host's builder model, `LANDFLOW_BUILDER_MODEL`, `provider/model` or a bare Ollama name), never one the architect upgraded to: its own pick counts only when the ask names a model ("on Haiku", "use claude-opus-5-5"). The models it may choose from list the builder model first (`agentResources`), then the provider's others; on a host set to `anthropic/claude-sonnet-5-5` the card says Sonnet, not Opus. The dialog (no model sent) keeps the architect's own pick from that list.
 
 The architect knows what this instance has. Its prompt lists every plugin online with the nodes an agent can use as
 tools (actions whose only required inputs are main ones: the Abilities tab's own filter), within the node policy for
@@ -58,11 +65,99 @@ call (those starting with **When Called by a Workflow or Agent**), the other age
 never values) and the persona templates. Then it proposes the whole agent (`propose_agent`); asking for a change sends
 the whole agent again, built on the draft so far.
 
+**A design fills what you gave and nothing else** (AG08, wave ag2). A node tool's destination (To, CC, BCC, URL, channel,
+chat id, path, repository) holds only a value the request gives word for word: a value it does not hold (the model's
+guess, or the node's own preset such as HTTP Request's `http://127.0.0.1:3000/api/health`) is left empty, named under
+*Left out*, and the card's **Left** row says "set URL (the request gives none)". A mail node (Send Email) goes to the
+address the request says to send to (two or more: the ones it names, as given), its From stays empty for you ("fill in
+From Email"; an invented one is dropped), and its Subject and Text are `{{ $fromAI('subject', …) }}` and
+`{{ $fromAI('body', …) }}`, so the agent writes them on each call (the format is plain text unless the model chose
+another). A required property the tool's schema lets the model fill on each call (Acknowledge Alert's Alert Name, a
+`$fromAI` value) is not on the Left row. The test cases are the inputs themselves (an alert's text, the question as asked),
+never a description of one ("Pasted alert about high CPU"), a `<placeholder>` or a line under 12 characters: such a case is
+dropped, and a proposal left with fewer than 3 gets one follow-up call that asks for real inputs, so a good agent is not
+held by the gate for a description it cannot answer. A `$fromAI` value in a destination is emptied too (the request gave
+none), so an HTTP Request tool meant to fetch a page the user pastes comes out with an empty URL and a Left row to set
+it: say the URL in the request, or set it on the tool. A case's expected answer may still say an approval tool ran (the
+email was sent) although the gate runs with approvals denied, so an agent whose job ends in a send can score 2.5 to 3 / 5
+at the gate (limitations.md); the live pass of AG08 read 3.75 / 5 for a read-only Grafana agent and 2.5 and 3.0 / 5
+(drafts) for the alert triager.
+
+On a local (Ollama) model the architect proposes with the flat `propose_design` instead: the same agent with every
+value as plain text (name, audience, mission, Always and Never one rule per line, answer length `short`, `medium` or
+`long` (a sentence, a paragraph, detailed), node, workflow and agent tool ids comma-separated), because the nested
+arrays of `propose_agent` do not get through Ollama's tool-call parser (qwen3-coder's XML call fails with "XML syntax
+error"). The draft, its checks and the way you change it are the same. When any model's tool call cannot be parsed,
+the architect asks once more offering `propose_design` in place of `propose_agent`. A cloud or gateway model keeps
+`propose_agent`. A tool call counts as unparsable by the rule of Spotlight's chat: its message or detail says "XML
+syntax error" or "unexpected end", or it is a bare "Ollama error 500"; an out-of-memory 500 and a usage cap are not
+retried. A draft with no summary is shown as "Draft: <name>", and "none" for the rules is no rule.
+
+The chat is on the chat kit ([assistant.md](assistant.md#chat-surfaces)): the tools it used are one line ("6 steps ·
+24.8 s") that opens into each step with its time, a footer under the reply gives the model, time, steps, tokens and
+cost, and a model chip sits in the box. It **keeps its conversation** with the others
+([assistant.md](assistant.md#conversation-history), surface `architect`, subject `agent` / `new`), but the dialog **starts
+fresh** every time it opens: the newest kept design is offered as one line under the box, "Earlier: <its title> ·
+Continue", which brings it back under an **Earlier** divider with its last draft on the right; the clock button lists the
+older ones (architect conversations only: a Spotlight or brain conversation is not offered here). When the model fails after some steps, the error offers **Continue from step N**
+(the request carries `resume: { checkpoint }`, so no tool runs twice; the checkpoint lives 15 minutes in the host's
+memory) beside **Try again**. A failure read back from a kept conversation can only be tried again.
+
+**The brief.** An agent worth publishing is more than a paragraph and whatever tools the model liked, so every draft (the
+dialog's and Spotlight's design) is made to a brief in code (`architect.ts`, marked `SB17`), whatever the model sent:
+- **Instructions in four parts**, each starting a line, in this order: `Input:` (what each message or item brings),
+  `Steps:` (numbered, naming its tools), `Output:` (what it answers, how long) and `Hand over when:` (what it does not
+  decide alone). Both proposal tools ask for them; a part the draft lacks is written from the draft's own fields (its
+  audience, mission, description, answer length and tools' names), never left empty, and a part it has is kept.
+- **Approved practices for "our practices".** When what you wrote asks for "our practices", "our standards", "our
+  guidelines" or "our conventions" (`PRACTICES_ASK`; English only), the draft keeps `practices: 'on'` and gets the
+  **Check Practices** node (`core.practiceCheck`, tool `check_practices`) with `changedFiles` filled by the model per call
+  (`$fromAI('changedFiles', …, 'json')`); the repository is yours to give (an `owner/name` in your words is used, else
+  it is listed under what you still have to finish). A request that doesn't ask gets no practice tool, and the model's
+  own is left out. See [practices.md](practices.md).
+- **Least privilege.** A node tool is kept only for an app the request names (its name, plugin id or a specific keyword:
+  "pull requests" names GitHub) and a write only when the request asks for one (post, send, comment, create, update,
+  delete, merge, notify …; "create an agent" is not one); an agent delegation (a Run an Agent or Run a Team node, or
+  an `agent` tool) only when it asks to hand work over (or names that agent); a knowledge base only when it says what the agent answers
+  from (docs, documents, a wiki, policies …: `KNOWLEDGE_ASK`). What is left out is listed under "Left
+  out" with its reason ("Slack: the request never asks for it (it would change things there)"). A tool the model left
+  on the node's defaults, which would write, becomes a read when the request doesn't ask to write (the pull request
+  resource and its first read operation for "pull requests"). The prompt says "the fewest tools; read before write".
+  On Spotlight's design path the request is the person's whole ask (`ask`) with the tools and knowledge it named, never `designRequest`'s fixed sentences.
+  **A write is asked per tool** (`asksToWriteTo`): a write verb in the sentence that names the tool's app, or "email … to <address>" for a mail tool. Nouns alone ("customer comments", "an alert", "the email") are not write asks, so "the sentiment of customer comments" reads SQLite's **Select**. A tool whose operation writes where the ask does not ask to write becomes its read whether the model wrote the operation or left it out, and is dropped (and said) only when the node has no read.
+  **Every tool the ask names** (Spotlight sends them by their display names, `spec.tools`) that the draft lacks is added when exactly one node type matches by display or plugin name, else it is listed as **Not added** with why ("Jira: no plugin online has it"); one the ask never named stays out, and is not listed there.
+- **Instructions name only its tools.** The steps name the agent's tools by their call names; a `snake_case` word that is not one of them (the model wrote `send_slack_message` on an agent that only has Send Email) becomes the tool it plainly means when exactly one has the same meaning (the same words, a plural or -ise folded), else its clause is dropped and "instructions named send_slack_message, which it does not have" is listed under left out. A `Tools:` line always ends the steps and lists the real tools with what each is for. A node type in a step (`grafana.getAlerts`, `core.httpRequest`) is renamed to the agent's call name for that type (`get_alerts`), or its clause goes when the agent has none; an address's domain or a file name (`oncall@landflow.test`, `config.yaml`) is text. A rename needs the same meaning (the same verb and words, a plural or -ise folded, or the call name with a `_2` suffix): `get_alert_status` is never turned into `normalize_alert`. `send_email` after "with" or "using" is a tool, `send_to` as an address is a field. A sub-agent's and an A2A agent's call name (`ask_<agent>`) and GitHub's allowed names are the agent's own; with another MCP server (its tools are read when the agent runs) a name that is no node's is kept. In a revise, a tool the change removes is gone from the steps. A node is named by its distinctive word, an acronym of three or more letters matched as written ("pull out the IOCs" is Extract IOCs; JWT, UUID and SQL work the same; AI, API, SDK, URL, ID, HTTP, JSON, XML, CSV, LLM and UI never name a node, so "an AI agent" or "the Slack SDK" adds no Generate with AI SDK; an acronym two nodes share, such as IOC Enrich, is a "several nodes match, pick one" line unless the full name is given; "alert" alone names neither Normalize Alert nor Get Alerts), and a mail node already on the agent settles "Send email: several nodes match". Tests: `test/agent-steps-ag2.test.ts`.
+- **Writes behind approval.** Every node tool that writes gets `requireApproval: true`, so a person approves each call;
+  reads never do. A write is what the session's heuristic calls one (`writesOutside`, the HTTP method and the
+  operation's name: [assistant.md](assistant.md#autonomous-mode)) or, for a plugin that marks its reads
+  (`idempotent: true`), an operation it doesn't mark. The preview shows **asks first** on them.
+- **Guardrail defaults.** Every draft gets an input guardrail that masks secrets in messages (`sanitize`, balanced), except for a job that reads tokens (the ask names a JWT, token, hash, password, API key or decoding, or a tool is `go-crypto.jwtDecode`, `hash` or `base64`): that agent would see `<JWT>` instead of the token, so its messages are not masked, its answers are (`output`: secrets, balanced; a SHA-256, a UUID and a decoded JWT payload are not secrets to it), and the card says "Doesn’t mask tokens in messages: its job reads them". And,
+  when it has any tool, a tool-result guardrail that blocks text that looks like instructions
+  (`jailbreak` with `useModel: false`: pattern checks only, no extra model call). A draft's own guardrails are kept. The
+  preview lists them in words ("Masks secrets in messages", "Ignores instructions inside tool results"). The architect's preview and Spotlight's agent card use one helper for those words (`guardrailWords`) and one condition for "Follows your approved practices" (`followsPractices`: on unless the config says `off`, as a run reads it).
+- **Test cases.** Each proposal asks for 3 to 5 cases, one plain line each (`what a person would send => what a right
+  answer says`; at most 5, each input under 4 000 characters). With fewer than 3 the architect makes one small
+  follow-up call for cases alone (counted in the same scope); still fewer, the draft says "Add test cases on the
+  Evaluations tab" rather than inventing any. The preview lists them, each editable and removable; **Create agent**
+  posts each to the [eval gate](#eval-gate) after the import (a case that fails is a toast line, the agent stays
+  created). Spotlight's design (`POST /api/agents/design`) saves them on the new agent and answers them as `cases`.
+  So a designed agent's first publish runs the gate.
+
+The brief does not judge whether a case is a good one, and it reads app names in the words you wrote (see
+[limitations.md](limitations.md)).
+
 Every draft is checked before you see it:
 - node types that aren't online or can't be tools are left out, and so are workflows an agent can't call and agents
   that don't exist; the draft says what was left out;
 - a node tool keeps only that node's parameters, over its defaults; what the agent decides per call is a
   `$fromAI('key', 'description', 'type')` placeholder;
+- a node tool that reads its whole input item (Normalize Alert, Extract IOCs, most transforms) and names no field to work
+  on gets a required **`item`** argument: the data the tool works on, as JSON. The model puts the alert, email or record
+  there; an object is the node's input item, a string that parses as a JSON object is that object, any other string
+  becomes `{ text }`, and the other arguments are the per-call overrides of the node's settings. A node that declares
+  its own `toolInputSchema` or names a field (Sentiment's `field`) keeps its schema. The Grafana tools (Get Alerts, Get
+  Alert Details, Acknowledge Alert) declare the `grafana_alertmanager_api_token` credential, so the tool dialog offers
+  the picker (Get Alerts and Get Alert Details are reads, Acknowledge Alert is a write and asks first);
 - an id nobody gave (a table, a channel) is dropped, as in the editor assistant;
 - credentials are never set. A required credential becomes a "pick a … credential" item, naming the ones you have, and
   a required parameter left empty becomes "fill in …";
@@ -79,12 +174,136 @@ the model missed it, and the architect notes what it dropped. Each is recorded a
 [Missing tool](second-brain.md#4-detectors-and-suggestions) detector turns them into a "Build a tool for …" suggestion
 on Home, with a sketch of the plugin to write.
 
+**Models and knowledge.** The architect also picks what the agent runs on and what it searches (`agentResources()` in
+`lib/server/assistant/agent-resources.ts`, read per request). `list_models` gives the chat models this host has, best
+first: Ollama's, the assistant's own model first, then those that call tools; the first Anthropic model is added when
+`ANTHROPIC_API_KEY` is set. A model it names that the host doesn't have becomes the first one, and the draft says so.
+`list_knowledge_bases` gives the knowledge bases other agents you can read already search (one per store and
+collection, with who uses them). A `knowledge` tool reuses one of those, or starts an empty one under a new collection
+name (SQLite store, embedded with a local embeddings model: `nomic-embed-text`, else `mxbai-embed-large`, else any
+`*embed*` model) and adds "add documents to the new … knowledge base" to what you still have to do. A new knowledge
+base can always be started: with no embeddings model pulled (Ollama off) it is searched by keywords (Landflow's own
+BM25, embeddings provider `none`; see [Knowledge bases](#building-an-agent)), so it is never dropped for want of a
+model. Spotlight's design (`POST /api/agents/design`) goes further ([assistant.md](assistant.md#agents-and-teams)): a
+folder the ask names ("in the folder runbooks") becomes the new knowledge base's source (collection = the folder's name,
+`indexedFrom` = the folder), the "add documents" need is replaced by nothing because Create indexes the folder, and the
+instructions get one rule ("Answer from what the search returns, and name the file (its `source`) each answer comes
+from; if it finds nothing, say so."); an ask that says what it answers from and names no folder, with no knowledge base
+that fits, gets no knowledge base and one need asking which folder (nothing is invented, nothing is indexed). The Agent
+architect dialog keeps its own behaviour (an empty new knowledge base and the need to add documents).
+
+**For Spotlight.** When Spotlight proposes a new agent ([newAgent](assistant.md#agents-and-teams)), the editor calls
+`POST /api/agents/design` and the architect designs it without a conversation (`designAgent`), from what is written (what
+only the person can give, a repository or a channel, is left for them, not invented): the name, what it does,
+its instructions and where its step sits in the flow. The first try hands the model what it would otherwise look up
+(`designBrief`: the models, the knowledge bases, and the nodes whose name, type or keywords match the request, with
+two-letter and filler words left out of the search) and offers one call, `propose_design`, whose values are all plain
+text: qwen3-coder writes tool calls as XML, and Ollama's parser fails on `propose_agent`'s nested arrays of objects
+(*XML syntax error … unexpected EOF*). If that proposes nothing, the architect gets the full conversation with its
+tools. If neither does, the agent is what Spotlight gave, on the first model. The draft keeps Spotlight's name, gets a
+face, and is saved in your project; tool-call markup a model leaks into a value (`<parameter=0>`) is dropped.
+Spotlight's request also carries the apps the agent needs (`tools`, "It needs: Linear: read issues.") and the documents
+it answers from (`knowledge`, which asks for a knowledge base, or for a mention of none that fits); the brief puts the
+node types matching the tool hints first. A tool it named that the model left out is added from the brief's top hit for
+that app when the hit scored 8 or more and is that app's, else it is listed as missing; the documents it answers from get
+a knowledge tool as above.
+
 The avatar, colour and team you change in the dialog stay through later drafts. **Create agent** makes a draft agent
-from it (`POST /api/agents/import`); finish the open items and pick a model on its page. The architect never creates or
+from it (`POST /api/agents/import`); finish the open items on its page. The architect never creates or
 changes an agent itself. It uses the assistant's model (`LANDFLOW_BUILDER_MODEL` on Ollama by default, as the
 [editor assistant](assistant.md)), at most 10 model calls a message. Each message is recorded in the
 [second brain](second-brain.md) as a `spotlight.asked` event with `architect: true`. Code:
-`apps/web/src/lib/server/assistant/architect.ts`, `apps/web/src/components/agents/architect.tsx`.
+`apps/web/src/lib/server/assistant/architect.ts`, `apps/web/src/lib/server/assistant/agent-resources.ts`,
+`apps/web/src/components/agents/architect.tsx`. Tests: `test/agent-architect.test.ts`, `test/agent-design.test.ts`, `test/agent-brief.test.ts`; the scenarios `sb17-*` in `test/spotlight-scenarios/sb17.ts`.
+
+#### Changes from Spotlight
+
+Spotlight also changes an agent that exists ([assistant.md](assistant.md#agents-and-teams), "Changing an agent"). From the
+agent's page, or under the card of an agent it made, "also let it get one alert's details" is designed as a proposal
+(`POST /api/agents/design` with `base: { agentId }` and `change`) and shown as a card of what would change. **Apply to its
+draft** saves it as the agent's draft only (the page shows it) and runs the smoke test; **Publish** is offered only after a
+pass and goes through the [eval gate](#eval-gate), which can hold it. The published version stays what it was until then.
+The Agent architect dialog still designs new agents only.
+
+The card says what applying does and follows the agent (wave ag2, AG09):
+- A tool the change adds that no step names gets one: "N. When <the task you named, or the first sentence of what the tool is for>, call `extract_iocs`." goes before the
+  Tools line (with "(it asks the person first)" for a tool that writes), and the steps are renumbered. A step an earlier
+  change wrote stays when the model's proposal leaves it out. The Changes row says "Adds the tool Extract IOCs (asks
+  first)", with acronyms in capitals (IOCs, JWT, UUID, URL, HTTP, API, SQL, SMTP, IP, ID, CPU, JSON, CSV); the added
+  step is not counted again as "Instructions rewritten".
+  When the change says the added tool's action ("also let it **acknowledge** an alert"), that verb also leaves the
+  instructions' **Hand over when** line ("The user asks to acknowledge, silence or fix an alert" becomes "… to silence or
+  fix an alert"; a clause with only that verb goes), so the agent no longer hands over what it can now do
+  (`withoutHandOverFor`; wave ag3's live pass found the published Grafana agent answering "I can't acknowledge alerts").
+- **Left** lists what the agent's draft still lacks: a credential slot already set on the agent's tool is not asked again,
+  and one set after Apply (in the tool's dialog on the agent's page) drops off the card without a reload (the page's
+  save sends `landflow:agent-saved`; the card also re-reads the draft on `landflow:agent-changed`).
+- A change that gives a mail tool its sender ("send the email from landflow@landflow.test", "set Send Email's From Email
+  to …", or the chat's own wording of it, "set send_email's fromEmail parameter to …") sets that tool's **From Email** when it is still empty, and the Changes row says "Send Email: From Email set to
+  landflow@landflow.test"; a From you already set is never rewritten, and a change that names no sender, or two, sets
+  none (wave ag3's live pass found the change said "No change" instead).
+  The card's **Left** row then drops "fill in From Email" (any "fill in" or "set" line whose field the agent's draft now
+  holds), as it drops a credential line once the slot is set.
+- **A change never undoes itself, and a second tool of a type is a tool of its own (ag4 re-check 3-7).** Before the card, the design
+  route (`lib/server/agents/change-tools.ts`) only dedupes: a new tool is dropped as a duplicate when it has the same node type as a
+  kept tool, brings no credential (a slot with no id is a placeholder), sets no non-empty parameter where the kept tool's is empty or
+  different, and carries the kept tool's name or its auto-suffix (`SQLite_2`, `SQLite 2` beside `sqlite`). Nothing is ever moved onto
+  a kept tool. Every other new tool stands as its own tool with its own **Pick it** row: *add a SQLite tool for the archive DB*
+  (`sqlite_archive`, `Archive DB`, or a table of its own), *also let it call the weather API* (a URL the kept HTTP tool lacks, or its
+  bearer credential). A tool the design dropped never
+  comes back. A change to a kept tool (*make sqlite read-only*) is made in place by the architect's revise: the design's tool of the same
+  type and name with another operation changes the kept tool (same id, same credential, its operation; an explicit approval on a tool that was a read stays), never a second tool
+  beside it. What an agent fix may add is the prompt's to say; the card lists every tool it adds. The Left rows are worked out after
+  the dedupe.
+- **A data tool takes back the one sentence that denies it (final run 2).** When a change adds a data (`databases.*`) or knowledge
+  tool, the design route (`agents/change-lookup.ts`) removes a persona or instruction sentence that is nothing but the denial
+  (*Never claim to have looked up data.*, *Uses only the text it receives.*, *Do not look up data.*) and shows it on the card
+  (*Instructions: removed …*, *Persona: removed …*, *Persona: removed example …*). A sentence with a qualifier or scope (*… data you did
+  not query*, *Do not access databases other than the sales one*, *Never read data from the HR table*) is a real rule and stays; only the
+  sentence goes, never its paragraph or the mission. Any other instruction that contradicts the tool is the architect's to rewrite: the
+  change prompt says so (*Instructions rewritten …* on the card). **Which cases are replaced is the design's call, not a regex's:** the
+  design is given the agent's cases with their ids and names the ones the change makes wrong (`contradictedCases`), with 1 to 2 cases
+  that replace them. When a denial went (removed, or rewritten away by the design), a case whose *expected answer* is nothing but a
+  denial sentence is replaced too (the strict fallback); safety, format and greeting cases stay unless the design names them. The card
+  has one line per replaced case (*Test removed: “…”*) and one per new case (*Test added: “…”*); the card's `replaceCases` carries the ids
+  and the inputs. **Apply saves the draft first, then swaps the cases** in one all-or-nothing call (`PATCH /api/agents/:id/eval-gate`),
+  with no undo. A stale id (409) is worked out again from the agent's cases now, matched by input text, and tried once more; if that
+  fails too, the card says *The tests changed since this was designed; ask again.* (any other failed swap says why) and offers **Ask
+  again**, which designs the same words again against the agent as it is. After Apply, a dismissed card ends the session with *The
+  change is saved to the draft, not published.*, and **Not now** is hidden while a publish runs. First-person denials in a persona
+  **A replace never only removes:** when the design names cases but writes none to replace them, none is replaced and the card says
+  *Test may now be wrong: “…”* (an agent with no cases skips the publish gate); the server refuses a `PATCH` eval-gate with `remove` and
+  an empty `add` (400), and Apply swaps only when there are both ids and new cases. A failed swap adds *The old tests are still there;
+  Publish checks against them.* Ask again on a fix card sends the typed ask the session had (`typedAsk`), never the model's text.
+  example (*I can not look anything up.*) count as denials, and an examples list left empty is dropped. A write needs a data object
+  (*write the totals to the sales database*, *insert rows*), never *add read access to the database* or *add SQLite to the db agent*.
+- **An empty Table on a Select tool (final run 2).** A tool a design leaves on Select keeps it (the safer, simpler choice: Select cannot
+  run arbitrary SQL, and Execute Query for free reads would need the SELECT check on every call and change how existing designs
+  read). Its `table` stays empty: the tool's input schema offers `table` and `query`, so the call names the table, and `operation` is pinned.
+  The Table is not a Left row. A change that only gives access never turns a read tool into a write (select does not become insert, and
+  it does not start asking first): the write needs a write verb with data in the ask (*insert rows*, *update the records*, *write the
+  totals to the sales database*; not *update me*, *save time* or *update the agent so it can read the database*); in an agent-fix
+  session only what the person typed counts, not the model's own change text. Otherwise the card says the agent already has read access and nothing changes.
+- **What a read is, and the run-time hold.** On SQLite (`readsByQuery` in `run-check.ts`; Postgres and MySQL Execute Query are always
+  writes) a read is the plugin's Select, or an Execute Query that is one statement after the comments are gone, starts with `SELECT`
+  and has no `INTO`, `FOR UPDATE`, `load_extension`, `nextval` or `dblink`. `WITH`, `PRAGMA`, `EXPLAIN`, an empty, per-call (`$fromAI`)
+  or non-string query are no read, so a tool built on them asks first. A tool a design leaves on the node default becomes the node's
+  Select. At run time a tool set up as a read (no approval, stored parameters only read) judges **each call** on the parameters it
+  would run with (`holdReason` in `agents/tools.ts`, checked by `agents/runtime.ts`): a call that names another operation or brings SQL
+  that is not one read-only SELECT is held for a person. In a run nobody watches whose step's Tool Approvals is *Ask* a held read waits in Needs you like any call that asks first ([approval-inbox.md](approval-inbox.md)); where nothing can wait (Tool Approvals *Refuse*, a manual run, the hosted chat, an MCP call) the run refuses it with the reason in the run log, and so does the kagent MCP endpoint (`kagent/mcp.ts`, which also serves the Claude Code harness): it cannot pause, so it answers *… kagent cannot pause this call*. The tool's
+  input schema does not offer `operation`, and its SQLite connection is read-only (the plugin's Read Only: `mode=ro`, `_query_only=1`).
+  **Pick it** shows on a change card after Apply too, and wherever a Left row says *pick a … credential*; its smoke result also
+  reaches the applied build and change cards' status line (a change card still waiting for Apply is left alone).
+- **Credentials follow the agent's project.** Every credential picker that edits an agent (the agent page's model and tool
+  dialogs, and Spotlight's **Pick it**) lists only what the agent's home project may use (`GET /api/credentials?agentId=`)
+  and **Create** makes the credential in that project; nothing is picked on its own until that list has loaded, and when
+  it cannot be read the picker says so with **Retry** (the page lists every credential and picks none). The save refuses
+  a new credential outside the project (403), so a team agent can no longer be given a personal credential.
+- After Apply the card offers **Test again** next to Publish: the smoke test on the draft as it is, no save. Publish
+  waits for a pass as before.
+- A pending card's name that the design made ("Crypto Toolkit agent") is made again from the tools the card has now
+  ("Utility helper"), and the Changes row says "Renames it to Utility helper (its tools changed)"; a name you gave, and an
+  agent that exists, are renamed only by "call it …". Create names the agent what the card shows.
 
 ### Avatars
 
@@ -100,7 +319,7 @@ on the agent's page to pick one of four kinds:
 - **Image**: a PNG, JPEG or WebP, cropped to a square and scaled to 256 px in the browser (WebP when the browser can
   encode it), at most 200 KB as a data URL in the agent's config.
 
-An agent made without an avatar through `POST /api/agents` (a script, the CLI, another agent) gets a face drawn from its
+An agent made without an avatar through `POST /api/agents` (a script, another agent; the CLI has no agent commands) gets a face drawn from its
 name, the way the New agent dialog gives one, so it doesn't show as a bare robot in team charts; an avatar sent with the
 request, an icon too, is kept.
 
@@ -126,7 +345,7 @@ with its own Teams view on this page.
 
 ### Taking an agent elsewhere
 
-The builder's **…** menu has **Export JSON** (the config, for **Import JSON**), **Save as template** (a persona to start
+The builder's **…** menu has **Export JSON** (the config, for **From a file** in New agent), **Save as template** (a persona to start
 from, never tools) and **Export as Claude Code plugin…**, which downloads the agent as a plugin in Anthropic's format
 that Claude Code installs as it is and Landflow installs back whole ([marketplace.md](marketplace.md#export-agents-as-plugins)).
 `GET /api/agents/:id/export?format=claude-plugin` is the same zip.
@@ -135,23 +354,33 @@ that Claude Code installs as it is and Landflow installs back whole ([marketplac
 
 **Agents** in the sidebar → **New agent** creates a draft from a [template](#templates) or the
 [Agent architect](#agent-architect) and opens the builder. Everything autosaves to the
-*draft*; the test chat always runs the draft. Under the agent's icon and name, **Runs on** shows where the published
-version runs (Landflow, kagent, its channels and schedules) and opens the Deploy tab. The tabs:
+*draft*; the test chat always runs the draft. The publish state is said once, on the header button: **Publish** for a
+draft, **Publish v4** when the draft has changes, **Live v3 ▾** when the live version matches it (the ▾ lists versions, Unpublish and
+Restore). Under the agent's icon and name, **Runs on** lists kagent, channels and schedules when there are any, and opens
+the Triggers row. The three tabs:
 
 - **Persona**: who the agent is and how it talks ([below](#the-persona)), beside the system prompt that makes.
-- **Abilities**: the model, skills, capabilities and memory.
-- **Deploy**: triggers and kagent.
-- **Safety**: guardrails and limits.
-- **Sessions** and **Evaluations**.
+- **Abilities**: the layers around the model as a list of rows (Model, Capabilities, Triggers, Guardrails, Deploy, Advanced).
+  Each row says what is set; click it to open its card in place. **Capabilities** holds tools, knowledge bases, skills,
+  plugins and memory behind one **Add capability ▾** (tool, workflow, sub-agent, MCP server, GitHub MCP, A2A agent, knowledge
+  base, plugin, skill). **Triggers** has one **Add trigger ▾** (schedule, Telegram, Slack, Teams). **Guardrails** holds the
+  guardrails and the limits. **Advanced** holds the router, the cache and tool access. On a phone the Add menus are sheets.
+- **Activity**: **Sessions** and **Evaluations**, switched at the top (`?tab=activity&view=evaluations`).
 
-Older links still work: `?tab=build` opens Persona and `?tab=settings` opens Safety.
+**Deploy** is a row only when there is a kagent cluster credential to deploy to (or the agent already runs on kagent):
+the kagent card does not show without one.
+
+Older links still work (`mapLegacyTab` in `components/agents/tabs.ts`): `?tab=build` opens Persona, `?tab=deploy` opens
+Abilities with Deploy open (or with nothing open on a host with no kagent credential, where there is no Deploy row), `?tab=safety` and `?tab=settings` open Abilities with Guardrails open, `?tab=sessions` and
+`?tab=evaluations` open Activity on that view, and a `session=` id alone opens Activity on Sessions.
 
 ### The persona
 
-The Persona tab builds the system prompt from parts, instead of one instructions box:
+The Persona tab builds the system prompt from parts, instead of one instructions box. The prompt itself stays closed
+beside it until you press **View prompt** (a read-only preview; **Edit** jumps to the instructions):
 
-- **Who it is**: the name, a role, who it helps, what it does, and the description (shown in the agent list and to
-  agents that delegate to this one), and **What I do**: up to three short lines (120 characters each) for the agent's
+- **Who it is**: the name, a role, who it helps and one **What it does** field. Folded under **Card text (optional)** are
+  the description (shown in the agent list and to agents that delegate to this one) and **What I do**: up to three short lines (120 characters each) for the agent's
   card on a team page ([member cards](agent-teams.md#member-cards)). Left empty, the card takes the first sentences of
   the mission, then of the instructions (`whatIDoLines()` in `persona.ts`; the roster summary carries them as
   `whatIDo`). They are display only: `personaPrompt()` never reads them, so editing them leaves the prompt, and the
@@ -162,7 +391,7 @@ The Persona tab builds the system prompt from parts, instead of one instructions
 - **Examples**: a message and the answer you'd want, up to 10. Only examples with both sides go into the prompt.
 - **Instructions**: anything the parts don't cover, in your own words.
 
-**What the model reads** shows the system prompt as you type. It comes from `personaPrompt()` in
+**What the model reads** shows the system prompt once opened, kept up to date as you type. It comes from `personaPrompt()` in
 `apps/web/src/lib/shared/persona.ts`, the function the runtime and kagent's AgentTemplate also use, so the text you see
 is the text that runs here and on kagent. Each run adds the date and time and, with cross-session memory, the facts
 it remembers. The parts become sections in this order:
@@ -226,6 +455,7 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     session. When the remote agent pauses for a tool approval, the run pauses with an approval card
     ("*landflow_text* wants to run *changeCase*") answered like any other; its questions go to the
     model. See [a2a.md](a2a.md).
+  - **Try a search** (on a saved knowledge base's dialog, C11): the memory playground runs one search over the saved base with mode, limit, threshold and an optional rerank, shows each score before and after rerank and what the threshold dropped, and changes nothing ([run-trace.md](run-trace.md#memory-playground)).
   - **Knowledge bases** (**Add knowledge base**): a vector store collection the agent searches
     with one tool (`search_knowledge_base({ query })` by default, renameable), returning the best
     passages with their metadata and scores. Settings: the store (SQLite in the data folder,
@@ -240,9 +470,54 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     read, split, embedded and added to the collection (metadata `documentId`, `fileName`, `page`,
     `chunk`), and a document can be deleted again (`GET/POST/DELETE
     /api/agents/:id/knowledge/:toolId/documents`). The store must be one that supports deletion
-    by metadata (all three do). The timeline shows searches with
+    by metadata (all three do). **Sources** (C22): the same dialog keeps the base in sync with a
+    **folder** of the files directory, an **S3 bucket** prefix (an `S3` credential: endpoint, region, keys),
+    one **website** (same host only, link depth up to 3, up to 500 pages, `robots.txt` obeyed, half a second
+    between requests, a private start address refused when `LANDFLOW_OUTBOUND_BLOCK_PRIVATE` is on) or a **Google
+    Drive** folder (the person's own connected Google account; Docs read as Markdown, Sheets as CSV, Slides as text).
+    Each source has a schedule (only on **Sync now**, hourly or daily), **Pause**, **Sync now**, **History** (every
+    run: what was added, changed, removed, failed, how many chunks were embedded and how many reused, and the items
+    that failed) and **Remove**, which asks whether to delete the chunks it wrote (yes by default). A sync compares a
+    version marker per item (a file's time and size, an S3 ETag, a page's ETag, a Drive checksum), writes only what
+    changed under the base's home project (the C20 re-index, so unchanged text keeps its vector), and removes what
+    left the source only when it listed the whole source. One sync of a source runs at a time across every process;
+    scheduled syncs run on the leader; a run that stops without finishing is closed as failed. At most 20 sources a
+    base and 2,000 items a sync (a longer source is picked up again a minute later). Routes: `GET/POST
+    /api/agents/:id/knowledge/:toolId/sources`, `PATCH/DELETE …/:sourceId`, `POST …/:sourceId/sync`, `GET …/:sourceId/runs`
+    ([reference/api.md](reference/api.md)). **Keyword search** (wave ag3): embeddings provider **Keyword search (built in, no
+    model)** (`embeddings: { provider: 'none', model: 'bm25' }`, search mode `keyword`) stores each passage with a
+    one-number vector and ranks by Landflow's BM25 over the stored passages: no model, no key, no call, but it finds
+    the words in the question, not their meaning. SQLite and in-memory stores only: a `none` knowledge base on
+    Postgres PGVector is refused ("Postgres needs real vectors"). **Indexing a folder**: `POST
+    /api/agents/:id/knowledge/:toolId/folder { folder }` reads every Markdown, text, PDF, DOCX, HTML, CSV or JSON file
+    under a folder of the files directory (`LANDFLOW_FILES_DIR`; recursive, dotfiles and symlinks that lead out are
+    skipped, at most 200 files of 25 MB), each chunk's metadata gaining `source` (its path relative to the files
+    directory, `runbooks/disk-full.md`); indexing again **embeds only what changed** (C20): each file is cut at
+    content-defined sections (a heading starts one once the section before it holds 800 characters; otherwise cuts fall where a paragraph's hash says so, between 2,000 and
+    6,000 characters) and then by the usual splitter, every chunk keeps a hash of its text and the embeddings model that
+    made its vector, and a chunk whose hash the collection already holds under the same model keeps its stored vector, so an
+    inserted paragraph changes the chunks around it and not every later one. A file's chunks are replaced in one step (the
+    base answers from the old version until the new one is stored, and a failing embeddings model leaves the old chunks), a
+    file keeps its `documentId`, and the chunks of files that left the folder are removed. The answer is `{ documents,
+    chunks, reused, embedded, removed, failed }`; the tool's `indexedFrom` records the folder and `lastIndex` the pass (the
+    dialog shows "Indexed from runbooks · last pass: 12 documents · 3 embedded, 241 reused, 5 removed"). A single upload
+    in the dialog is not diffed (a new document each time); chunks stored before this change have no hash, so the first
+    index afterwards embeds each file once. **Who may use a collection** (C21): a collection belongs to a project. The
+    project that first writes it owns it (an upload, a folder index or a Vector Store node's insert claims it; the
+    claim is decided once, in Postgres in queue mode, and audited as `collection.claimed`); until someone writes it, it is
+    open to every project. The project that asks is the agent's home project (project knowledge asks as its project,
+    a Vector Store node as its workflow's home project, never the run's project). Another project can use the collection
+    only through a grant an admin of the owner gave (read: search; write: also upload, index, insert, clear and delete;
+    write implies read), to one project or to **All projects**; a collection a project can't use fails with the same
+    words whether it exists or not: "This agent’s project can’t use the collection “x”" (the agent's tool is not built,
+    its run lists why, the memory playground and the uploads answer 403 or 400, the connections count is left out, the
+    architect's `list_knowledge_bases` leaves it out and marks a shared one `read` or `write`, and the dialog says so
+    under the Collection field before saving). The project's Settings tab has a [Collections
+    card](projects-and-goals.md#collections). `landflow-brain*`, `landflow-notion-<project>` and
+    `landflow-agent-memory` stay closed to every saved configuration. The timeline shows searches with
     the vector store's icon. In the workflow editor the same collection is reachable from an AI
-    Agent with the vector store in **Retrieve Documents (As Tool)** mode.
+    Agent with the vector store in **Retrieve Documents (As Tool)** mode. A knowledge base can
+    also come [from a plugin](#knowledge-bases-from-a-plugin) (Clickland), with nothing to upload.
   - **Require approval** on any capability pauses the run before that tool executes (below).
 - **Claude Code plugins** (Abilities). Plugins from the added marketplaces that the agent loads when it
   runs on kagent's Claude Code runtime (kagent card, **Runtime**: Claude Code). The picker lists
@@ -251,10 +526,44 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   them. Deploying pins each one to a commit and packs it into an image Landflow serves to kagent
   ([a2a.md](a2a.md#on-claude-code)).
 - **Memory** (Abilities). Session memory is always on: the session keeps the transcript, and the model
-  sees its last 30 user turns. **Cross-session memory** adds a `remember` tool. The saved facts
-  (at most 50 per agent and user) are put into the system prompt of that user's later sessions.
-  A user is "you" in the test chat, `telegram:<id>` in Telegram, `slack:<member id>` in Slack, `teams:<Entra object id>` in Teams, `workflow:<id>` from a workflow,
-  and `schedule:<id>` for a schedule.
+  sees its last 30 user turns. **Cross-session memory** adds the `remember` and `forget_memory` tools and puts what the
+  agent knows about the person into the system prompt of that person's later sessions (below). A user is the person chatting (their user id) in the
+  test chat, `telegram:<id>` in Telegram, `slack:<member id>` in Slack, `teams:<Entra object id>` in Teams, `workflow:<id>` from a
+  workflow, and `schedule:<id>` for a schedule.
+
+  What it remembers is stored as private brain facts (subject `agent-user`, `<agent id>/<user id>`, kind `memory`), so
+  versions, static facts and soft forget come from the fact lifecycle ([second-brain.md](second-brain.md#memory-backend)).
+  They never show on the Brain page, in the graph, in a Notion push, in a project's facts or in an MCP brain tool, and one
+  person's memories never reach another person's run.
+
+  - **The block.** At the start of a run (a resume reads it again) the prompt gets one `memory` part after the cache
+    breakpoint: the **profile** (every static memory of that person, then the 10 newest others) and up to 8 memories
+    **relevant** to the run's first message (by meaning and words, score at least 0.3, none already in the profile). Each
+    part is left out when empty; the block is at most 4,000 characters (the lowest-scored relevant lines go first, then the
+    oldest non-static profile lines), quoted as data inside one `<landflow-memory source="agent-memory">` fence
+    (`lib/shared/memory-fence.ts`: anything that looks like a fence is escaped). The lines show a short handle (`m_…`), never
+    the person's id. Without an embedding model, or with Ollama down, the relevant part comes from words and the run does not
+    fail; the memory card says "Recall by words only".
+  - **`remember { fact, static?, replaces? }`.** `static` keeps it in front of the agent every session (a name, a role);
+    `replaces` (a handle from the block) writes a new version of that memory instead of adding a second. An agent's write
+    is Landflow's, never a person's, so it cannot replace a static memory (it forgets it with `forget_memory` and remembers the
+    new one). The same words again, or an embedding at least 0.92 alike, refresh the old memory and keep its words.
+  - **`forget_memory { id, reason }`.** Forgets one of this person's memories (soft: it can be restored). Another person's id
+    is "not found". The tool is marked destructive.
+  - **The bound.** A person has at most 1,000 live memories with one agent: past that the oldest non-static one is forgotten
+    with reason `capacity` (audited as Landflow); static ones are never touched. The old cap of 50 sentences is gone.
+  - **Old notes.** At boot, on the leader (and before the first read or write of memory, so a worker or a test sees it too), every old `agent_memory` row (and, in files mode,
+    every `agent-memory/<agent>.json`) is imported as a non-static memory with its date; the ids are derived from the note,
+    so a second run or a second process writes nothing. The old table stays, read-only, for one release.
+  - **Whose memory.** The person the run is for: a Landflow user in the test chat (their own id, not one shared pool), `slack:<member>`, `teams:<id>` and `telegram:<id>` in a channel (the author of the current message, so a shared thread or group recalls and writes for whoever is speaking), `workflow:<id>` and `schedule:<id>`. A sub-agent call (`agent:…`), a team run (`team:…`), an evaluation, a smoke test and kagent's own session user have none. The test chat's memory is the person chatting even in a session someone else opened (the session stays theirs). A shared thread's transcript is shared: everyone in a Slack thread, Teams conversation or Telegram group reads what was said there, so what the agent says it remembered (and the recalled block it quotes) is visible to them; the agent is told that memories belong to the person speaking now and not to save facts about others.
+  - **What it recalled.** The run records the ids, versions and scores of what it was given (`saw.memory`, shown in What it
+    saw and the Sessions tab), by the run's trace content mode: the sources on `summaries` and `full`, the exact block only on
+    `full` and only in the journal, where only that person, the agent's editors and instance admins read it (the session record, which everyone who can read the session sees, keeps the sources, never the text), nothing on `off` ([run-trace.md](run-trace.md#what-it-saw)). An evaluation run and an agent without the switch
+    read and write no memory; a team member's notebook is the team's ([team-notebook.md](team-notebook.md)).
+  - **The memory card.** Abilities → Cross-session memory → **What it remembers** lists a person's memories (Static, the
+    version, when it was said) with **Forget** (a reason is required) and **Restore** under the **Forgotten** chip. The
+    agent's editors pick whose; `GET /api/agents/:id/memories`, `POST /api/agents/:id/memories/:memoryId` ([API](reference/api.md)).
+  - **On kagent** the agent gets the same through three MCP tools and a signed key ([a2a.md](a2a.md#memory-on-kagent)).
 - **Triggers** (Deploy; published version only):
   - **Schedules:** hourly, daily, weekly, monthly, or a five-field cron, in a time zone.
     Each fire is a new session whose user message is the schedule's *What to do*.
@@ -317,6 +626,10 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   `https://api.typesafe.ai` for Jev). A 429 or 529 is retried (honouring
   `retry-after`); any other failure fails closed, like every guardrail. Only block rules use a
   judge (sanitize rules run no model checks).
+  A judge's calls count like any model call (tokens as the service reports them; unpriced unless
+  priced in Settings → AI prices, under the model name the service reports, or “Strands Decider” when a Strands
+  connection names no model), with the purpose “Guardrail check”. They also meet the usage caps: a reached cap
+  refuses the judge call, and the check fails closed ("AI usage cap reached").
 
   Each stage has an action. **Block** checks the text (the model-based checks use the agent's
   own model, or the rule's judge) and, when something is found, answers with the stage's *reply* (a default is used
@@ -341,8 +654,10 @@ absent from an agent without any). Publishing needs a model, and a persona part 
   The usage limits count every model call the agent makes (sub-agents and tools that call models
   included) at the prices of Settings → AI prices. A run that reaches one stops with the reason
   `budget` and a notice saying which limit and where to change it; later runs are refused before
-  any model call until the day or month turns. The Safety tab shows today's and this month's
-  usage ([observability.md](observability.md#token-and-cost-tracking)).
+  any model call until the day or month turns. The Guardrails row shows today's and this month's
+  usage ([observability.md](observability.md#8-token-and-cost-tracking)).
+  A session's usage keeps the prompt-cache reads and writes the model reported, next to its input and output tokens, and
+  each model call's prompt is split into parts ([llm-gateway.md](llm-gateway.md#what-a-prompt-was-made-of)).
 
 **Publish** snapshots the draft as version N. At most 20 versions are kept, and the builder's
 "…" menu lists them. A session stays on the version it started with. Telegram conversations move
@@ -350,7 +665,7 @@ to the newest version on their next message. **Unpublish** stops schedules and c
 **Export / Import** writes or reads the config as JSON. Import gives schedules and channels new
 ids and leaves them disabled.
 
-**kagent** (Deploy tab): **Deploy to kagent** writes the published version to a
+**kagent** (Abilities → Deploy): **Deploy to kagent** writes the published version to a
 kagent cluster (a *kagent cluster* credential) with this persona: the system prompt the runtime
 builds from the persona, instructions, skills, name and description, the model, and the agent's tools,
 served to kagent by Landflow. Every publish writes the new version there too. The card shows
@@ -362,11 +677,48 @@ own-image Harnesses are listed but can't be picked); a deployed agent can move b
 the card shows the runtime and, on Claude Code, the plugins at their commits. See
 [a2a.md](a2a.md#landflow-agents-on-kagent).
 
+### Project knowledge from the Notion brain
+
+A project linked to Notion can make its **Notion brain** the project's knowledge base (`{ "knowledge": { "enabled": true, "tool":
+{ "source": "notion-brain" } } }` in the project's settings; [notion-brain.md](features/notion-brain.md#your-companys-pages-as-knowledge)).
+Every agent run in the project then gets `project_knowledge` over the company's Notion pages the walk indexed
+(`landflow-notion-<project>`; keyword search, and meaning when the brain's embeddings are on), labelled "Notion · <brain page title>"
+in the connections and the Run Trace. With no active link the tool is left out with the "Tool unavailable" notice. An agent's own
+knowledge base cannot name `landflow-notion-<project>` or `landflow-brain-<project>`: those collections are refused.
+
+### Knowledge bases from a plugin
+
+**Add knowledge base → Knowledge from → From a plugin: Clickland** makes a knowledge base that a plugin node answers
+instead of a vector store: the agent's tool (`search_clickland({ query })` by default, renameable) runs the node with
+fixed parameters and the model's question, on the same path as a node tool (registry, credentials, expressions,
+`$secrets`). The config is the knowledge tool with `source: 'node'` (a vector one has `source: 'vector'` or none, so
+older configs are unchanged):
+
+```json
+{ "type": "knowledge", "source": "node", "name": "search_clickland", "description": "…",
+  "nodeType": "clickland.clickland", "parameters": { "resource": "knowledge", "operation": "search" },
+  "queryParameter": "query", "credentials": { "clicklandApi": { "id": "…", "name": "Clickland" } } }
+```
+
+- The model sees `{ query }`; the node gets `parameters` plus the question in `queryParameter`. Its answer comes back
+  as `{ results: [{ pageContent, metadata, score }] }`: Clickland's Knowledge → Search answers in that shape, and any
+  other node's items are turned into one result each.
+- It is a knowledge tool for the **Grounded in the knowledge base** guardrail (above): the passages it returned are what the answer is judged
+  against, as with a vector store.
+- There are no documents: the dialog has no upload list and `GET/POST/DELETE /api/agents/:id/knowledge/:toolId/documents`
+  answers 400 for it. Clickland keeps the knowledge (notes, alert events, log patterns, services).
+- A missing plugin, or a node without the query parameter, leaves the tool out with a notice in the timeline, like a
+  node tool.
+- The dialog offers the presets in `KNOWLEDGE_NODE_PRESETS` (`lib/shared/agents.ts`; Clickland is the first). Any other
+  plugin node can be named through the API (`PUT /api/agents/:id` with the config above).
+- Exports drop its credentials; team and flow templates swap them by slot; the Run Trace shows it as
+  "Clickland · plugin knowledge"; the Agent architect's `list_knowledge_bases` lists only vector collections.
+
 ## How a run works
 
 One run handles one user message, schedule fire or set of approval decisions:
 
-1. Build the system prompt from the persona and instructions, the skills index, the remembered facts, and the agent's name and the current time ([The persona](#the-persona)).
+1. Build the system prompt from the persona and instructions, the skills index, the project block ([below](#project-context)), the remembered facts, and the agent's name and the time the run began ([The persona](#the-persona)).
 2. Call the model with the session's messages and the tools.
 3. Run the tool calls, `toolConcurrency` at a time. A tool error is returned to the model as an error result. It does not end the run.
 4. Repeat until the model answers without tool calls. The run also stops when a tool needs approval, at *max iterations*, when the token budget is used up, or on a model error. The end reason is `completed`, `awaiting_approval`, `max_iterations`, `budget`, `error` or `canceled`.
@@ -392,8 +744,40 @@ agents. At most 200 sessions are kept per agent. Each one keeps:
 - token usage;
 - one trace id per run (guardrail checks are `landflow.guardrails` spans with a `landflow.guardrails.stage` attribute, for every check).
 
-The **Sessions** tab lists them by source (`test`, `schedule`, `telegram`, `slack`, `teams`, `workflow`, `agent`).
+The **Sessions** tab lists them with a switch: **People** (the test chat, Telegram, Slack and Teams), **Automations**
+(schedules, workflows, other agents and the API) and **All**. It opens on People when there are any, otherwise on All.
+`GET /api/agents/:id/sessions?audience=people|automations` does the filtering, in the store, so it is the same for files
+and the database, and pages with `cursor` (**Show more** loads the next page). An open session's header shows its tokens
+and, when the model reported them, how many were read from the prompt cache ("N cached"). There is no Auto-refresh
+switch: new sessions appear on their own every few seconds, except while the pointer is over the list or it is being
+scrolled.
 Only one run can be active per session.
+
+**What each call reached.** Each tool row says where its call went (the credential's name, its type and host, port or
+file, never a secret), and a knowledge search shows its passages with their source: see
+[What a tool call reached](run-trace.md#what-a-tool-call-reached). The agent page's timeline and Test chat read the same
+`target` the journal records.
+
+### Test chat
+
+The request may carry `projectId`: the chat then runs as if the agent was called from that project, and the block names it. A project you have no role in is a 404 "Project not found". A project the agent is not available in (not its home, not shared with it, not shared with all) is a 403.
+
+**Test agent** opens a chat with the draft on the chat kit. The tool calls of a turn are one activity line that opens
+into its steps (a call waiting for your **Approve** stays a full row); the footer under each reply gives the model, the
+time from your question to the reply, the steps, the tokens and the cost (or "local"); the model chip sits in the box.
+There is no trace id above the box any more: the activity line ends with **Open trace**, the host's trace UI when
+`LANDFLOW_TRACE_URL` is set, otherwise this session under Sessions, where the trace ids are. The clock in the header lists
+the earlier test sessions of this agent (per agent, not per person yet; see [limitations](limitations.md)) (the sessions route with `audience=people&source=test`); opening one carries it
+on in the chat. Nothing new is stored for it: the sessions are the record. The Platform analyst's chat uses the same line
+and footer, and keeps its answer card.
+
+**Approvals settle** (AG05, wave ag1). A call waiting for approval shows **Approve** and **Deny** only while it is still
+waiting: once decided it reads *Approved* or *Denied* with no buttons (`use-agent-run.ts` keeps what was decided from the
+session's `pending` calls and from each decision), in the Test chat and the Sessions tab. A decision that answers 409
+(*Already approved*, *That tool call is not waiting for approval*: decided a moment ago, or in another tab) refreshes the
+row quietly, with no error. With two or more calls waiting in one turn, one **Approve all (n)** and **Deny all** above them
+decide them in order, once each, through the same route (`POST /api/agents/:id/sessions/:sid/approvals`, one call id per
+request: the run goes on when the last one is decided). The Platform analyst's own card keeps its per-call buttons.
 
 ## From workflows
 
@@ -402,9 +786,14 @@ Only one run can be active per session.
   with **Execute Workflow** (`core.executeWorkflow`, which maps the *Arguments* or passes its items
   through and returns the last node's output). *Input Data Mode* is *Define Arguments* or *Accept
   All Data*. **Run** in the editor starts from it too, with empty example values for each argument.
+- **An agent made from Spotlight's card** ([assistant.md](assistant.md#agents-and-teams)): "create an agent …" typed
+  into Spotlight is designed by the Agent architect without being saved, shown as a card, and **Create agent**
+  imports it as a draft with its test cases in the eval gate. On an empty canvas, **Create agent and flow** also adds
+  the starter flow: **Chat message** into **Run an Agent** pointed at the agent, with a sample chat item pinned on
+  the trigger. The agent stays a draft: the editor runs its draft, and a published workflow runs the version it was published with, so publish the agent from its page (or with the workflow) before it goes live.
 - **Run an Agent** (`core.messageAgent`, formerly "Message an Agent"; the type is unchanged) runs
-  a published agent as a step of the flow. The agent brings its persona, skills, capabilities,
-  guardrails and usage limits. Used as a tool, the node (like Run a Team) takes `message` and a required `reason`. Tool images: the node's **Tool Images to Keep** option, else the agent's **Tool images to keep** (Settings tab), else `LANDFLOW_TOOL_IMAGES_KEPT`, else 2; Run Trace shows each image as a thumbnail ([features/ai.md](features/ai.md)). Like the AI Agent, the node has three optional sub-node ports:
+  an agent as a step of the flow (the editor runs its draft, production the version the workflow was published with). The agent brings its persona, skills, capabilities,
+  guardrails and usage limits. Used as a tool, the node (like Run a Team) takes `message` and a required `reason`. Tool images: the node's **Tool Images to Keep** option, else the agent's **Tool images to keep** (Abilities → Guardrails), else `LANDFLOW_TOOL_IMAGES_KEPT`, else 2; Run Trace shows each image as a thumbnail ([features/ai.md](features/ai.md)). Like the AI Agent, the node has three optional sub-node ports:
   - **Chat Model**: a chat model node (Ollama, Anthropic, OpenAI…) that replaces the agent's own
     model for this run.
   - **Tool**: any `usableAsTool` node, an MCP Client Tool, or a vector store in *Retrieve
@@ -416,10 +805,109 @@ Only one run can be active per session.
     it. Without one, *Continue by key* keeps one agent session per key (for example
     `{{ $json.sessionId }}`).
 
+  **A Run an Agent node follows its agent** (AG17, wave ag4). The three ports above are for flows saved before wave ag4: since then
+  the agent's model, memory, tools and knowledge are the agent's own, the **bubbles** under the node, and a model, memory or tool a
+  flow wired into a Run an Agent node is **moved into the agent's draft**, all of it, now (a Run a Team node's wiring stays in the flow until `run-team.ts` has the same overlay; see [limitations](limitations.md)):
+  - **When**: the editor on open (a tab that holds the edit lock and loads a flow that still wires sub-nodes posts
+    [`POST /api/workflows/:id/agent-moves`](reference/api.md) with the `updatedAt` it loaded, as the person, then loads the flow again),
+    and the host's start pass (a leader-only service, 3 s after start, over every saved flow with wired sub-nodes in a bound node, each as
+    the workflow's creator or else the instance owner; `meta` `agents.flowOverrides.migrated` marks its first complete pass, and later starts
+    sweep only what is left: an import, a restored version, an API write). Both run the same idempotent function, `moveFlowOverrides`
+    (`lib/server/agents/flow-moves.ts`); a second run over the same data writes no draft, saves no workflow and adds no row.
+  - **What moves**: a chat model node becomes the agent's model (the provider from the node type, the model, the credential reference) when
+    it equals the draft's, or when the draft's model is still the published one and every saved flow that wires a model into this agent
+    wires this same one (the note says when it will run in the agent's other workflows). A tool node (an action node an agent can call,
+    its plugin online) becomes a node tool: its type, parameters as they are, credential references, a snake_case name from the node's
+    name (a clash becomes `name_2`, said), and `requireApproval` as it ran, false: a tool that writes outside says it no longer asks a
+    person first. A vector store in *Retrieve Documents (As Tool)* mode becomes a knowledge tool on the same store, collection and
+    embeddings, and the embeddings sub-node wired only into it leaves with it. The same tool already in the agent is `same`: the
+    sub-node is removed and the agent unchanged. Nothing is published: the destination is the agent's **draft**.
+  - **What stays, and says why** (*this flow only*, in the notice and the record): a **memory node** never moves (an agent remembers
+    this conversation or across sessions; the flow keeps its own history); a model another flow disagrees on, or that the draft already
+    changes (*Use <model> for <agent> everywhere* is the person's choice); a tool whose credential differs from the agent's (names
+    only), or one the agent's owner may not use; a node type the host does not know or whose plugin is offline (*Try again*, and the next
+    open or start moves it); a node an agent cannot hold; an agent the person cannot change; a protected environment. A kept item keeps
+    working in that flow exactly as before.
+  - **One step per flow**: every affected agent draft is written, then the workflow is saved without the moved sub-nodes (a new version
+    as any save, under the `workflow_conflict` rule); if the save fails every draft is put back and the items stay (*saved meanwhile*).
+  - **The instructions**: a tool moved in adds one line to the draft's instructions (*Also your job: slugify (…), moved in from a workflow that ran it: use it when a message asks for that.*; taking the tool out of the draft takes the line with it), so an agent whose instructions list its jobs and hand over the rest uses the tool as the flow did (the ag4 carryover, live pass E1, where the utility helper answered *Slugifying text is outside what I handle*).
+  - **The record**: one row per workflow and sub-node in `agent_flow_moves` (outcome, the agent and its tool, why, who (`migration` or the
+    person), when, the workflow version before, and a snapshot of the sub-node and its edges: credentials by reference, never a secret),
+    read by `GET /api/workflows/:id/agent-moves` and `GET /api/agents/:id/moves`, each moved item with its `state` against the agent now:
+    `pending` (in the draft, not published), `live` (published) or `withdrawn` (a person took it out of the draft).
+  - **Said, never silent**: the editor shows a side card the first time a person opens the flow after a move (each item and its agent, each
+    kept item and why, and each agent's unpublished changes with **Publish** (the smoke test on the draft, then the eval gate: never
+    skipped) and **Open <agent>**); closed, it stays as a pill ("Moved into agents · 2") that reopens the whole record, with **Try again** and
+    **Use for <agent> everywhere** on the items that allow it. On a phone the notice starts as that pill and opens only on a tap (the sheet hid the canvas); **X** goes back to the pill. On the desktop it opens expanded once per flow (remembered in the browser), is at most 300 px wide, and folds to the pill on **X** or on any pointer press on the canvas. Its lines follow the agent's live state: *Moved into X, published* once the agent's published version holds the item (*not published yet* only while it does not). Published is not in production: while this workflow's production version pins an older agent version (*Keep v2 until republish*), a published move adds *Publish this workflow to put it in production*, and the line goes as soon as the workflow is published (the notice looks again when the production version changes).
+  - **It keeps running until republished**: a move changes only the saved workflow and the agent's draft, never a workflow version, a
+    publication or a pin, so **production keeps running its published workflow version** (its own wiring and the agent version it was
+    published with) until a person publishes the workflow again; republishing needs the agent's draft published first. A run of the saved
+    graph on the agent's published config (a never-published workflow called as a sub-workflow, or any editor run before the versions wave)
+    adds the items moved from that node and still pending, as it ran them before (`pendingFor`: only when the node carries no pin, the
+    running graph no longer wires the sub-node and the config lacks the item). The overlay is only for a run on the *published* config:
+    an editor run (a manual run, which uses the agent's draft that already holds what moved) and a pinned run take none, so the editor's
+    tests keep Tool Approvals' ask in the chat, the router and the cache the way production will after publish. A moved tool counts as a wired one for **Tool Approvals** in a run that
+    takes the overlay: it is refused, not waited for. **Test and update** (an agent published alone, "Alert triager v2 is available") tests and publishes the
+    production graph without the sub-nodes moved from that node into that agent when the new pin owns them: published at or after the
+    move, or holding the moved tool (or model) itself. So the run offers a moved tool once (never `slugify` beside `slugify_2`), a wired
+    chat model no longer wins over the version's own, and the new workflow version matches the saved flow; an item the new version
+    lacks stays wired, and the older version keeps its wiring for a rollback (`withoutPublishedMoves` in agents/update-graph.ts).
+  - **New wiring is refused**: a drag that would wire a model, memory or tool into a bound node shows a toast, and Spotlight's ops refuse
+    it ("change the agent instead"): Spotlight's `changeAgent` op shows the agent's change card ([assistant.md](assistant.md#agents-and-teams)).
+    The server's save is unchanged: an API or MCP write that wires one is saved and moved on the next open or start. The AI Agent node and
+    its sub-nodes are unchanged. Tests: `test/agent-overrides-ag4.test.ts`, `test/agent-ops-ag4.test.ts`.
+
+  **What the node shows** (AG16, wave ag4; AG12's band is gone): nothing about the agent is written in the node card. The agent is drawn as **bubbles** under the node: its model, memory (*This conversation*, or *Across sessions*), each tool and each knowledge base is a round bubble with its logo, wired to the Chat Model, Memory or Tool slot by a dashed line, the way a wired sub-node is. They are canvas-only (not in the saved workflow, the undo history, a copy or the minimap's selection). A bubble marks *asks first* with a lock (named in its hover title), a knowledge base shows *N documents*, and one that needs a credential says so. A small chip above the node says what is not published (*Not published*, *2 changes not published*) with **Publish**, and for a team's lead *Lead · name*; Publish runs the draft's test, then the eval gate (a hold is an answer, never skipped). A click on a bubble opens its menu: *Open on the agent's page*, *Change…*, *Remove from the agent* (a model or memory is changed, not removed), *Pick a credential* when a tool has none. The **+** under a slot adds to the agent: a model, a memory, a tool or a knowledge base (*Knowledge from a folder…* indexes a folder into a new keyword-search knowledge base). **These edits change the agent's draft, never the flow**: they are live, in every workflow that runs the agent, only after Publish, so a bubble that was added, changed or removed carries a dashed mark and a hover line; when more than one workflow runs the agent, the edit asks first ("Alert triager runs in 2 workflows: this changes both"). Wiring a flow had before (AG17) is marked: a model or tool moved into the agent shows *moved here* until published, and a sub-node that stayed in the flow says **this flow only** with why, **Try again** where it can, and **Use for <agent> everywhere**. A sub-node still wired into the node keeps its place and the bubbles go right of it. The node creator's **Your agents** lists the saved agents (published first); a click, or a drag onto the canvas, places a Run an Agent node already bound to the agent. The bubbles read `GET /api/agents/:id/connections` (with `draft` and `usedBy`) once per agent and again when it changes (a save, a publish, Spotlight's Apply, in this tab or another). Tidy up and a placed next step keep the bubbles' box clear (a step after the node lands right of it). On a phone the steps list shows a Run an Agent step as "Run an Agent" and a row of mini bubbles (logos only, at most six, then *+N*). A version preview and a run's canvas draw the agent version they pinned, read-only, with a chip reading "<name> v1" ("<name> draft" for a run of the draft), when the host answers AG21's pins route or the run's `versions`; a 404 keeps the plain node.
+
   It outputs `{ reply, sessionId, agentId, version, model, endReason, usage, steps }`, where
   `steps` lists each tool call with its kind and status. Answers and tool calls stream to the
-  editor's chat panel and to streaming triggers. Tools that require approval are refused,
-  because a workflow run has nobody to approve them. Each run is an agent session from the
+  editor's chat panel and to streaming triggers. A tool that asks first (requires approval) is decided by a person, and
+  **Tool Approvals** says where. *Ask (the editor's chat; Needs you when nobody watches)* is the default for steps placed from now
+  on: in a run started from the editor's Chat the execution waits with the approval card in the chat, and Approve or Reject resumes the
+  same agent session (a second approval waits again); in a run nobody watches (webhook, schedule, app trigger, form, error or called
+  workflow) it waits in **Needs you** ([approval-inbox.md](approval-inbox.md): *Production approvals* below). *Refuse* refuses the call, as
+  before; a step saved without the value also refuses (a saved flow runs as before). In the chat's step list the waiting call reads *Waiting for approval*, then *Done* after Approve and *Denied* after Reject (it never reads *Failed*; the hosted chat page says the same). A node
+  with a chat model or tools connected to it, a manual run, the hosted chat page, an MCP call and a workflow an agent calls as a tool still refuse (nothing to decide the call, or it must answer its caller at once).
+
+  **Spotlight approves its own test runs** (AG23, wave ag5). The person's decision of 2026-11-18: *"We can let Spotlight approve
+  automatically when he's fixing. It doesn't have to wait for permission in autonomous mode."* In an Autonomous test-and-fix
+  session the editor's run carries `approvals: 'spotlight'` (with the session's id and the destinations the person gave; only an
+  editor test run of the draft by a signed-in person may carry it, never a trigger, a rerun, an API key or the test-update run).
+  A Run an Agent step in that run lets Spotlight decide each call that asks first (or a held read): the call runs at once when
+  every destination it reaches was already **given** (the agent's saved fixed To / CC / BCC, URL, channel or recipient number, as they
+  stood when the session started: the editor reads the bound agents' config once and sends it with the run in `destinations`, so an address the session itself sets later is never given by being configured; the flow's own sending nodes, once the flow has been published (a brand-new draft's builder addresses are not given, as in AG22); the person's words), and the Run Trace reads *Approved by Spotlight
+  (autonomous fix session)*. Any other call is not run: where the run can wait (the editor, no model or tools wired on the node)
+  it waits for the person as in the editor's chat and the session says *Needs you*; where it can't, it is refused as *Left for you
+  by Spotlight: a destination nobody gave*. An expression or an address that can't be read is never given, a write that names no address
+  (a SQL change, an app call) is given only when the person's words name it, an asks-first workflow tool is always left for the
+  person (the sub-workflow runs with the model's input and can send anywhere), and an address the model chose is sent as it chose
+  it, never rewritten. After a person approves a call that waited, the session resumes in the editor's ask mode: Spotlight no longer
+  decides the later calls of that session, each waits for the person. A sub-agent's call, a remote A2A agent's pause, the smoke test and the eval
+  gate keep refusing. Without the field every run is as before. A person's own decision reads *Approved by you* / *Denied by you*.
+
+  **Production approvals** (AG23, AP02). Every trigger except the manual and the evaluation one starts a run nobody
+  watches (webhook, schedule, channel, app trigger, hosted chat, form, usage event, suggestion decision, detector, cap raise, error
+  workflow, called workflow, MCP call). The person's decision of 2026-11-18: such a run **pauses** at a tool that asks first and
+  waits in Needs you instead of refusing. A Run an Agent step with Tool Approvals *Ask* (nothing wired to it that bypasses a decision, and a host
+  with the approval inbox) runs its agent with `approvals: 'ask'` and `inbox: true`; each held call becomes one inbox request
+  ([approval-inbox.md](approval-inbox.md)) carrying the tool, the parameters it would run with (its fixed parameters and the model's
+  arguments, after the host's secret redaction and a mask over secret-looking keys), where it goes (recipients, URLs, the target's
+  host and port), the workflow and agent versions, and the trigger word. The execution waits (`status: 'waiting'`; a webhook answers
+  `{ status: 'waiting', executionId }`) with the request's expiry as the wait's `until`, saved with the agent session and the node's
+  state, so it survives a restart (`waits.start()` re-arms the expiry at boot) and works in queue mode (the leader keeps the timer, a
+  worker resumes). On every resume the node reads the **inbox record** first: *approved* runs the call once; *denied*, *expired* or
+  *cancelled* is refused (the agent hears why, the run goes on and the step succeeds); a timeout resume with the record still
+  waiting settles it *expired*; if another door settled it first, that word stands. An approval the record does not say is never run.
+  A remote (A2A) agent's own pause in such a run is still auto-rejected, and no agent-session approval email goes out for a workflow's
+  session (the inbox nudges instead). It is said before it bites: `GET /api/workflows/:id/unattended-approvals` returns one
+  `PublishLine` per such tool and trigger: `waitLine` (*In production “Send Email” will wait for your approval in Needs you: a webhook
+  run pauses until someone approves or denies it, and the request expires after 24 h.*) or `refusesLine` with why (Tool Approvals is Refuse,
+  a model or tools wired to the step, an MCP trigger, the hosted chat, no inbox on the host); the publish card, the Publish menu and the
+  session's last line read the same line, and the runtime does what the line says: a run the hosted chat page started (mode `webhook`,
+  with its chat trigger kept on the execution as `triggerType`, also when it starts at a roster target), an MCP trigger's run, and a
+  workflow either of them calls refuse even with *Ask*, and the tool's answer to the agent names the reason. So an anonymous chat
+  visitor never opens a request or sends a nudge. A Spotlight fix session still decides its own test runs as above; a Run a Team member and a
+  kagent agent's pause are not in the inbox yet ([limitations](limitations.md)). Each run is an agent session from the
   workflow. The node is `usableAsTool`, so an AI Agent node can delegate to an agent. It runs
   the agent on Landflow's runtime, also when the agent is deployed to kagent; to call it there,
   use the **A2A Agent** node ([a2a.md](a2a.md)).
@@ -428,9 +916,9 @@ Only one run can be active per session.
   (`{ workflowId, executionId, nodeId, nodeName }`), and a running session is saved as its timeline
   grows (at most every 1.5 s, plus the final save), so its tool calls, and the steps of a remote
   A2A agent in each tool entry's `remote`, can be read mid-run. In the execution view
-  (`/workflows/<wf>/executions/<ex>`) an **Agent session** panel sits between the canvas and the
+  (`/workflows/<wf>/runs/<ex>`) an **Agent session** panel sits between the canvas and the
   logs: it opens by itself while an agent node runs and polls every 2 s, shows the agent's own
-  timeline (the one of the Sessions tab, with each remote agent's commands), and stays after the
+  timeline (the one of Activity → Sessions, with each remote agent's commands), and stays after the
   run, with a link to the session on the agent's page. With several Run an Agent nodes, pick the
   node in the panel's header. Executions from before this change have no linked session.
 
@@ -441,6 +929,31 @@ Only one run can be active per session.
   latest report from `GET /api/executions/:id` (`progress`) and then the live `node.progress`
   events ([a2a.md](a2a.md#the-a2a-agent-node)).
 
+## Project tasks
+
+An agent can be the assignee of a project task ([projects-and-goals.md](projects-and-goals.md#tasks)). A person's **Approve**
+runs it: `runAgent` with `approvals: 'ask'` (a tool that needs approval waits in the session, not refused as in a
+schedule), the task's project and goal in the run context, and the agent's published version. The session has source
+`task` (the sessions tab shows **Task**), the user `task:<taskId>`, and belongs to the task's project like any session
+([sessions belong to a project](projects-and-goals.md#sessions-belong-to-a-project)): the project's allow-list, default
+model, tool kinds and AI budget apply. Its tools' workflows run for the person who approved. A run is always the in-process
+runner's, whatever else runs the agent (kagent).
+
+## Available in
+
+An agent belongs to one project, its home, and is **available** there, in each project it is shared with and, when
+shared with **All projects**, everywhere. Run an Agent lists only the agents available in the workflow's project, and
+one from another project says "From <project>". The home's admins set it with `PUT /api/agents/:id/shares`; a project
+that only uses an agent can pick it in Run an Agent and run it from its workflows, but not change, delete or share it. A session is read and continued
+only from the project it ran in (it holds that project's brief): sharing an agent never shares its sessions, and a member
+of the home project no longer reads the sessions the agent had in other projects
+([sessions belong to a project](projects-and-goals.md#sessions-belong-to-a-project)). A project can also allow only some
+agents and tool kinds, name a default model for agents without one, and add a knowledge base
+([project settings for agents](projects-and-goals.md#project-settings-for-agents)): the model is the workflow node's,
+the router's cheap one, the agent's own, then the project's default. Availability is not
+a wall at run time ([limitations](limitations.md#project-context-wave-7)). See
+[projects-and-goals.md](projects-and-goals.md#agents-across-projects).
+
 ## Version history and restore
 
 Each publish snapshots the agent as a version (the last 20 are kept). The builder's **Publish** menu lists them
@@ -448,15 +961,37 @@ with **Changed:**, the fields that differ from the version before (name, model, 
 limits and so on; the look is left out). **Restore** copies a version into the draft and publishes nothing, so you
 can read it, test it and publish it as a new version. `POST /api/agents/:id/restore { version }`.
 
+**Version history** in the same menu opens the kit's history sheet: every published version with when it went live, who
+published it (versions published since the person was recorded) and the workflows that pin it. Pick any two and
+**Compare** shows what changed field by field (instructions, model, one tool, a skill, a schedule or a channel; credentials by
+name, never their data), reading both versions from `GET /api/agents/:id/versions/:version`. **Restore** is on each kept
+version.
+
+### Versions and the workflows that pin them
+
+Every agent version is also kept in the `agent_versions` table (migration 2906), so a version older than the 20 in the
+history still exists while a workflow version pins it. A workflow version pins the agent versions it was published
+with (`workflow_version_pins`); production runs them until a republish, and each run records the versions it used
+(`execution_agent_versions`). The builder's **Live v3** and each History row say "v2 · used by Alerts v4 (production), Alerts v3" (`GET /api/agents/:id/versions`, `.../versions/:version/connections`), and publishing an agent that live
+workflows pin says they keep the older version until they are republished. An agent a workflow pins cannot be
+deleted without stopping those workflow versions (*… no longer exists*). A backfill at boot (meta key
+`agents.versions.backfilled`) pins what production runs today and changes nothing on a second call. Test-then-publish
+for a workflow is in [the editor](features/editor.md) and Spotlight (`list_agent_updates`, `propose_publish`,
+`propose_agent_update`; the card is [assistant.md](assistant.md#publishing-agent-updates)).
+
 ## Layers
 
-The top of **Abilities** is a checklist of the layers around the agent's model, in the order a request passes through
-them: **system prompt**, **knowledge**, **tools**, **tool access**, **guardrails**, **model router**, **cache**,
-**evals** and **traces**. Each shows what is set (or why it matters), and **Set up** opens the tab and scrolls to the
-setting. A layer that cannot apply is greyed out (no tools means nothing to restrict; the response cache skips agents with
-tools or memory; the prompt cache is on by default for Anthropic). The score ("6 of 8") counts the layers that apply.
-It reads the draft's config and the number of eval test cases, so it needs no component of its own
-(`lib/shared/agent-layers.ts`).
+**Abilities** is a list of rows, one per layer around the agent's model: **Model**, **Capabilities**, **Triggers**,
+**Guardrails**, **Deploy** (only with a kagent cluster or an existing deployment) and **Advanced**. Each row's line says
+what is set: the model, the counts of tools, knowledge bases, skills and plugins (only the non-zero ones), schedules and
+channels, what the guardrails check, "On kagent · name" or "Not deployed", and which of router, cache and tool access
+are on. Clicking a row opens its card in place. The line above the rows ("2 of 5 set up") counts the rows shown that are
+set up.
+
+Older layers fold into the rows: knowledge and tools into Capabilities; the model router, the cache and tool access into
+Advanced; evals live in **Activity → Evaluations**, and the system prompt in the Persona tab. The Insights "Agent
+layers" card still scores the nine layers of `lib/shared/agent-layers.ts` (system prompt, knowledge, tools, tool access,
+guardrails, model router, cache, evals, traces), which are no longer rows here.
 
 ## Model router
 
@@ -477,24 +1012,94 @@ of the agent's config: it is versioned, diffed (**Changed: Router**), exported a
 Because the cheap model is just a model setting, the components behind it are swappable: point it at Ollama today and at
 a gateway (agentgateway, LiteLLM, OpenRouter) tomorrow without touching the agent.
 
-**An LLM gateway.** `deploy/llm-gateway/config.yaml` runs agentgateway (the data plane the MCP gateway already uses, and the
-one kgateway's own docs recommend now that its Envoy-based AI Gateway is deprecated) as one OpenAI-compatible endpoint in
-front of the models: `docker compose -p landflow-infra -f deploy/compose.infra.yml --profile llm-gateway up -d llm-gateway`
-serves `http://127.0.0.1:54100/v1` (admin UI on 55100). Make an **OpenAI API** credential with that base URL and no key, and an
-agent (or the router's cheap model) with the OpenAI provider and a model name from the config (`ollama/qwen3.8`). Each model
-the gateway offers is one entry in its config; the agent never names a provider. On Kubernetes,
-`deploy/k8s/examples/llm-gateway/llm-gateway.yaml` is the same gateway as a ConfigMap, Deployment and Service
-(`http://llm-gateway:3000/v1`).
+**An LLM gateway.** A [LiteLLM](llm-gateway.md) proxy in front of the models is one endpoint for every agent. Set an **Anthropic API** or
+**OpenAI API** credential's **Gateway** to LiteLLM, with the proxy as its Base URL and a virtual key as its API key, and an agent
+that uses it calls the proxy: the model picker lists the gateway's models, the call says which person, project and agent it is for,
+and LiteLLM's call id and cost are kept on the AI call. See [llm-gateway.md](llm-gateway.md#point-landflow-at-it).
+
+## Project context
+
+An agent's persona never names a project. When Landflow runs an agent, the server adds a "Where this work fits" block
+around it: the company mission, the goal chain (company goal, then project goal), the project's brief with its
+constraints and done-when, the words the project uses, its status, and one line saying what this run is (for example
+`workflow “Nightly export” → step “Check invoices”`). The block is data, not instructions, and says so. A value is
+redacted, flattened to one line and cut to a cap before it goes in, so a brief cannot add a heading or a key to the prompt.
+
+**Where it sits.** The system prompt is the persona and instructions, then the skills, then the project block, then
+the remembered facts, then "You are X. Current date and time: …". The date is the time the run began and stays the same
+for every model call of that run (and for a resume after an approval), so the prompt up to the date line is the same on
+every turn and the provider's [prompt cache](#prompt-cache) keeps working. A new run gets a new date.
+
+### The switches and the preview
+
+Settings → Guardrails has the **Project context** switch (Full, Compact, Off: what the agent is told about the project)
+and the **Practices** switch (On, Off: whether approved practices are added to each run; absent counts as On). Both
+save with the rest of the draft. **What it will be given** in the test chat, and **View prompt** in the persona tab,
+show the text the run gets with the saved switches (`GET /api/agents/:id/context-preview`). See
+[Testing an agent in a project](projects-and-goals.md#testing-an-agent-in-a-project).
+
+### Which project a run is in
+
+The caller's project, not the agent's home, so one agent can work for several projects:
+
+1. the project the caller chose (the test chat's `projectId`, after Landflow checks the person has a role in it);
+2. the home project of the workflow the agent runs in (not for an agent's own `agent:` runs, which have no workflow);
+3. the home project of the team, when a team runs it;
+4. the agent's own home project.
+
+The goal is the first of: the one the caller named, the team's `goalId`, the workflow's `settings.goalId`, the project's
+first planned or active goal. A cancelled or missing goal is skipped. With no goal, the mission stands in; with no
+mission, goal or brief there is no block and the prompt is exactly what it was. Schedules, channel messages, Run an
+Agent nodes, teams and approvals need no change of their own: the session already says who started it
+(`refFromSession`). A sub-agent gets the parent's project and goal, with the run line "a task from another agent", and
+applies its own switch. A kagent agent reached over MCP falls back to its own home project for now.
+
+**The switch.** Each agent has `projectContext`: `full` (the default), `compact` (the heading, the goal chain, the brief
+cut to 200 characters, the run line; at most 600 characters) or `off`. Set it through the agent config
+(`PUT /api/agents/:id`, `projectContext`); it is exported with the agent under `.landflow/`. `LANDFLOW_PROJECT_CONTEXT=off`
+switches the whole feature off. A full block is at most 2,400 characters; to fit, the builder drops the words, the
+status, the why, the constraints and the done-when, in that order, then cuts the brief, then the oldest goals.
+
+**Practices.** Each agent also has `practices`: `on` (the default) or `off`. On, a run in a project gets that project's
+and the organization's approved practices in its prompt after this block, and records which it was given and which its
+answer cited ([practices.md](practices.md#landflow-agents)). The same `LANDFLOW_PRACTICES=off` switches them all off.
+
+**Caches.** A short hash of the block joins the [response cache](#response-cache) key and the semantic cache's config
+hash, so an answer given in one project is not served in another, or after the goals change. With no block the keys are the
+same as before. The session keeps the block it got (`session.context`, with the project and goal ids).
+
+**Not in a deployed prompt.** An agent deployed to kagent has its persona baked in at deploy time; that prompt stays
+persona-only. Its project context travels in the message (later work).
 
 ## Prompt cache
 
-Agents on an Anthropic model mark their system prompt and last tool as cache breakpoints (`cache_control: ephemeral`),
-so an agent loop that resends the same prefix on every iteration pays the cached-read price for it. It is always on for
-agents (it changes no answer); a prefix under the model's minimum length is simply not cached. The cached tokens show in
-the session's usage, the cost ledger prices them (Settings → AI prices has the cache read and write prices) and Run Trace
-shows them. Other chat model nodes are unchanged. OpenAI-compatible providers cache automatically on their side, and an
-agent deployed to kagent gets whatever its runtime does: kagent itself only reports `cachedInputTokens`, and has no
-response or semantic cache.
+Agents on an Anthropic model mark three cache breakpoints (`cache_control: ephemeral`), in the API's order: the last
+tool; the end of the **stable** part of the system prompt (the persona or instructions, the skills, the project block and
+the practices); and the last block of the conversation so far. So an agent loop that resends the same prefix on every
+iteration pays the cached-read price for it, and so does the history it has built up. The memory, the intro line
+(`You are "…"`) and the date line come after the second breakpoint, as the system prompt's second text block, so a new
+memory note or a new run's date no longer makes the stable part a miss. The text the model sees is the same as before
+(View prompt and the Run Trace's "What it saw" are unchanged). It is always on for agents (it changes no answer); a prefix
+under the model's minimum length is simply not cached.
+
+The cross-session memory is read once, at the start of a run. A `remember` during the run is saved as before and is in the
+conversation (the tool's result); it reaches the system prompt on the next run, and a run resumed after an approval reads
+it again. The call's `prefixHash` (the AI call's parts) is now the hash of the stable prefix: tools plus stable system.
+
+Measured on a local fake that simulates Anthropic's cache (5 minutes, 1,024-token minimum, 20-block lookback;
+`apps/web/test/prompt-cache-layout.test.ts`, which prints the numbers): a four-iteration run with one `remember`, then a
+second run four minutes later. The old layout read 3,215 cache tokens on iterations 2 to 4 and paid 373 at the full input
+price, and the second run read 1,612; the new layout read 5,054 and paid 0 at full price on iterations 2 to 4, and 3,180
+on the second run. At Sonnet prices the first run went from $0.01541 to $0.00941 and the second from $0.00737 to
+$0.00208. The old layout lost the whole cache on the iteration after a `remember`; the new layout does not. These are the
+fake's numbers, not Anthropic's. The measured agent has no project block (no run-context provider is registered in that
+test) and four node tools plus `remember`; the project block and the practices are covered by the separate draft and hash
+tests, so the printed numbers describe an agent without a block.
+
+The cached tokens show in the session's usage, the cost ledger prices them (Settings → AI prices has the cache read and
+write prices) and Run Trace shows them. Other chat model nodes are unchanged. OpenAI-compatible providers cache
+automatically on their side, and an agent deployed to kagent gets whatever its runtime does: kagent itself only reports
+`cachedInputTokens`, and has no response or semantic cache.
 
 ## Response cache
 
@@ -535,6 +1140,10 @@ often they were served again, with **Clear**; `GET/DELETE /api/agents/:id/cache`
 in `agent_response_cache` (migration 2043) behind the `ResponseCache` interface in
 `lib/server/agents/response-cache.ts`, so the database adapter can be replaced by Valkey or a gateway's cache.
 
+The node-tool dialog (Abilities → Capabilities → a node tool) lists only the credentials the tool's settings use, as the
+node panel does: an HTTP Request tool with Authentication None lists none, with Bearer Auth chosen lists the Bearer slot
+only. A pick stays when the dialog reopens; it is dropped only when the person changes the parameter that hid its slot.
+
 ## Tool access
 
 **Abilities → Tool access** decides which callers may use which tools, so one agent can read for everyone and refund
@@ -542,6 +1151,17 @@ only for admins. Each rule names a **tool** (as the model sees it, or `*`), **wh
 source such as the test chat, a schedule, Telegram, Slack, a workflow or the API; every field given must match) and an
 **effect**: *may use it*, *needs approval* or *may not use it*. The first rule that matches decides; a tool no rule
 matches is allowed, so an agent without rules behaves exactly as before.
+
+**A node tool takes only the arguments its schema offers** (AG08, wave ag2). The model's arguments fill the node's
+parameters of the same name only when the tool's own schema offered them. A tool whose node declares a `toolInputSchema`
+(Acknowledge Alert) or whose parameters hold `$fromAI` placeholders (a Send Email a design made: Subject and Body) takes
+exactly those arguments, so a To the design fixed stays fixed. A tool with neither keeps the generic schema, whose
+"Optional override" arguments name each primitive parameter, so a saved agent's node tool runs as before for its primitive
+parameters (a field-name parameter such as `textField`, or a collection or JSON one such as HTTP Request's `headers`, is
+not offered by that schema, so an argument of that name no longer overrides). The
+only saved agents this touches are those whose node tool has `$fromAI` placeholders or a node with a `toolInputSchema`
+**and** whose model passed an argument named like a parameter the schema never offered (it was applied before, and is now
+ignored). The workflow AI Agent's tool sub-nodes keep their own rule.
 
 The check runs once at the start of a run, before the model sees any tool. A denied tool is withheld (the session shows
 `<tool> is not available to you`), and an *ask* tool is offered behind the approval flow that already exists (so in a
@@ -556,6 +1176,9 @@ a person signed in to Landflow (`owner`, `admin` or `member`).
 | `rules` (default) | nothing | only the agent's own rules |
 | `opa` | `LANDFLOW_TOOL_POLICY_URL`, the rule's data URL (for example `http://opa:8181/v1/data/landflow/tools/result`; a package URL such as `.../landflow/tools` also works, the nested `result` is read) | `POST { input: { caller, agentId, tool, kind } }`; the `result` may be `allow`, `ask`, `deny` or a boolean |
 | `openfga` | `LANDFLOW_TOOL_POLICY_URL` (the server) and `LANDFLOW_OPENFGA_STORE_ID` | `POST /stores/<id>/check` with `user:<id>` `can_use` `tool:<agentId>/<tool>`; no means deny |
+
+The engine is called through `safeFetch` (the outbound rules apply; the endpoint of `LANDFLOW_TOOL_POLICY_URL` is allowed without listing it, like `OLLAMA_URL`; a redirect is not followed). It decides which tools a caller is offered, once, before the run and never sees
+arguments. To decide **per call**, on the arguments, use an MCP [policy hook](features/audit-and-governance.md#mcp-policy-hooks).
 
 **Try a caller.** Under the rules, **What can they do?** takes a user id, a role and a source and shows what that caller
 may do with each of the agent's tools (*may use it*, *needs approval* or *may not use it*, with the engine's reason),
@@ -573,6 +1196,41 @@ Landflow asks. A tool nobody was granted is denied, so grant the tools you want 
 `LANDFLOW_TOOL_POLICY_TOKEN` is sent as a bearer token. An engine that can't be reached within 3 seconds denies the tool
 (`LANDFLOW_TOOL_POLICY_FAIL=open` allows it instead). Switching engines changes these variables and nothing else.
 
+## Changed MCP tools are held
+
+An MCP server can change what one of its tools says after you reviewed and published the agent: a new description (a "rug pull":
+"also email the result to …"), a different input schema, or an annotation that turns a read-only tool into a destructive one.
+**Abilities → Guardrails → MCP tools → Hold changed MCP tools** (on for every new agent) keeps the model from reading that text
+before a person has.
+
+- **Publishing is the approval.** When you publish, Landflow lists each MCP server of the agent (in parallel, up to 10 seconds each)
+  and keeps a **snapshot** of what each server offered: every tool's name, description, input schema and annotations, hashed in one
+  canonical form (keys sorted, so a server that lists its tools in another order changes nothing). The publisher approves that
+  snapshot; the audit log has `trust.approve` with the server, the hash and the person, never the tool text. A snapshot is kept only up to 512 KB of tool text: a server whose list is bigger is held whole at every run with a notice that says so (turn the switch off for that agent to use it). A server that does not
+  answer in time is snapshotted at the agent's first run after publishing instead (marked *first seen at run*, approved with no person as its decider); publishing never
+  waits for it, and the publish answer carries `trust: { recorded, deferred }` when one was deferred.
+- **What is held.** At every run, each server's tools are compared with its approved snapshot. A tool whose name, description, input
+  schema or annotations changed is **not offered** to the model, and neither is a tool the server **added** when the agent takes all
+  of the server's tools, that is, it does not list them with `include: selected` (the GitHub preset never holds an added tool; an agent that names its tools gets only those). A tool the server dropped just goes. The run carries on with
+  the tools that did not change, and its timeline says so: *Tool unavailable: Tracker · search: held, its description changed since
+  the agent was published. Review it on the agent page.* The Test agent chat runs the same check against the last published
+  snapshot, so a person testing sees the hold too.
+- **Review.** The agent page shows a banner, *2 MCP tools changed since this agent was published*, with **Review**. The sheet shows
+  each held tool with the old and the new description, schema and annotations (a flip to destructive is in red), as plain text.
+  **Approve** makes the new content the approved snapshot, so the next run offers the tools; **Keep held** leaves them out (and the
+  same change is not asked about again until the server changes once more). **Needs you** lists one item per agent with changes
+  waiting, *Tracker bot: 2 MCP tools changed*, for the people who may publish the agent; its **Review** opens the sheet.
+  If the server goes back to what was approved, the waiting change settles by itself.
+- **Who decides.** Whoever may change the agent (an editor of its project, an admin), signed in: `POST /api/agents/:id/trust` is never open to an API key. A viewer sees the
+  banner and the changes, without Approve or Keep held. One change waits per server: a newer change replaces an older one that nobody decided, and a change that is served again after it was settled (the server flapped, or went back to an older approved version) is held and listed again.
+- **The switch.** New agents start with it on. An agent from before the switch has it off, and **its next publish turns it on**
+  (until then it runs as before). Turn it off on the same Settings card to use whatever the servers list. Deleting the agent revokes
+  its approvals (`trust.revoke`).
+- **Not covered.** The MCP Client Tool node in a flow lists tools live and is not held; Claude Code plugins packed for kagent are
+  already pinned to a commit; policy hooks on each call ([mcp-policy.md](mcp-policy.md)) work as before and are a separate check.
+  A server whose descriptions carry a timestamp or a count changes every run: it is held each time until you approve, so turn the
+  switch off for that agent.
+
 ## Eval gate
 
 The **Evaluations** tab starts with **Eval gate**: questions the agent must keep answering well, each with an
@@ -582,11 +1240,64 @@ deleted afterwards, so they never show in Sessions or reach online grading) and 
 model, else the agent's own.
 
 **Publish** runs the same check when the agent has cases. The publish is held (409, with the verdict and the run) when
-the draft averages under 3 / 5, or more than 0.5 under the published version's last average. The builder says why and
-offers **Publish anyway** (`{ "skipEval": true }`). A publish that passes saves its run as the new version's baseline;
-a first publish is held only by the 3 / 5 floor. An agent without cases publishes as before.
+the draft averages under 3 / 5, or more than 0.5 under the published version's last average **on the cases both versions
+ran** (AG24, wave ag5). The gate compares like with like: the draft's results are matched by case id with the run the
+published version adopted (`adoptedRunOf`, the newest run saved for that version). With two or more shared cases the means
+on those cases alone are compared (`basis: 'same-cases'`, `shared: n`: *On the 3 cases both versions ran, the draft averages
+3.6 / 5, 0.7 below the published version's 4.3.*) and the whole draft must also clear 3 / 5. With fewer than two shared (a
+change replaced the cases, or the adopted run has no ids, as one adopted before ag5) the draft is judged against the 3.0
+alone (`basis: 'threshold'`: *The draft averages 2.7 / 5 on its new cases, below the 3.0 it asks for.*), and so is an agent
+with no published version. `GATE_MAX_DROP` (0.5) and `GATE_MIN_AVERAGE` (3) are as they were. **A held verdict always
+carries its score**: the verdict (`average`, `basis`, `shared`, `reason`) and the held run's lowest cases (at most three:
+input clipped to 160 characters, score, the judge's reasoning clipped to 200; no reply text) come back in the agent
+publish route's 409 (`gate`), in the workflow publish's held answer (`agent_publish_held`, `gate`; its message reads *The
+eval gate held “X”: <reason>*), and on Spotlight's publish card, which renders the verdict line (*Held by the eval gate: 2.7 / 5
+(judged on its own cases against 3.0). …*) on the first attempt and every later one, never the bare message; the card still
+offers no way round a held gate. The builder says why and
+offers **Publish anyway** (`{ "skipEval": true }`, only ever the person's own click on this page). A publish that passes saves its run as the new version's baseline;
+a first publish is held only by the 3 / 5 floor. An agent without cases publishes as before. An agent the Agent architect
+designed has its 3 to 5 cases from the start ([the brief](#agent-architect)), so its first publish runs the gate.
 
-Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
+**A tool that asks first, and the cases** (AG15, wave ag3). The gate denies approvals, as it must: a test never sends mail. An agent that ends in an approval-gated tool (Send Email) therefore answers "here is the summary; I will send it once you approve", and a case that expects "emails a summary to oncall@landflow.test" would score it as a failure. So the Agent architect's cases for an agent with such a tool expect the ask: its prompt for the cases names the tools that ask first, and Spotlight's design rewrites any case whose expected answer says that tool's effect happened ("Emails a short summary to oncall@landflow.test") to "Drafts a short summary for oncall@landflow.test and asks for approval before sending it" (`asksFirstCases`, `lib/server/assistant/architect.ts`). The input is never changed and addresses, names and ids are kept exactly; a case with no such claim is left as it is, and a case a person wrote or edited is never rewritten. The gate's runs, its judge's calls and the smoke test's count as **agent tests** in Insights → AI (`surface` `agent-test`); a workflow's Run an Agent call stays under workflow and agent runs. A case that negates the effect ("sends no email") or only names an email ("names the phishing email's sender") is left alone. A negation counts only in its own clause (since wave ag3's live pass): in "Normalises it, no IOCs, sev1 with reason, emails oncall@landflow.test." the send's clause becomes "drafts the email for oncall@landflow.test and asks for approval before sending it" and the other clauses stay as written. The judge's calls carry the agent's id, so they count toward its daily and monthly caps and its per-agent spend. The chat route also serves continuations of sessions started by a schedule or a channel, which are labelled agent-test too; calls resumed after Approve open no such scope.
+
+**Cases that make a data agent use its tool, and cases from its own sources** (AG24, wave ag5). For an agent with a data or
+knowledge tool (a database node, a knowledge base, an MCP server) a case asks for what the tool holds without stating it:
+the live run's replacement cases put *North £120k, South £80k, West £95k* in the question, so they tested copying, not the
+tool. The case prompts say so, and the design route checks after the model wrote them (`checkCases`,
+`lib/server/agents/case-rules.ts`): a case drops when a figure (a currency amount, a percentage, or a number of two or more
+digits; a plain year is a date, not a figure) is in both its input and its expected answer, or its expected answer gives
+amounts nobody knows (it should say the agent *answers with the figures from the sales database*); a new case whose input
+equals a removed case's (case, quotes and punctuation folded) or an existing one's is dropped; a knowledge agent's case names
+only documents its knowledge base holds (the file names the base lists, read as the card's *N documents* is): a case about a
+runbook the folder lacks is dropped. When fewer than two cases are left the case writer is asked once more with what was dropped
+and why (`casesAgain`, counted in the architect's scope); still fewer, the change card says the old cases *may now be wrong*
+rather than leaving the agent with none. The same rules run on a new agent's cases.
+
+**A change that keeps what the session added** (AG24, wave ag5). The design route takes `keep: { tools, reason }` (at most 20
+names; `DesignKeep` in `lib/shared/fix-autonomy.ts`): a kept tool (named by its name, node type or the last part of it, case
+and punctuation folded) is never removed because the change's words read as removing it, never merged away by the duplicate
+check, and the preview never says *Removes the tool <it>*; if the design dropped it, it is put back and a `dropped` line says
+*Kept “SQLite”: this session added it*. Without `keep` nothing changes. Revised instructions also read as sentences: a clause
+is cut only outside brackets and backticks, and every rewritten line is checked (balanced brackets and backticks, a numbered
+step that starts with a word, no doubled number, no sentence cut mid-clause); a line that fails takes the model's own line,
+else the base's, else is left out with a `dropped` note, and the steps are numbered again (`wholeSentences`).
+
+A case's text keeps its own quotes (`Hash "password"`); only a pair that wraps the whole input or answer is taken off (`unwrapQuotes`, since wave ag3's live pass, where a case read `Hash "password`).
+
+**A case never names a URL nobody gave** (wave ag3's live pass). The smoke test and the gate run the cases for real, so a case that asks about "the dashboard at https://grafana.example.com/…" would send the agent's HTTP Request to a place nobody named. Spotlight's design drops any case whose input or expected answer names a URL whose host is not in the ask (or the change) nor in a tool's own settings (`casesWithoutMadeUpUrls`, `lib/server/assistant/architect.ts`); the other cases stay as they are, and when fewer than three are left the card's Left row says *Add test cases on the Evaluations tab*.
+
+**The publish is followed** (AG05, wave ag1). The gate runs every case, so a publish takes a while (about 30 s for 3 cases
+on a local model). Before it the editor reads the case count (`GET /api/agents/:id/eval-gate`); the agent page's button then
+reads *Publishing: the eval gate runs 3 cases…* (short on a phone) and a notice says the same, and Spotlight's row and the
+agent's card read *publishing: the eval gate runs 3 cases…* with a spinner (`AgentPublish`, `publishLine` in
+`lib/shared/agent-card.ts`). A held verdict stays: on the agent page a notice (*held by the eval gate: 2.3 / 5 · <the
+verdict>* with **See the cases** and the person's own **Publish anyway**) until the next publish, not a toast; on the row
+and the card the same words in the warning colour with **See the cases** (the Evaluations tab), until the next publish or
+test. Spotlight never sends `skipEval`.
+
+**Smoke test.** Beside the gate, `POST /api/agents/:id/smoke-test { message }` runs the draft once on one message (a throwaway `test` session titled *Smoke test*, approvals denied, deleted after, so it never shows in Sessions) and answers `{ smoke: { state: 'passed' | 'failed' | 'untested', reply?, reason?, ms, tools? } }`. Honest rules (AG05, wave ag1): *untested* with *needs a credential: <tool>* (the first such tool, *and N more*) before anything runs, with no model call, when a node tool's visible required credential slot is unset (the slots the node panel shows for its parameters: an auth method not chosen does not count). After the run, `tools` lists each tool call (`success`, `error` with the error's first sentence, `empty` when the output is nothing or only empty fields, `denied` for a call that needed approval: approvals are always denied here and nothing is sent). *passed* needs a reply and no `error` call and not every call `empty`; else *failed* with the first cause (*Get Alerts failed: …*, *Get Alerts returned nothing to work with*, or *The run ended with an error: …*, *No reply*, *It stopped at its step limit*). A `denied` write no longer fails the test by itself (it did in SB18): it is named in `reason` (*Send Email needs approval: not sent*) and the rest decides; a reason names a tool as a person reads it (the architect's `send_email` is *Send Email*), while `tools` keeps the config's names; a run that ends with no reply because it waited for approval still fails. 400 without a model. Spotlight uses it before it publishes an agent it made ([assistant.md](assistant.md#agents-and-teams)). It is one item with no judge, not the gate: a pass says the agent answers, the gate says it answers well.
+
+Tests: `test/agent-gate-ag3.test.ts`, `test/gate-same-cases-ag5.test.ts`, `test/agent-change-quality-ag5.test.ts`. Routes: `GET/POST/PUT/DELETE /api/agents/:id/eval-gate` (cases and runs; `PUT { version? }` runs the draft or a
 published version). Cases (at most 50 per agent) and the last 30 runs live in `agent_eval_cases` and
 `agent_eval_runs` (migration 2042); deleting the agent removes them.
 
@@ -731,24 +1442,25 @@ through the infra Mailpit (`apps/web/test/approval-email-mailpit.test.ts`, skipp
 |---|---|
 | `GET/POST /api/agents` | list (`AgentSummary[]`, with `marketplace` on agents a marketplace install created), create `{ name?, templateId?, avatar?, color?, icon?, team? }` (an unknown template is 404) |
 | `GET/POST /api/agent-templates`, `DELETE /api/agent-templates/:id` | persona [templates](#templates): built in, then saved (`canEdit`, `projectName`); save `{ agentId, name?, description?, category?, projectId? }`; delete a saved one |
-| `POST /api/assistant/agent` | the [Agent architect](#agent-architect): `{ messages, draft?, model? }` → SSE of `ArchitectEvent` (`text`, `tool`, `draft`, `done`, `error`; types in `apps/web/src/lib/shared/agent-architect.ts`) |
+| `POST /api/assistant/agent` | the [Agent architect](#agent-architect): `{ messages, draft?, model?, resume?: { checkpoint } }` → SSE of `text`, `step.start`, timed `tool` (`id`, `step`, `durationMs`, `detail`), `draft`, `done` (with `costUsd`, `local`) and `error` (`kind`, `checkpoint?`, `step?`); an unknown, expired, another user's or a Spotlight checkpoint answers 409 `checkpoint_expired`. Events as in [assistant.md](assistant.md#the-stream); the extended types are `ArchitectStreamEvent` in `apps/web/src/lib/server/assistant/architect.ts` (the shared `ArchitectEvent` in `lib/shared/agent-architect.ts` does not have them yet) |
 | `POST /api/agents/import` | `{ config }` or a bare exported config → new agent |
 | `GET/PUT/DELETE /api/agents/:id` | the agent; `PUT` replaces the draft (autosave; `persona` parts, blank ones dropped; `model: null` clears the model) |
 | `POST/DELETE /api/agents/:id/publish` | publish the draft as a new version / unpublish; a deployed agent's publish answer has `kagent` (its status, or `{ error }`) |
 | `GET/PUT/DELETE /api/agents/:id/kagent` | the agent on kagent: status (`KagentStatus`: deployment, drift, Ready, A2A URL) / deploy the published version `{ credentialId?, name?, harness? }` / remove; `GET ?credentialId=` also lists that cluster's Harnesses (`harnesses`, or `harnessError`) ([a2a.md](a2a.md#landflow-agents-on-kagent)) |
 | `POST /api/mcp/agents/:id` | the agent's tools over MCP, for kagent (the bearer token in the agent's kagent Secret only); `?tools=free` / `?tools=approval` serve only the tools that run freely / need approval (Claude Code's two servers) |
 | `GET /v2/…` | Landflow's OCI registry, pull only: the images of Claude Code plugins packed for kagent, by digest (public) ([a2a.md](a2a.md#on-claude-code)) |
-| `POST /api/agents/:id/chat` | `{ message, sessionId? }` → SSE of `AgentStreamEvent` (draft, source `test`) |
+| `GET/POST /api/agents/:id/trust` | the agent's [held MCP tools](#changed-mcp-tools-are-held): `{ holdChangedTools, canDecide, held: [{ subjectId, toolConfigName, hash, firstSeenAt, changes: [{ name, change: 'changed' \| 'added', before?, after, fields }] }] }` for anyone who can read the agent; `POST { subjectId, hash, decision: 'approve' \| 'reject' }` → `{ record }` for whoever may change the agent (a viewer 403, no access 404; a hash that is not pending 409; session only, an API key is refused) |
+| `POST /api/agents/:id/chat` | `{ message, sessionId? }` → SSE of `AgentStreamEvent`. Always runs the **draft** (`version: 'draft'`, source `test`), never the published version: use a channel, a schedule or the Run an Agent node for that |
 | `POST /api/agents/:id/sessions/:sid/approvals` | `{ callId, approved }` → the same SSE stream once the run resumes |
 | `POST /api/slack/events/:agentId/:channelId` | Slack Events API of the agent's Slack channel (signed by Slack) |
 | `POST /api/slack/commands/:agentId/:channelId` | Slack slash commands of the agent's Slack channel (signed by Slack; answered on the `response_url`) |
-| `POST /api/slack/interactions` | Slack interactivity: the Approve / Reject buttons of agents and AI Agent nodes (signed by Slack) |
+| `POST /api/slack/interactions` | Slack interactivity: the Approve / Reject buttons of agents and AI Agent nodes, and Ask a Person's Approve / Edit / Reject with its edit modal (signed by Slack) |
 | `POST /api/teams/messages/:agentId/:channelId` | Bot Framework messaging endpoint of the agent's Teams channel (bearer JWT validated) |
 | `GET/POST /api/approvals/email/:token` | the links of approval emails: GET confirms, POST decides once (signed token) |
 | `GET /api/insights/ai-usage?agentId=` | the agent's tokens and estimated cost: totals, per model, per day, `today` and `month` |
 | `GET /api/agents/:id/sessions`, `GET/DELETE /api/agents/:id/sessions/:sid` | session list / full session (`feedback`: the thumbs up / down per reply) |
 | `GET /api/agents/:id/sessions?executionId=&nodeId=` | `{ sessions }`: the full sessions (timeline included, oldest first) that a workflow run started with Run an Agent nodes, optionally of one node; the execution view's Agent session panel polls it |
-| `GET /api/agents/:id/sessions/:sid/feedback`, `PUT` `{ entryId, rating: 'up' \| 'down' \| null, comment? }` | read / set the rating of one assistant reply (the Sessions tab's thumbs). A thumbs down on an agent with online grading enabled grades that reply ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)) |
+| `GET /api/agents/:id/sessions/:sid/feedback`, `PUT` `{ entryId, rating: 'up' \| 'down' \| null, comment? }` | read / set the rating of one assistant reply (the thumbs in Activity → Sessions). A thumbs down on an agent with online grading enabled grades that reply ([Hosted chat and widget](features/ai.md#hosted-chat-and-widget)) |
 | `GET /api/agents/models?provider&credentialId&baseUrl` | `{ options: ModelOption[], error? }` |
 | `GET /api/agents/workflow-tools` | workflows with `eligible` and the `reason` when they aren't |
 | `GET/PUT /api/agents/:id/evaluations` | online grading: `{ report: OnlineEvalReport }` (settings, scores, trend); `PUT` changes the settings |

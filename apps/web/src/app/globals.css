@@ -166,6 +166,8 @@
   --shadow-pop: var(--shadow-pop);
   --animate-in: wr-in 0.2s ease-out;
   --animate-pulse-soft: wr-pulse 1.4s ease-in-out infinite;
+  /* The soft caret after a streaming reply (chat-motion.tsx); the reduced-motion block below holds it still. */
+  --animate-caret: lf-caret 1.1s steps(1, end) infinite;
   --animate-pop: lf-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   --animate-shake: lf-shake 0.4s ease-in-out;
   --animate-fade-up: lf-fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -202,6 +204,15 @@
   40%,
   80% {
     translate: 3px;
+  }
+}
+/* A drafted flow's nodes arrive left to right (ai-builder.tsx): opacity only, as the node's wrapper carries its position. */
+.lf-arrive {
+  animation: lf-arrive 0.45s ease-out both;
+}
+@keyframes lf-arrive {
+  from {
+    opacity: 0;
   }
 }
 @keyframes lf-fade-up {
@@ -346,6 +357,15 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+@keyframes lf-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
   }
 }
 @keyframes wr-pulse {
@@ -503,6 +523,43 @@ body {
   }
 }
 
+/*
+ * Keyboard focus (docs/ui-review.md#controls): every button, link, tab and menu item shows the same ring when reached by
+ * Tab, and none when clicked. A component's own focus-visible style still wins (:where adds no specificity).
+ */
+:where(button, a, [role='tab'], [role='menuitem'], [role='switch'], summary):focus-visible {
+  outline: 2px solid var(--ac);
+  outline-offset: 2px;
+}
+
+/* Every checkbox and radio in the accent colour (components/ui/inputs.tsx Checkbox for a labelled one). */
+:where(input[type='checkbox'], input[type='radio']) {
+  accent-color: var(--ac2);
+  cursor: pointer;
+}
+:where(input[type='checkbox'], input[type='radio']):disabled {
+  cursor: not-allowed;
+}
+
+/*
+ * Phones (below md): text fields at 16px so iOS doesn't zoom into them on focus, and room under the page for the tab bar
+ * (sidebar.tsx) where it shows.
+ */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+  body:has(nav[data-tabbar]) main {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+  /* The full-screen node editor covers Spotlight's sheet: toasts go just above its Run bar instead. */
+  body:has([data-node-editor]) {
+    --toast-bottom: calc(72px + env(safe-area-inset-bottom)) !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -510,5 +567,9 @@ body {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+  .lf-arrive,
+  .react-flow__edge-path {
+    animation-delay: 0s !important;
   }
 }

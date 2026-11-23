@@ -5,6 +5,7 @@
  * Telegram node, so the bot token stays in the vault and the plugin owns the API. Runs here never
  * pause for approvals: nobody is watching, so tools that need one are refused.
  */
+import { asAuthor } from './author';
 import { nanoid } from 'nanoid';
 import { defaultVersionOf, PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
 import type { Agent, AgentChannel, AgentSchedule } from '../../shared/agents';
@@ -15,8 +16,9 @@ import { logger } from '../telemetry';
 import { isDue } from './cron';
 import { newSession, runAgent } from './runtime';
 import { agentStore } from './store';
+import { envNumber } from '../config';
 
-const CHANNEL_POLL_MS = Math.max(2, Number(process.env.LANDFLOW_AGENT_CHANNEL_POLL_SECONDS ?? 5)) * 1_000;
+const CHANNEL_POLL_MS = envNumber('LANDFLOW_AGENT_CHANNEL_POLL_SECONDS', { fallback: 5, min: 2 }) * 1_000;
 const TELEGRAM_TRIGGER = 'messaging.telegramTrigger';
 const TELEGRAM = 'messaging.telegram';
 const TELEGRAM_CREDENTIAL = 'messaging.telegramApi';
@@ -110,6 +112,8 @@ async function handleUpdate(agent: Agent, version: number, channel: AgentChannel
   // A conversation started on an older version moves to the current one.
   if (session && session.version !== version) session = { ...session, version };
   session ??= newSession(agent, { source: 'telegram', userId: `telegram:${update.from?.id ?? chatId}`, version, conversationKey: key });
+  // A group chat is shared: this message's author is who memory recalls for and writes to, not whoever opened it (C09).
+  session = asAuthor(session, `telegram:${update.from?.id ?? chatId}`);
   void callTelegram(agent, channel, TELEGRAM, { resource: 'message', operation: 'sendChatAction', chatId: String(chatId), action: 'typing' }).catch(() => {});
   const result = await runAgent({ agent, session, message: text, approvals: 'deny', rootTrace: true });
   const reply =

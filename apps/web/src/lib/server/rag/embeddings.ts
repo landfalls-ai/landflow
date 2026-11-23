@@ -5,6 +5,8 @@
  */
 import { NodeOperationError } from '@landflow/sdk';
 import type { Embeddings } from '@landflow/engine';
+import { safeFetch } from '../net/safe-fetch';
+import type { EmbeddingsIdentity } from './chunk-diff';
 import { openAiEmbeddings, type OpenAiConnection } from '../nodes/models';
 import { traceEmbeddings } from '../telemetry';
 
@@ -28,7 +30,7 @@ async function inBatches(texts: string[], size: number, embed: (batch: string[])
   return vectors;
 }
 
-export function ollamaEmbeddings(options: OllamaEmbeddingsOptions): Embeddings {
+export function ollamaEmbeddings(options: OllamaEmbeddingsOptions): EmbeddingsIdentity {
   const base = options.baseUrl.replace(/\/+$/, '');
   const url = URL.canParse(base) ? new URL(base) : undefined;
   const attributes = { ...(url && { 'server.address': url.hostname }), ...(url?.port && { 'server.port': Number(url.port) }) };
@@ -40,7 +42,7 @@ export function ollamaEmbeddings(options: OllamaEmbeddingsOptions): Embeddings {
       async () => {
         let response: Response;
         try {
-          response = await fetch(`${base}/api/embed`, {
+          response = await safeFetch(`${base}/api/embed`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ model: options.model, input, truncate: true, ...(options.dimensions && { dimensions: options.dimensions }) }),
@@ -75,19 +77,23 @@ export function ollamaEmbeddings(options: OllamaEmbeddingsOptions): Embeddings {
   return {
     provider: 'ollama',
     model: options.model,
+    ...(options.dimensions && { dimensions: options.dimensions }),
+    endpoint: base,
     embedDocuments: (texts, signal) => inBatches(texts.map((t) => (options.documentPrefix ?? '') + t), batchSize, (batch) => embed(batch, signal)),
     embedQuery: async (text, signal) => (await embed([(options.queryPrefix ?? '') + text], signal))[0],
   };
 }
 
 /** OpenAI or any OpenAI-compatible server (the `openAiApi` credential), through `POST /embeddings`. */
-export function openAiCompatibleEmbeddings(connection: OpenAiConnection, options: { model: string; dimensions?: number; batchSize?: number }): Embeddings {
+export function openAiCompatibleEmbeddings(connection: OpenAiConnection, options: { model: string; dimensions?: number; batchSize?: number }): EmbeddingsIdentity {
   const batchSize = Math.max(1, options.batchSize ?? 100);
   const embed = async (input: string[], signal?: AbortSignal) =>
     (await openAiEmbeddings(connection, options.model, input, { ...(options.dimensions && { dimensions: options.dimensions }), ...(signal && { signal }) })).vectors;
   return {
     provider: connection.system,
     model: options.model,
+    ...(options.dimensions && { dimensions: options.dimensions }),
+    endpoint: connection.base,
     embedDocuments: (texts, signal) => inBatches(texts, batchSize, (batch) => embed(batch, signal)),
     embedQuery: async (text, signal) => (await embed([text], signal))[0],
   };

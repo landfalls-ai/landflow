@@ -1,0 +1,586 @@
+{
+  "$comment": "The work.* event kinds the activity integrations suggest (docs/protocol.md §16) and the ones people's own tools send (docs/work-and-briefings.md). Declared with deploy/scripts/declare-work-kinds.mjs; every kind has the same fields, the activity item's flat part plus the coding-session ones (repo, branch, areas, commits, turns, endedAt). POST /api/brain/work declares work.session itself on first use. The GitHub kinds (work.pr_closed … work.ci_passed) list their own fields, the Git host's, because a kind declares at most 20.",
+  "fields": [
+    {
+      "name": "source",
+      "type": "string",
+      "required": true,
+      "description": "The tool the activity happened in: slack, google-drive, notion, linear…"
+    },
+    {
+      "name": "sourceId",
+      "type": "string",
+      "required": true,
+      "description": "Stable id of this version of the item in its tool (replaying it is the same event)"
+    },
+    {
+      "name": "url",
+      "type": "string",
+      "description": "Link to the item"
+    },
+    {
+      "name": "actor",
+      "type": "string",
+      "description": "Email of the person who did it"
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "description": "One line: the message, page, issue, deal or meeting"
+    },
+    {
+      "name": "summary",
+      "type": "string",
+      "description": "What happened, clipped to 200 characters"
+    },
+    {
+      "name": "team",
+      "type": "string",
+      "description": "Team hint (a shared drive, a Linear team, a channel mapping)"
+    },
+    {
+      "name": "initiative",
+      "type": "string",
+      "description": "Initiative or project hint"
+    },
+    {
+      "name": "customer",
+      "type": "string",
+      "description": "Customer hint (a customer channel, folder, company or attendee domain)"
+    },
+    {
+      "name": "occurredAt",
+      "type": "string",
+      "description": "When it happened (ISO 8601)"
+    },
+    {
+      "name": "repo",
+      "type": "string",
+      "description": "The repository, owner/name"
+    },
+    {
+      "name": "branch",
+      "type": "string",
+      "description": "The branch"
+    },
+    {
+      "name": "areas",
+      "type": "string",
+      "description": "Directory names touched, comma-joined"
+    },
+    {
+      "name": "commits",
+      "type": "number",
+      "description": "Commits made"
+    },
+    {
+      "name": "turns",
+      "type": "number",
+      "description": "Turns of the conversation with the assistant"
+    },
+    {
+      "name": "prs",
+      "type": "number",
+      "description": "Pull requests opened or merged"
+    },
+    {
+      "name": "prUrl",
+      "type": "string",
+      "description": "The first pull request"
+    },
+    {
+      "name": "endedAt",
+      "type": "string",
+      "description": "When it ended (ISO 8601)"
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "work.discussion",
+      "description": "A message or comment in a discussion (Slack, Linear or Attio comments)"
+    },
+    {
+      "kind": "work.decision",
+      "description": "A decision someone recorded"
+    },
+    {
+      "kind": "work.bug_reported",
+      "description": "A bug was reported"
+    },
+    {
+      "kind": "work.release",
+      "description": "Something shipped: a release, a completed project or cycle"
+    },
+    {
+      "kind": "work.deal_won",
+      "description": "A deal was won"
+    },
+    {
+      "kind": "work.deal_moved",
+      "description": "A deal or pipeline entry changed stage"
+    },
+    {
+      "kind": "work.meeting_scheduled",
+      "description": "A meeting was scheduled or changed (it hasn't ended)"
+    },
+    {
+      "kind": "work.meeting_held",
+      "description": "A meeting took place"
+    },
+    {
+      "kind": "work.meeting_cancelled",
+      "description": "A meeting was cancelled (only when a trigger's Include Cancelled Events is on)"
+    },
+    {
+      "kind": "work.meeting_notes",
+      "description": "Notes or a summary of a meeting"
+    },
+    {
+      "kind": "work.action_item",
+      "description": "An action item or task someone owns"
+    },
+    {
+      "kind": "work.doc_edited",
+      "description": "A document or page was created or edited"
+    },
+    {
+      "kind": "work.ticket_moved",
+      "description": "A ticket or issue changed state"
+    },
+    {
+      "kind": "work.feature_request",
+      "description": "A feature was requested"
+    },
+    {
+      "kind": "work.pr_opened",
+      "description": "A pull request was opened (from a Git host integration, or from claude-code, landflow-cli and mcp)"
+    },
+    {
+      "kind": "work.pr_merged",
+      "description": "A pull request was merged (from a Git host integration, or from claude-code, landflow-cli and mcp)"
+    },
+    {
+      "kind": "work.pr_closed",
+      "description": "A pull request was closed without being merged",
+      "fields": [
+        {
+          "name": "source",
+          "type": "string",
+          "required": true,
+          "description": "The tool the activity happened in: slack, google-drive, notion, linear…"
+        },
+        {
+          "name": "sourceId",
+          "type": "string",
+          "required": true,
+          "description": "Stable id of this version of the item in its tool (replaying it is the same event)"
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "Link to the item"
+        },
+        {
+          "name": "actor",
+          "type": "string",
+          "description": "Email of the person who did it"
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "description": "One line: the message, page, issue, deal or meeting"
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "description": "What happened, clipped to 200 characters"
+        },
+        {
+          "name": "repo",
+          "type": "string",
+          "description": "The repository, owner/name"
+        },
+        {
+          "name": "occurredAt",
+          "type": "string",
+          "description": "When it happened (ISO 8601)"
+        },
+        {
+          "name": "prNumber",
+          "type": "number",
+          "description": "The pull request number"
+        },
+        {
+          "name": "state",
+          "type": "string",
+          "description": "The pull request’s state: open, merged or closed"
+        },
+        {
+          "name": "reviewState",
+          "type": "string",
+          "description": "A review’s state: approved, changes_requested or commented"
+        },
+        {
+          "name": "ciConclusion",
+          "type": "string",
+          "description": "How a CI run or status ended: success, failure, timed_out, error…"
+        },
+        {
+          "name": "ciDurationMs",
+          "type": "number",
+          "description": "How long the CI run took, in milliseconds"
+        },
+        {
+          "name": "ciAttempt",
+          "type": "number",
+          "description": "Which attempt of the CI run this was"
+        },
+        {
+          "name": "waitedMs",
+          "type": "number",
+          "description": "How long a pull request waited for the review, in milliseconds"
+        }
+      ]
+    },
+    {
+      "kind": "work.pr_reviewed",
+      "description": "A pull request was reviewed: approved, changes requested or commented (the state only, never the text)",
+      "fields": [
+        {
+          "name": "source",
+          "type": "string",
+          "required": true,
+          "description": "The tool the activity happened in: slack, google-drive, notion, linear…"
+        },
+        {
+          "name": "sourceId",
+          "type": "string",
+          "required": true,
+          "description": "Stable id of this version of the item in its tool (replaying it is the same event)"
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "Link to the item"
+        },
+        {
+          "name": "actor",
+          "type": "string",
+          "description": "Email of the person who did it"
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "description": "One line: the message, page, issue, deal or meeting"
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "description": "What happened, clipped to 200 characters"
+        },
+        {
+          "name": "repo",
+          "type": "string",
+          "description": "The repository, owner/name"
+        },
+        {
+          "name": "occurredAt",
+          "type": "string",
+          "description": "When it happened (ISO 8601)"
+        },
+        {
+          "name": "prNumber",
+          "type": "number",
+          "description": "The pull request number"
+        },
+        {
+          "name": "state",
+          "type": "string",
+          "description": "The pull request’s state: open, merged or closed"
+        },
+        {
+          "name": "reviewState",
+          "type": "string",
+          "description": "A review’s state: approved, changes_requested or commented"
+        },
+        {
+          "name": "ciConclusion",
+          "type": "string",
+          "description": "How a CI run or status ended: success, failure, timed_out, error…"
+        },
+        {
+          "name": "ciDurationMs",
+          "type": "number",
+          "description": "How long the CI run took, in milliseconds"
+        },
+        {
+          "name": "ciAttempt",
+          "type": "number",
+          "description": "Which attempt of the CI run this was"
+        },
+        {
+          "name": "waitedMs",
+          "type": "number",
+          "description": "How long a pull request waited for the review, in milliseconds"
+        }
+      ]
+    },
+    {
+      "kind": "work.review_requested",
+      "description": "A review was requested on a pull request",
+      "fields": [
+        {
+          "name": "source",
+          "type": "string",
+          "required": true,
+          "description": "The tool the activity happened in: slack, google-drive, notion, linear…"
+        },
+        {
+          "name": "sourceId",
+          "type": "string",
+          "required": true,
+          "description": "Stable id of this version of the item in its tool (replaying it is the same event)"
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "Link to the item"
+        },
+        {
+          "name": "actor",
+          "type": "string",
+          "description": "Email of the person who did it"
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "description": "One line: the message, page, issue, deal or meeting"
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "description": "What happened, clipped to 200 characters"
+        },
+        {
+          "name": "repo",
+          "type": "string",
+          "description": "The repository, owner/name"
+        },
+        {
+          "name": "occurredAt",
+          "type": "string",
+          "description": "When it happened (ISO 8601)"
+        },
+        {
+          "name": "prNumber",
+          "type": "number",
+          "description": "The pull request number"
+        },
+        {
+          "name": "state",
+          "type": "string",
+          "description": "The pull request’s state: open, merged or closed"
+        },
+        {
+          "name": "reviewState",
+          "type": "string",
+          "description": "A review’s state: approved, changes_requested or commented"
+        },
+        {
+          "name": "ciConclusion",
+          "type": "string",
+          "description": "How a CI run or status ended: success, failure, timed_out, error…"
+        },
+        {
+          "name": "ciDurationMs",
+          "type": "number",
+          "description": "How long the CI run took, in milliseconds"
+        },
+        {
+          "name": "ciAttempt",
+          "type": "number",
+          "description": "Which attempt of the CI run this was"
+        },
+        {
+          "name": "waitedMs",
+          "type": "number",
+          "description": "How long a pull request waited for the review, in milliseconds"
+        }
+      ]
+    },
+    {
+      "kind": "work.ci_failed",
+      "description": "A CI run or commit status failed",
+      "fields": [
+        {
+          "name": "source",
+          "type": "string",
+          "required": true,
+          "description": "The tool the activity happened in: slack, google-drive, notion, linear…"
+        },
+        {
+          "name": "sourceId",
+          "type": "string",
+          "required": true,
+          "description": "Stable id of this version of the item in its tool (replaying it is the same event)"
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "Link to the item"
+        },
+        {
+          "name": "actor",
+          "type": "string",
+          "description": "Email of the person who did it"
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "description": "One line: the message, page, issue, deal or meeting"
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "description": "What happened, clipped to 200 characters"
+        },
+        {
+          "name": "repo",
+          "type": "string",
+          "description": "The repository, owner/name"
+        },
+        {
+          "name": "occurredAt",
+          "type": "string",
+          "description": "When it happened (ISO 8601)"
+        },
+        {
+          "name": "prNumber",
+          "type": "number",
+          "description": "The pull request number"
+        },
+        {
+          "name": "state",
+          "type": "string",
+          "description": "The pull request’s state: open, merged or closed"
+        },
+        {
+          "name": "reviewState",
+          "type": "string",
+          "description": "A review’s state: approved, changes_requested or commented"
+        },
+        {
+          "name": "ciConclusion",
+          "type": "string",
+          "description": "How a CI run or status ended: success, failure, timed_out, error…"
+        },
+        {
+          "name": "ciDurationMs",
+          "type": "number",
+          "description": "How long the CI run took, in milliseconds"
+        },
+        {
+          "name": "ciAttempt",
+          "type": "number",
+          "description": "Which attempt of the CI run this was"
+        },
+        {
+          "name": "waitedMs",
+          "type": "number",
+          "description": "How long a pull request waited for the review, in milliseconds"
+        }
+      ]
+    },
+    {
+      "kind": "work.ci_passed",
+      "description": "A CI run or commit status passed",
+      "fields": [
+        {
+          "name": "source",
+          "type": "string",
+          "required": true,
+          "description": "The tool the activity happened in: slack, google-drive, notion, linear…"
+        },
+        {
+          "name": "sourceId",
+          "type": "string",
+          "required": true,
+          "description": "Stable id of this version of the item in its tool (replaying it is the same event)"
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "Link to the item"
+        },
+        {
+          "name": "actor",
+          "type": "string",
+          "description": "Email of the person who did it"
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "description": "One line: the message, page, issue, deal or meeting"
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "description": "What happened, clipped to 200 characters"
+        },
+        {
+          "name": "repo",
+          "type": "string",
+          "description": "The repository, owner/name"
+        },
+        {
+          "name": "occurredAt",
+          "type": "string",
+          "description": "When it happened (ISO 8601)"
+        },
+        {
+          "name": "prNumber",
+          "type": "number",
+          "description": "The pull request number"
+        },
+        {
+          "name": "state",
+          "type": "string",
+          "description": "The pull request’s state: open, merged or closed"
+        },
+        {
+          "name": "reviewState",
+          "type": "string",
+          "description": "A review’s state: approved, changes_requested or commented"
+        },
+        {
+          "name": "ciConclusion",
+          "type": "string",
+          "description": "How a CI run or status ended: success, failure, timed_out, error…"
+        },
+        {
+          "name": "ciDurationMs",
+          "type": "number",
+          "description": "How long the CI run took, in milliseconds"
+        },
+        {
+          "name": "ciAttempt",
+          "type": "number",
+          "description": "Which attempt of the CI run this was"
+        },
+        {
+          "name": "waitedMs",
+          "type": "number",
+          "description": "How long a pull request waited for the review, in milliseconds"
+        }
+      ]
+    },
+    {
+      "kind": "work.self_update",
+      "description": "Someone posted an update on their own work (a project update, a stand-up)"
+    },
+    {
+      "kind": "work.session",
+      "description": "A working session in a coding tool or another harness (the Claude Code mod, landflow work, MCP)"
+    }
+  ]
+}

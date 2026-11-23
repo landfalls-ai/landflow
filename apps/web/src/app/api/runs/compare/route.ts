@@ -19,10 +19,12 @@ export const GET = handler(async (request: Request) => {
   const b = q.get('b')?.trim();
   if (!a || !b) return error('Give two runs: ?a=<executionId>&b=<executionId>', 400);
   const visible = visibleIds(routeActor(), 'workflow', store.listWorkflows().map((w) => w.id));
-  const digests = [a, b].map((id) => {
-    const digest = digestOf(id);
-    return digest && (!visible || (digest.workflowId && visible.has(digest.workflowId))) ? digest : undefined;
-  });
+  const digests = await Promise.all(
+    [a, b].map(async (id) => {
+      const digest = await digestOf(id);
+      return digest && (!visible || (digest.workflowId && visible.has(digest.workflowId))) ? digest : undefined;
+    }),
+  );
   if (!digests[0]) return error(`Run ${a} not found`, 404);
   if (!digests[1]) return error(`Run ${b} not found`, 404);
   return json(compareRuns(digests[0], digests[1]));

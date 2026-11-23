@@ -1,23 +1,15 @@
 /**
- * Shared pieces of the /api/data-tables routes: a handler that turns
- * DataTableError into JSON errors with its status, and the zod schemas of
- * filters and row queries.
+ * Shared pieces of the /api/data-tables routes: the route handler (DataTableError
+ * is an HttpError, so `handler` answers it with its status) and the zod schemas
+ * of filters and row queries.
  */
 import { z } from 'zod';
 import { CONDITION_OPERATORS, type ConditionOperator, type RowQuery } from '../../shared/data-tables';
-import { error, handler } from '../http';
-import { DataTableError } from './storage';
+import { handler } from '../http';
 
-/** `handler` plus DataTableError → `{ error }` with the error's status. */
+/** `handler`: DataTableError is an HttpError, so `handler` answers it itself; the name stays for the routes that import it. */
 export function dataTableRoute<A extends unknown[]>(fn: (...args: A) => Promise<Response>) {
-  return handler(async (...args: A) => {
-    try {
-      return await fn(...args);
-    } catch (caught) {
-      if (caught instanceof DataTableError) return error(caught.message, caught.status);
-      throw caught;
-    }
-  });
+  return handler(fn);
 }
 
 const operators = CONDITION_OPERATORS.map((o) => o.value) as [ConditionOperator, ...ConditionOperator[]];

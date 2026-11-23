@@ -21,5 +21,8 @@
     "@opentelemetry/sdk-trace": "^3.0.0",
     "@types/node": "^22.20.5",
     "vitest": "^5.0.5"
+  },
+  "optionalDependencies": {
+    "isolated-vm": "^6.2.0"
   }
 }

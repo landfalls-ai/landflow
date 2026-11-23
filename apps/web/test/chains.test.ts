@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { defineNode } from '@landflow/sdk';
 import type { ExecutionResult, LanguageModel } from '@landflow/engine';
+import { takeCallDraft } from '@/lib/server/ai-usage/call-context';
+import type { PromptDraft } from '@/lib/server/ai-usage/call-context';
 import { attributesSchema, CLASSIFIER_OUTPUTS, textClassifierNode } from '@/lib/server/nodes/chains';
 import type { GenerateInput } from '@/lib/server/nodes/models';
 import { parseJsonReply, validateSchema } from '@/lib/server/nodes/structured';
@@ -12,6 +14,8 @@ type Reply = string | ((input: GenerateInput) => string);
 /** A chat model sub-node that answers from a script and records what it was asked. */
 function scriptedModel(replies: Reply[]) {
   const calls: GenerateInput[] = [];
+  // The prompt draft each call carried (what writes the call's split into `ai_call_parts`).
+  const drafts: Array<PromptDraft | undefined> = [];
   const node = defineNode({
     description: {
       name: 'scripted',
@@ -30,13 +34,14 @@ function scriptedModel(replies: Reply[]) {
       model: 'scripted',
       async generate(input) {
         calls.push({ ...input, messages: [...input.messages] });
+        drafts.push(takeCallDraft());
         const next = replies.shift();
         if (next === undefined) throw new Error('No scripted reply left');
         return { text: typeof next === 'function' ? next(input) : next, toolCalls: [], stopReason: 'stop' };
       },
     }),
   });
-  return { node, calls };
+  return { node, calls, drafts };
 }
 
 /** Root node "Root" fed by Start, with the scripted model on its Chat Model port. */
@@ -53,7 +58,7 @@ async function chain(
     [['Start', 'Root'], ['Model', 'Root', 'ai_languageModel'], ...(more.edges ?? [])],
     { input, extra: { scripted: model.node } },
   );
-  return { result, calls: model.calls, outputs: () => outputsOf(result, 'Root') };
+  return { result, calls: model.calls, drafts: model.drafts, outputs: () => outputsOf(result, 'Root') };
 }
 
 const failure = (result: ExecutionResult, name = 'Root') => (result.runData[name] ?? []).filter((run) => run.source === 'main').at(-1)?.error;
@@ -116,6 +121,22 @@ describe('structured output helpers', () => {
 });
 
 describe('Basic LLM Chain', () => {
+  it('hands each call its prompt draft, so the call gets a split in ai_call_parts (fails without the draft)', async () => {
+    const { drafts } = await chain('core.chainLlm', { prompt: 'Summarise {{ $json.t }}', systemMessage: 'Be terse' }, ['ok']);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]?.segments.map((segment) => [segment.part, segment.where])).toEqual([
+      ['instructions', 'system'],
+      ['userMessage', 'messages'],
+    ]);
+  });
+
+  it('hands the structured path (output parser, classifier) a draft for every attempt', async () => {
+    const schema = { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] };
+    const { drafts } = await chain('core.chainLlm', { prompt: 'Why?', hasOutputParser: true, jsonSchema: JSON.stringify(schema) }, ['not json', '{"answer":"x"}']);
+    expect(drafts).toHaveLength(2);
+    expect(drafts.every((draft) => draft && draft.segments.length > 0)).toBe(true);
+  });
+
   it('sends the prompt per item and returns the text', async () => {
     const { calls, outputs } = await chain(
       'core.chainLlm',

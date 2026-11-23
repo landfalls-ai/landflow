@@ -21,6 +21,7 @@ import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { HelpTip } from '@/components/ui/help-tip';
 import { FieldLabel, SectionLabel, Select, Switch, Textarea } from '@/components/ui/inputs';
 
 interface GovernanceView {
@@ -105,7 +106,12 @@ function NodesCard({ view, admin, save }: { view: GovernanceView; admin: boolean
     <Card className="space-y-3 p-4">
       <div>
         <div className="text-[13px] font-semibold text-t1">Nodes</div>
-        <p className="text-[12px] text-t3">Node types workflows and agents may use. Blocked nodes are hidden from the node picker, flagged on import and save, refused at publish and fail at run time. A project (its Settings tab) and a workflow (its settings) can narrow this further.</p>
+        <p className="text-[12px] text-t3">
+          Node types workflows and agents may use.
+          <HelpTip label="What blocking does" className="ml-1 align-middle">
+            Blocked nodes are hidden from the node picker, flagged on import and save, refused at publish and fail at run time. A project (its Settings tab) and a workflow (its settings) can narrow this further.
+          </HelpTip>
+        </p>
       </div>
       <ModePicker value={mode} onChange={setMode} modes={LIST_MODES} disabled={!admin} />
       {mode !== 'off' && (
@@ -257,8 +263,10 @@ function FourEyesCard({ view, admin, save }: { view: GovernanceView; admin: bool
       <div>
         <div className="text-[13px] font-semibold text-t1">Four-eyes publishing</div>
         <p className="text-[12px] text-t3">
-          Publishing, rolling back and unpublishing need a second person: Publish asks for approval instead, and someone else approves or rejects it. A request goes stale when the draft or
-          the live version changes before it is decided. Nobody can approve their own request.
+          Publishing, rolling back and unpublishing need a second person.
+          <HelpTip label="How four-eyes publishing works" className="ml-1 align-middle">
+            Publish asks for approval instead, and someone else approves or rejects it. A request goes stale when the draft or the live version changes before it is decided. Nobody can approve their own request.
+          </HelpTip>
         </p>
       </div>
       <Toggle checked={draft.enabled} onChange={(value) => set({ enabled: value })} disabled={!admin}>
@@ -378,8 +386,10 @@ export function GovernanceSettings() {
       <p className="flex items-start gap-2 text-[13px] text-t2">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-t3" />
         <span>
-          Instance-wide rules for what workflows may do and who may put them live. Rules apply to every workflow, trigger and agent run, on this host and its workers. With every rule off,
-          nothing changes. {updated}
+          Instance-wide rules for what workflows may do and who may put them live.
+          <HelpTip label="How the policy applies" className="ml-1 align-middle">
+            Rules apply to every workflow, trigger and agent run, on this host and its workers. With every rule off, nothing changes. {updated}
+          </HelpTip>
           {!admin && ' Only admins can change the policy.'}
         </span>
       </p>

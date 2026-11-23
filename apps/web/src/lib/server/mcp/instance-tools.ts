@@ -9,7 +9,7 @@ import { governedSave } from '../governance/saves';
 import { currentActorId } from '../auth/context';
 import { z } from 'zod';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
-import type { JsonObject, NodeItem } from '@landflow/protocol';
+import { DECIDE_OUTPUTS_NOTE, type JsonObject, type NodeItem } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import type { ExecutionRecord, ExecutionSummary, NodeTypeInfo } from '../../shared/types';
 import { PARAMETER_FORMATS } from '../flow-builder';
@@ -19,16 +19,27 @@ import { findTrigger, lastNodeItems, liveExecution, liveExecutions, publicUrl, r
 import { workflowSchema } from '../schemas';
 import { protectedMessage } from '../environments/protection';
 import { isProtectedEnvironment } from '../environments/settings';
+import { listExecutionsPage } from '../executions-query';
 import { store } from '../store';
 import { startTrigger } from '../telemetry';
 import { canResource, creationProject, filterVisible, resourceDenial, type Actor } from '../projects/access';
 import { getProject } from '../projects/store';
 import { inScope, type McpScope } from './project-servers';
 import { createIn } from '../projects/http';
+import { registerAgentTools } from './agent-tools'; // AG18:
+import { registerMemoryTools } from './memory-tools'; // C08:
 import type { ResourceAction } from '../../shared/projects';
 import { MCP_SERVER_VERSION, textResult } from './server';
+import type { ApiKeyScope } from '../../shared/auth';
+import { toolAllowed } from '../../shared/mcp';
+import { registerBrainPrompts } from './brain-prompts';
+import { registerBrainTools } from './brain-tools';
+import { registerPracticeTools } from './practice-tools'; // PR04
+import { registerProjectTools } from './project-tools'; // PC10
 import { registerDebugTools } from './debug-tools';
-import { normalizeWorkflow, validateWorkflow, type WorkflowInput } from './workflows';
+import { listAgentUpdates } from '../assistant/publish-tools'; // AG21:
+import { registerRunLogTool } from './run-log-tool'; // AG20:
+import { normalizeWorkflow, remapOutputConnections, validateWorkflow, type WorkflowInput } from './workflows';
 
 const INSTRUCTIONS = `Landflow is an n8n-like workflow platform. A workflow is a graph of nodes: a trigger starts it, items (JSON objects) flow along "main" connections from left to right, and each node processes the items it gets.
 
@@ -38,6 +49,7 @@ How to build one:
 3. Connections go from source to target by node name. "sourceIndex" picks the output (If/Filter: 0 = true, 1 = false). AI sub-nodes (chat models, memory, tools) connect from the sub-node to the root node with type ai_languageModel, ai_memory or ai_tool.
 4. validate_workflow (it warns when an expression reads a field the node before it does not write), then create_workflow or update_workflow (nodes and connections given to update_workflow replace the current ones), then execute_workflow to test and get_execution to see each node's output.
 5. When a run fails: explain_failure (failing node, resolved parameters, sample input, upstream fields, what to check), get_run_trace (the journal), get_plugin_logs (a node plugin's output), then run_node to reproduce on a pinned input and retry_execution to continue after a fix.
+The second brain: check_overlap before building (is anyone already doing this?), brain_search_facts, brain_workflow_knowledge, brain_list_suggestions, brain_usage_report, brain_ask to ask in words, brain_search_knowledge for passages of the company's Notion pages (a project linked to Notion; each result has its Notion URL), brain_suggest to post a suggestion, my_briefing for the person's own day, my_ai_spend for their own AI spend and record_work to save what they did (private to them).
 Credentials can't be created here: nodes that need one get it chosen in the editor (the workflow's url).
 
 ${PARAMETER_FORMATS}`;
@@ -85,6 +97,8 @@ const failure = (message: string): CallToolResult => textResult(message, true);
 const workflowUrl = (id: string) => `${publicUrl()}/workflows/${id}`;
 
 const MAX_OUTPUT_ITEMS = 25;
+/** list_executions with a status reads at most this many pages of 200 saved runs (the status is in SQL; only access is filtered after). */
+const STATUS_SCAN_PAGES = 10;
 
 /** Items as JSON, at most MAX_OUTPUT_ITEMS. */
 function itemsJson(items: NodeItem[]): { items: JsonObject[]; total: number; truncated?: true } {
@@ -137,7 +151,7 @@ export function executionDigest(record: ExecutionRecord, includeData: boolean) {
     nodes,
     output: itemsJson(lastNodeItems(record)),
     ...(includeData && { runData: record.runData }),
-    url: `${workflowUrl(record.workflowId)}/executions/${record.executionId}`,
+    url: `${workflowUrl(record.workflowId)}/runs/${record.executionId}`,
   };
 }
 
@@ -153,12 +167,20 @@ function startNode(workflow: Workflow, ref?: string) {
  * `resourceCan`), and what they create goes to their personal project. Without one (the instance access token) the
  * server acts for the instance and checks nothing, as before.
  */
-export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
+export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: readonly ApiKeyScope[], keyId?: string): McpServer {
   const project = scope && getProject(scope.projectId);
   const server = new McpServer(
     { name: 'landflow', title: project ? `Landflow · ${project.name}` : 'Landflow', version: MCP_SERVER_VERSION },
     { instructions: project ? `${SCOPE_NOTE(project.name)}\n\n${INSTRUCTIONS}` : INSTRUCTIONS },
   );
+  // B13: an API key sees and calls only the tools its scopes cover (lib/shared/mcp.ts TOOL_SCOPES): a tool it may not use is registered
+  // disabled (so tools/list leaves it out) and its handler checks again. Other callers keep every tool.
+  const register = server.registerTool.bind(server) as (name: string, config: unknown, cb: (...args: unknown[]) => unknown) => { disable(): void };
+  (server as { registerTool: unknown }).registerTool = (name: string, config: unknown, cb: (...args: unknown[]) => unknown) => {
+    const tool = register(name, config, (...args) => (toolAllowed(keyScopes, name) ? cb(...args) : failure(`This API key's scopes do not allow ${name}`)));
+    if (!toolAllowed(keyScopes, name)) tool.disable();
+    return tool;
+  };
   /** The refusal for `actor` doing `action` with a workflow, or undefined when allowed (a workflow they cannot see is "not found"; neither is one outside the project this server is scoped to). */
   const denied = (id: string, action: ResourceAction): CallToolResult | undefined => {
     if (!inScope(scope, id)) return failure(`Workflow ${id} not found`);
@@ -269,13 +291,20 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
       if (refused) return refused;
       const defined = Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined));
       let merged: Record<string, unknown> = { ...existing, ...defined };
+      let droppedConnections: string[] = [];
       if (changes.nodes || changes.connections) {
         merged = normalizeWorkflow({ ...merged, nodes: (changes.nodes ?? existing.nodes) as WorkflowInput['nodes'], connections: changes.connections ?? existing.connections } as WorkflowInput, existing);
+        // Nodes without connections: a Decide whose options changed keeps each connection on its option.
+        if (changes.nodes && !changes.connections) {
+          const remapped = remapOutputConnections(existing, merged.nodes as Parameters<typeof remapOutputConnections>[1]);
+          merged = { ...merged, connections: remapped.connections };
+          droppedConnections = remapped.dropped;
+        }
       }
       const parsed = workflowSchema.safeParse(merged);
       if (!parsed.success) return failure(`Invalid workflow: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
       const { workflow: saved, extras } = governedSave({ ...existing, ...parsed.data, id } as Workflow, existing, (w) => store.saveWorkflow(w), { by: currentActorId(), source: 'mcp' });
-      return json({ id: saved.id, name: saved.name, active: Boolean(saved.active), url: workflowUrl(saved.id), validation: validateWorkflow(saved), ...extras });
+      return json({ id: saved.id, name: saved.name, active: Boolean(saved.active), url: workflowUrl(saved.id), validation: validateWorkflow(saved), ...(droppedConnections.length && { droppedConnections }), ...extras });
     },
   );
 
@@ -368,6 +397,7 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
         version: descriptor.version,
         inputs: descriptor.inputs,
         outputs: descriptor.outputs,
+        ...(descriptor.outputs.some((p) => p.expand) && { outputsFollow: DECIDE_OUTPUTS_NOTE }),
         ...(descriptor.credentials?.length && { credentials: descriptor.credentials }),
         ...(descriptor.toolDescription && { toolDescription: descriptor.toolDescription }),
         ...(descriptor.outputSchema && { outputSchema: descriptor.outputSchema }),
@@ -404,13 +434,14 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
       const start = startNode(workflow, ref);
       if (ref && !start) return failure(`No node "${ref}" in “${workflow.name}”`);
       const triggerItems: NodeItem[] = (Array.isArray(input) ? input : input ? [input] : [{}]).map((json) => ({ json: json as JsonObject }));
-      const options = { workflow, mode: 'mcp' as const, ...(start && { startNodeId: start.id }), triggerItems };
+      // The caller is who started it (`startedBy`): nodes that guard other people's data judge the run by them (nodes/briefing.ts).
+      const options = { workflow, mode: 'mcp' as const, ...(start && { startNodeId: start.id }), triggerItems, ...(actor && { startedBy: actor.id }) };
       const trigger = startTrigger({ source: 'mcp', workflowId: workflow.id, nodeName: start?.name });
       try {
         if (wait === false) {
           const executionId = await context.with(trigger.context, () => startInBackground(options));
           trigger.end();
-          return json({ executionId, status: 'running', url: `${workflowUrl(id)}/executions/${executionId}` });
+          return json({ executionId, status: 'running', url: `${workflowUrl(id)}/runs/${executionId}` });
         }
         const record = await context.with(trigger.context, () => runWorkflow(options));
         trigger.end();
@@ -436,9 +467,25 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
     },
     async ({ workflowId, status, limit }) => {
       const max = limit ?? 20;
-      const all: ExecutionSummary[] = [...liveExecutions(workflowId), ...store.listExecutions({ workflowId, limit: status ? Number.POSITIVE_INFINITY : max })];
       const seen = new Set<string>();
-      const list = all.filter((e) => !seen.has(e.id) && seen.add(e.id) && (!status || e.status === status) && (!actor || canResource(actor, 'workflow', e.workflowId, 'read')) && inScope(scope, e.workflowId)).slice(0, max);
+      const list: ExecutionSummary[] = [];
+      const take = (rows: ExecutionSummary[]) => {
+        for (const e of rows) {
+          if (list.length >= max) return;
+          if (!seen.has(e.id) && seen.add(e.id) && (!status || e.status === status) && (!actor || canResource(actor, 'workflow', e.workflowId, 'read')) && inScope(scope, e.workflowId)) list.push(e);
+        }
+      };
+      take(liveExecutions(workflowId));
+      if (!status) take(store.listExecutions({ workflowId, limit: max }));
+      else if (status !== 'running') {
+        // The status is filtered in SQL and saved runs are read a page at a time, never the whole history at once.
+        let cursor: string | undefined;
+        for (let pages = 0; list.length < max && pages < STATUS_SCAN_PAGES; pages += 1) {
+          const page = listExecutionsPage({ workflowId, status, limit: 200, cursor });
+          take(page.executions);
+          if (!(cursor = page.nextCursor)) break;
+        }
+      }
       return json({
         executions: list.map((e) => ({
           id: e.id,
@@ -463,7 +510,7 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
       annotations: READ_ONLY,
     },
     async ({ id, includeData }) => {
-      const record = liveExecution(id) ?? store.getExecution(id);
+      const record = liveExecution(id) ?? (await store.loadExecution(id));
       if (record && (denied(record.workflowId, 'read') || !inScope(scope, record.workflowId))) return failure(`Execution ${id} not found`);
       return record ? json(executionDigest(record, Boolean(includeData))) : failure(`Execution ${id} not found`);
     },
@@ -479,6 +526,37 @@ export function instanceServer(actor?: Actor, scope?: McpScope): McpServer {
     workflowUrl,
     digest: executionDigest,
   });
+
+  registerRunLogTool(server, { actor, inScope: (id) => inScope(scope, id), json, failure }); // AG20:
+
+  registerBrainTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure });
+  registerMemoryTools(server, { actor, scope, keyId, keyScopes, failure }); // C08: the nine memory tools
+  // PR04: practices (tools and resources)
+  registerPracticeTools(server, { actor, scope, denied: (id, action) => denied(id, action), json, failure, keyScopes });
+  registerProjectTools(server, { actor, scope, json, failure, keyScopes }); // PC10
+  registerAgentTools(server, { actor, scope, json, failure }); // AG18: the tenant reads and the agent writes
+  // AG21: the agents a production workflow has newer versions of (publishing stays a person's click: no MCP publish tool).
+  server.registerTool(
+    'list_agent_updates',
+    {
+      title: 'List agent updates',
+      description:
+        'Which agents have a newer published version than the one a production workflow runs: with workflowId, that workflow\'s; with agentId, the production workflows that run an older version of that agent. A production workflow keeps the agent version it was published with until it is published again.',
+      inputSchema: z.object({ workflowId: z.string().optional(), agentId: z.string().optional() }),
+      annotations: READ_ONLY,
+    },
+    async ({ workflowId, agentId }) => {
+      if (workflowId) {
+        const refusal = denied(workflowId, 'read');
+        if (refusal) return refusal;
+        return json(listAgentUpdates({ workflowId }));
+      }
+      if (!agentId) return failure('Give a workflowId or an agentId');
+      return json({ updates: listAgentUpdates({ agentId }).updates.filter((u) => inScope(scope, u.workflowId) && (!actor || canResource(actor, 'workflow', u.workflowId, 'read'))) });
+    },
+  );
+  // The caller's briefing as a prompt and resources: for a person who may read the brain (not the instance access token).
+  if (actor && toolAllowed(keyScopes, 'my_briefing')) registerBrainPrompts(server, actor);
 
   return server;
 }

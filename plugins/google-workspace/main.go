@@ -35,7 +35,7 @@ func newPlugin() *landflow.Plugin {
 		ID:          "google",
 		Name:        "Google Workspace",
 		Version:     "0.1.0",
-		Description: "Google Sheets, Gmail, Drive, Calendar and Docs, with polling triggers for new rows and new emails.",
+		Description: "Google Sheets, Gmail, Drive, Calendar, Docs and the Workspace directory, with polling triggers for new rows, new emails, Drive changes and calendar changes.",
 		Icon:        "file:icons/google-workspace.svg",
 		Color:       "#4285F4",
 		Author:      "Landflow",
@@ -51,8 +51,11 @@ func newPlugin() *landflow.Plugin {
 		GmailNode{},
 		GmailTriggerNode{},
 		DriveNode{},
+		DriveTriggerNode{},
 		CalendarNode{},
+		CalendarTriggerNode{},
 		DocsNode{},
+		DirectoryNode{},
 	)
 }
 

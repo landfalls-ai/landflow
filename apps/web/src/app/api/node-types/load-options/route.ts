@@ -4,6 +4,7 @@ import { credentials } from '@/lib/server/credentials/vault';
 import { withTableScope } from '@/lib/server/datatables/projects';
 import { registry } from '@/lib/server/plugins/registry';
 import { handler, json, parseBody } from '@/lib/server/http';
+import { resourceAccess } from '@/lib/server/projects/access';
 import { canResource, homeProjectId, projectRole, requireResource } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
 
@@ -33,7 +34,7 @@ export const POST = handler(async (request: Request) => {
   const projectId =
     workflowId && canResource(actor, 'workflow', workflowId, 'read')
       ? homeProjectId('workflow', workflowId)
-      : agentId && canResource(actor, 'agent', agentId, 'read')
+      : agentId && resourceAccess(actor, 'agent', agentId)?.home
         ? homeProjectId('agent', agentId)
         : requested && projectRole(actor, requested)
           ? requested

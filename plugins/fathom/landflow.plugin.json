@@ -1,0 +1,5 @@
+{
+  "id": "fathom",
+  "runtime": "node",
+  "start": ["tsx", "src/main.ts"]
+}

@@ -1,7 +1,10 @@
 import vm from 'node:vm';
+import { currentCallNote, withCallNote } from '../ai-usage/call-context'; // SP03:
+import { plainDraft } from '../ai-usage/drafts'; // SP03:
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem } from '@landflow/sdk';
 import { splitToolOutput, toToolName, type AgentMemory, type AgentMessage, type AgentTool, type ToolCall, type ToolResult } from '@landflow/engine';
 import { credentialIdOf } from '../ai-usage/credential-id';
+import { singleton } from '../singleton';
 import { parseAddresses, sendApprovalEmails } from '../approval-email';
 import { mailConfigured } from '../auth/mail';
 import { approvalBlocks, postMessage, SLACK_CREDENTIAL, SLACK_OAUTH2_CREDENTIAL, slackCredential } from '../slack';
@@ -9,10 +12,12 @@ import { DEFAULT_KEPT_TOOL_IMAGES, hydrateToolImages, imageSizeLabel, storeToolI
 import { BINARY_INPUT_OPTIONS, MEMORY_FILE_OPTIONS, optionalAttachments, reattachRemembered, withoutAttachmentData, type MediaOptions } from './attachments';
 import { connectedModel, FALLBACK_PORT, FALLBACK_PROPERTY, isFallbackModel } from './fallback';
 import { anthropicModel, ollamaModel } from './models';
+import { ollamaUrl } from '../config';
+import type { ToolTarget } from '../../shared/tool-target'; // AG14:
 
 const main = [{ type: 'main' as const }];
 /** Default Ollama address for new model nodes (OLLAMA_URL, e.g. host.docker.internal in a container). */
-const DEFAULT_OLLAMA_URL = (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
+const defaultOllamaUrl = () => ollamaUrl();
 
 // ---------------------------------------------------------------------------
 // AI Agent (root node)
@@ -189,6 +194,9 @@ export const aiAgentNode = defineNode({
     const [memory] = await connection<AgentMemory>('ai_memory');
     const tools = dedupe(await connection<AgentTool>('ai_tool'));
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    // AG14: what each tool reaches (its sub-node's credential and parameters), for the chat's via line; never a secret.
+    const targets = await toolTargets(ctx, tools);
+    const targetOf = (name: string) => (targets.get(name) ? { target: targets.get(name) } : {});
 
     // Back after a tool approval (WaitRequest.rerun): the loop continues where it stopped.
     const saved = ctx.getNodeState?.() as AgentNodeState | undefined;
@@ -238,7 +246,7 @@ export const aiAgentNode = defineNode({
       const invoke = async (call: ToolCall): Promise<ToolResult> => {
         const tool = byName.get(call.name);
         if (!tool) return { id: call.id, name: call.name, content: `Unknown tool "${call.name}"`, isError: true };
-        send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'started', input: call.input as JsonObject } });
+        send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'started', input: call.input as JsonObject, ...targetOf(call.name) } }); // AG14:
         try {
           const output = await tool.invoke(call.input);
           const { text: content, images: returned } = splitToolOutput(output);
@@ -247,13 +255,13 @@ export const aiAgentNode = defineNode({
           const labels = images.map(imageSizeLabel);
           run.steps.push({ tool: call.name, input: call.input, output: images.length ? content : output, ...(images.length && { images: images.map((image) => ({ mimeType: image.mimeType, size: image.ref?.fileSize ?? 0, ...(image.ref?.id && { ref: image.ref.id }) })) }) });
           const shown = labels.length ? `${content.slice(0, 2_000)}\n[${labels.map((l) => `image: ${l}`).join('; ')}]` : content.slice(0, 2_000);
-          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'finished', output: shown } });
+          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'finished', output: shown, ...targetOf(call.name) } }); // AG14:
           return { id: call.id, name: call.name, content, ...(images.length && { images }) };
         } catch (error) {
           const message = (error as Error).message;
           run.steps.push({ tool: call.name, input: call.input, output: message, isError: true });
           ctx.logger.warn(`tool ${call.name} failed: ${message}`);
-          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'failed', output: message.slice(0, 2_000) } });
+          send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'failed', output: message.slice(0, 2_000), ...targetOf(call.name) } }); // AG14:
           return { id: call.id, name: call.name, content: `Error: ${message}`, isError: true };
         }
       };
@@ -290,7 +298,9 @@ export const aiAgentNode = defineNode({
               send({ type: 'item', itemIndex: i, content: delta });
             }
           : undefined;
-        const turn = await model.generate({ system, messages: await hydrateToolImages(ctx, run.messages, { model, keep: toolImagesKept, mode: toolImagesMode }), tools, ...(onToken && { onToken }) });
+        const hydrated = await hydrateToolImages(ctx, run.messages, { model, keep: toolImagesKept, mode: toolImagesMode });
+        // An outer purpose wins (an evaluation run's calls stay `eval`); else this is an answer.
+        const turn = await withCallNote({ purpose: currentCallNote().purpose ?? 'answer', iteration: run.iterations, draft: plainDraft({ system, tools, messages: hydrated }) }, () => model.generate({ system, messages: hydrated, tools, ...(onToken && { onToken }) })); // SP03:
         run.usage.inputTokens += turn.usage?.inputTokens ?? 0;
         run.usage.outputTokens += turn.usage?.outputTokens ?? 0;
         run.messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls, ...(turn.raw && { raw: turn.raw }) });
@@ -304,7 +314,7 @@ export const aiAgentNode = defineNode({
         const results = await Promise.all(runnable.map(invoke));
         if (waiting.length) {
           await askForApproval(ctx, i, approval, waiting);
-          for (const call of waiting) send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'approval', input: call.input as JsonObject } });
+          for (const call of waiting) send?.({ type: 'tool', itemIndex: i, tool: { id: call.id, name: call.name, status: 'approval', input: call.input as JsonObject, ...targetOf(call.name) } }); // AG14:
           send?.({ type: 'end', itemIndex: i });
           ctx.setNodeState?.({
             progress: { item: i, out, ...run, pending: { calls: waiting, results } },
@@ -369,19 +379,23 @@ interface AgentNodeState {
 }
 
 /** A person's decisions, from the approval route (`{ decisions: { [callId]: { approved, by, input? } } }`): `input` is what they edited. */
-export function decisionsOf(resume: AgentNodeState['$resume']): Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject }> {
+export function decisionsOf(resume: AgentNodeState['$resume']): Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject; text?: string; comment?: string; choice?: string }> {
   const data = resume?.data as { decisions?: unknown; body?: { decisions?: unknown } } | undefined;
   const raw = (data?.decisions ?? data?.body?.decisions) as Record<string, unknown> | undefined;
-  const decisions: Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject }> = {};
+  const decisions: Record<string, { approved: boolean; by?: string; at?: string; input?: JsonObject; text?: string; comment?: string; choice?: string }> = {};
   for (const [id, value] of Object.entries(raw ?? {})) {
     if (typeof value === 'boolean') decisions[id] = { approved: value };
     else if (value && typeof value === 'object') {
-      const v = value as { approved?: unknown; by?: unknown; at?: unknown; input?: unknown };
+      const v = value as { approved?: unknown; by?: unknown; at?: unknown; input?: unknown; text?: unknown; comment?: unknown; choice?: unknown };
       decisions[id] = {
         approved: Boolean(v.approved),
         ...(typeof v.by === 'string' && { by: v.by }),
         ...(typeof v.at === 'string' && { at: v.at }),
         ...(v.approved === true && typeof v.input === 'object' && v.input !== null && !Array.isArray(v.input) ? { input: v.input as JsonObject } : {}),
+        // Ask a Person: the text a person edited before approving, and a note.
+        ...(v.approved === true && typeof v.text === 'string' && { text: v.text }),
+        ...(typeof v.comment === 'string' && { comment: v.comment }),
+        ...(v.approved === true && typeof v.choice === 'string' && { choice: v.choice }),
       };
     }
   }
@@ -441,7 +455,7 @@ export function approvalSettings(ctx: IExecuteContext, itemIndex: number, mode =
  * `data.approval` is what the chat panel, the execution view and POST /api/executions/:id/approvals read;
  * with Slack, each call is posted as a message with Approve / Reject buttons first.
  */
-export async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings: ApprovalSettings, calls: ToolCall[], extra: JsonObject = {}, title?: string) {
+export async function askForApproval(ctx: IExecuteContext, itemIndex: number, settings: ApprovalSettings, calls: ToolCall[], extra: JsonObject = {}, title?: string, until?: string /* AP02: the approval inbox's expiry */) {
   if (!ctx.putExecutionToWait) throw new NodeOperationError('Tool approvals need a host that can pause executions');
   const node = ctx.getNode();
   const approval: JsonObject = {
@@ -484,7 +498,7 @@ export async function askForApproval(ctx: IExecuteContext, itemIndex: number, se
   ctx.putExecutionToWait({
     resume: 'webhook',
     rerun: true,
-    ...(settings.timeoutMinutes > 0 && { until: new Date(Date.now() + settings.timeoutMinutes * 60_000).toISOString() }),
+    ...(until ? { until } : settings.timeoutMinutes > 0 && { until: new Date(Date.now() + settings.timeoutMinutes * 60_000).toISOString() }),
     data: { approval, ...extra },
   });
 }
@@ -566,6 +580,20 @@ export const anthropicChatModelNode = defineNode({
   },
 });
 
+/** The models an Ollama server holds, as picker options (the Ollama Chat Model and Decide nodes both list them). */
+export async function ollamaModelOptions(baseUrl: string, withTools = true): Promise<Array<{ name: string; value: string; description: string }>> {
+  const base = (baseUrl || defaultOllamaUrl()).replace(/\/+$/, '');
+  const response = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3_000) });
+  const data = (await response.json()) as { models: Array<{ name: string; details?: { parameter_size?: string }; capabilities?: string[] }> };
+  return data.models
+    .filter((m) => !m.capabilities || m.capabilities.includes('completion'))
+    .map((m) => ({
+      name: m.name,
+      value: m.name,
+      description: [m.details?.parameter_size, withTools ? (m.capabilities?.includes('tools') ? 'tools ✓' : 'no tool support') : undefined].filter(Boolean).join(' · '),
+    }));
+}
+
 export const ollamaChatModelNode = defineNode({
   description: {
     name: 'ollamaChatModel',
@@ -581,7 +609,7 @@ export const ollamaChatModelNode = defineNode({
     inputs: [],
     outputs: modelOutput,
     properties: [
-      { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: DEFAULT_OLLAMA_URL },
+      { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: defaultOllamaUrl() },
       {
         name: 'model',
         displayName: 'Model',
@@ -602,16 +630,7 @@ export const ollamaChatModelNode = defineNode({
   methods: {
     loadOptions: {
       async models(ctx) {
-        const base = String(ctx.getCurrentParameters().baseUrl || DEFAULT_OLLAMA_URL).replace(/\/+$/, '');
-        const response = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3_000) });
-        const data = (await response.json()) as { models: Array<{ name: string; details?: { parameter_size?: string }; capabilities?: string[] }> };
-        return data.models
-          .filter((m) => !m.capabilities || m.capabilities.includes('completion'))
-          .map((m) => ({
-            name: m.name,
-            value: m.name,
-            description: [m.details?.parameter_size, m.capabilities?.includes('tools') ? 'tools ✓' : 'no tool support'].filter(Boolean).join(' · '),
-          }));
+        return ollamaModelOptions(String(ctx.getCurrentParameters().baseUrl || ''));
       },
     },
   },
@@ -621,7 +640,7 @@ export const ollamaChatModelNode = defineNode({
 // Memory & tools (sub-nodes)
 // ---------------------------------------------------------------------------
 
-const memoryStore = ((globalThis as { __landflowMemory?: Map<string, AgentMessage[]> }).__landflowMemory ??= new Map());
+const memoryStore = singleton('agent-memory', () => new Map<string, AgentMessage[]>());
 
 export const simpleMemoryNode = defineNode({
   description: {
@@ -671,6 +690,8 @@ export const calculatorToolNode = defineNode({
     color: '#f472b6',
     inputs: [],
     outputs: [{ type: 'ai_tool', displayName: 'Tool' }],
+    // C13: pure arithmetic changes nothing, so an AI Judge may use it.
+    toolAnnotations: { readOnlyHint: true },
     properties: [],
   },
   supplyData(ctx): AgentTool {
@@ -696,3 +717,24 @@ export const calculatorToolNode = defineNode({
     };
   },
 });
+
+/** AG14: the target of each tool of an AI Agent node, from the sub-node that supplies it (the node of the graph that runs: the saved workflow in the editor's manual and chat runs, the published one otherwise: its type, credentials and parameters). */
+export async function toolTargets(ctx: IExecuteContext, tools: AgentTool[]): Promise<Map<string, ToolTarget>> {
+  const found = new Map<string, ToolTarget>();
+  try {
+    const workflowId = ctx.getWorkflowId();
+    if (!workflowId || tools.length === 0) return found;
+    const [{ workflowForCall }, { targetOfNode }, { store }] = await Promise.all([import('../publish'), import('../agents/tool-target'), import('../store')]);
+    // AG14: the graph that runs. The editor's manual and chat runs run the saved workflow; production modes run the published one.
+    const mode = ctx.getMode();
+    const saved = mode === 'manual' || mode === 'chat';
+    const nodes = (saved ? store.getWorkflow(workflowId) : workflowForCall(workflowId, mode))?.nodes ?? [];
+    for (const tool of tools) {
+      const node = tool.nodeId ? nodes.find((n) => n.id === tool.nodeId) : undefined;
+      if (node) found.set(tool.name, targetOfNode(node.type, node.credentials, node.parameters));
+    }
+  } catch {
+    // A target is a courtesy: a run never fails for want of one.
+  }
+  return found;
+}

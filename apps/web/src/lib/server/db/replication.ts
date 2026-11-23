@@ -5,7 +5,9 @@
  * processes, each batch also sends `pg_notify('landflow_changes', …)` in the same transaction, so the others hear of
  * it exactly when it commits, in commit order. A notice names the rows: small ones inline, big ones (run data) by
  * primary key, which the receiver reads back from Postgres. Rows this process wrote and has not yet replayed are left
- * alone (its own write lands later and wins on Postgres too). A lost LISTEN connection reloads the copy.
+ * alone (its own write lands later and wins on Postgres too). A lost LISTEN connection reloads the copy. The copy holds
+ * only the hot part of the run history (./hot-mirror): a run's data stays out of it, and so do the journal events of a
+ * cold run, and a row that arrives already cold is evicted at once.
  *
  * SQLite on one host (LANDFLOW_QUEUE_ALLOW_SQLITE): the processes share the file, so only caches need telling; the
  * cluster runtime broadcasts the names of the tables written (lib/server/cluster).
@@ -16,7 +18,10 @@
 import type { StatementSync } from 'node:sqlite';
 import type { Client, Pool } from 'pg';
 import { logger } from '../telemetry/logger';
+import { singleton } from '../singleton';
 import { upsertSql, type Database, type SqlValue, type WriteOp } from './database';
+import { registerReplicationMetrics } from './replication-metrics';
+import { evictCooling, hotCutoff, isCold, mirrorSelect } from './hot-mirror';
 import { TABLES, type TableName } from './schema';
 
 export const CHANGES_CHANNEL = 'landflow_changes';
@@ -36,6 +41,8 @@ export interface ChangeNotice {
   /** The instance that wrote it. */
   o: string;
   c: Change[];
+  /** When it was sent (ms since the epoch, just before the commit): the receiver's replication lag is measured from it. */
+  t?: number;
 }
 
 /** The primary key values of a row, or undefined when the row doesn't name them all. */
@@ -56,12 +63,12 @@ export function rowIdOf(op: WriteOp): string | undefined {
 }
 
 /** The notices (pg_notify payloads) for a batch of writes. */
-export function noticesFor(origin: string, ops: WriteOp[]): string[] {
+export function noticesFor(origin: string, ops: WriteOp[], at?: number): string[] {
   const payloads: string[] = [];
   let changes: Change[] = [];
   let size = 0;
   const flush = () => {
-    if (changes.length) payloads.push(JSON.stringify({ o: origin, c: changes } satisfies ChangeNotice));
+    if (changes.length) payloads.push(JSON.stringify({ o: origin, c: changes, ...(at !== undefined && { t: at }) } satisfies ChangeNotice));
     changes = [];
     size = 0;
   };
@@ -94,8 +101,30 @@ export interface TablesChanged {
 }
 
 type ChangeListener = (change: TablesChanged) => void;
-const holder = globalThis as unknown as { __landflowReplication?: { listeners: Set<ChangeListener>; replica?: Replica } };
-const state = () => (holder.__landflowReplication ??= { listeners: new Set() });
+const state = () => singleton('db-replication', () => ({ listeners: new Set<ChangeListener>(), replica: undefined as Replica | undefined }));
+
+/**
+ * Other channels on the same LISTEN connection (a subsystem's own wake-ups, e.g. network runner calls): `onNotification`
+ * listens on `channel` (a plain identifier) and hands each payload to `listener`; `publishNotification` sends one with
+ * `pg_notify` (nothing on SQLite). A process that hears its own notice just wakes up once more: harmless.
+ */
+const CHANNEL_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+const extra = () => singleton('db-extra-channels', () => new Map<string, Set<(payload: string) => void>>());
+
+export function onNotification(channel: string, listener: (payload: string) => void): () => void {
+  if (!CHANNEL_NAME.test(channel)) throw new Error(`invalid notification channel ${channel}`);
+  const known = extra().has(channel);
+  if (!known) extra().set(channel, new Set());
+  extra().get(channel)!.add(listener);
+  if (!known) void state().replica?.listenOn(channel);
+  return () => extra().get(channel)?.delete(listener);
+}
+
+export function publishNotification(channel: string, payload: string): void {
+  if (!CHANNEL_NAME.test(channel)) return;
+  const sent = state().replica?.notifyOn(channel, payload);
+  void sent?.catch(() => {});
+}
 
 export function onTablesChanged(listener: ChangeListener): () => void {
   state().listeners.add(listener);
@@ -140,6 +169,9 @@ export class Replica {
   private loading = true;
   /** Notices applied (metrics). */
   applied = 0;
+  /** Milliseconds between the last applied notice's send and its apply (the `landflow.db.replication.lag` gauge). */
+  lagMs = 0;
+  private unregisterMetrics?: () => void;
 
   constructor(
     private readonly db: Database,
@@ -157,7 +189,11 @@ export class Replica {
     const { Client } = (await import('pg')).default ?? (await import('pg'));
     const client = new Client({ connectionString: this.url, application_name: `landflow-listen:${this.origin}` });
     client.on('notification', (message) => {
-      if (message.channel !== CHANGES_CHANNEL || !message.payload) return;
+      if (message.channel !== CHANGES_CHANNEL) {
+        for (const listener of extra().get(message.channel) ?? []) listener(message.payload ?? '');
+        return;
+      }
+      if (!message.payload) return;
       let notice: ChangeNotice;
       try {
         notice = JSON.parse(message.payload) as ChangeNotice;
@@ -179,8 +215,20 @@ export class Replica {
     client.on('end', () => lost());
     await client.connect();
     await client.query(`LISTEN ${CHANGES_CHANNEL}`);
+    for (const channel of extra().keys()) await client.query(`LISTEN ${channel}`);
     this.listener = client;
     state().replica = this;
+    this.unregisterMetrics ??= registerReplicationMetrics(() => this.lagMs);
+  }
+
+  /** LISTEN on one more channel (see `onNotification`). */
+  async listenOn(channel: string) {
+    await this.listener?.query(`LISTEN ${channel}`).catch(() => {});
+  }
+
+  /** `pg_notify` through the pool (see `publishNotification`). */
+  notifyOn(channel: string, payload: string) {
+    return this.pool.query('SELECT pg_notify($1, $2)', [channel, payload]);
   }
 
   /** The copy is loaded: apply what arrived meanwhile and from now on. */
@@ -209,6 +257,7 @@ export class Replica {
         try {
           await this.apply(notice);
           this.applied++;
+          if (notice.t) this.lagMs = Math.max(0, Date.now() - notice.t);
         } catch (error) {
           logger.warn('replication: could not apply a change; reloading the tables it names', { error: (error as Error).message });
           for (const table of new Set(notice.c.map((change) => change[1]))) await this.reloadTable(table).catch(() => {});
@@ -254,7 +303,7 @@ export class Replica {
       if (!reads) return;
       const { table, keys } = reads;
       reads = undefined;
-      const rows = await this.select(table, keys);
+      const rows = (await this.select(table, keys)).filter((row) => !this.coldEvent(table, row));
       const found = new Set(rows.map((row) => rowId(table, primaryKey(table, row as Record<string, SqlValue>) ?? [])));
       this.db.sqlite.exec('BEGIN');
       try {
@@ -276,6 +325,8 @@ export class Replica {
       if (kind === 'k') {
         const key = change[2];
         if (pending.has(rowId(table, key))) continue;
+        // The journal of a cold run is not kept in the copy (Postgres serves it).
+        if (table === 'execution_events' && typeof key[0] === 'string' && isCold(this.db, key[0])) continue;
         if (reads && reads.table !== table) await readBack();
         reads ??= { table, keys: [] };
         reads.keys.push(key);
@@ -287,6 +338,7 @@ export class Replica {
         const row = change[2];
         const key = primaryKey(table, row);
         if (key && pending.has(rowId(table, key))) continue;
+        if (this.coldEvent(table, row)) continue;
         try {
           this.putLocal(table, row, change[3]);
         } catch {
@@ -310,7 +362,15 @@ export class Replica {
       }
     }
     await readBack();
+    // A run that arrives already cold (an old run another process touched) keeps no data or journal here.
+    const executions = changed.keys.get('executions')?.map((key) => String(key[0]));
+    if (executions?.length) evictCooling(this.db, executions);
     emitTablesChanged(changed);
+  }
+
+  /** A journal event of a cold run: not kept in the copy. */
+  private coldEvent(table: TableName, row: Record<string, unknown>): boolean {
+    return table === 'execution_events' && typeof row.execution_id === 'string' && isCold(this.db, row.execution_id);
   }
 
   /** Rows of `table` by primary key, from Postgres. */
@@ -338,16 +398,18 @@ export class Replica {
     this.db.sqlite.exec('BEGIN');
     try {
       for (const row of local) if (keep(row)) this.deleteLocal(table, Object.fromEntries(TABLES[table].map((column) => [column, row[column] as SqlValue])));
-      for (const row of rows) if (keep(row)) this.putLocal(table, row);
+      for (const row of rows) if (keep(row) && !this.coldEvent(table, row)) this.putLocal(table, row);
       this.db.sqlite.exec('COMMIT');
+      if (table === 'executions') evictCooling(this.db, rows.map((row) => String(row.id)));
     } catch (error) {
       if (this.db.sqlite.isTransaction) this.db.sqlite.exec('ROLLBACK');
       throw error;
     }
   }
 
-  private async reloadTable(table: TableName) {
-    const { rows } = await this.pool.query(`SELECT * FROM ${table}`);
+  private async reloadTable(table: TableName, cutoff = hotCutoff()) {
+    const query = mirrorSelect(table, cutoff);
+    const { rows } = await this.pool.query(query.text, query.values);
     this.db.sqlite.exec('BEGIN');
     try {
       this.db.sqlite.exec(`DELETE FROM ${table}`);
@@ -361,7 +423,9 @@ export class Replica {
 
   /** Reload every table from Postgres, then re-apply this process's writes not yet there (notices may have been lost). */
   async reload() {
-    for (const table of Object.keys(TABLES) as TableName[]) await this.reloadTable(table);
+    // One cutoff for every table, so a run is hot (data and events) in all of them or in none.
+    const cutoff = hotCutoff();
+    for (const table of Object.keys(TABLES) as TableName[]) await this.reloadTable(table, cutoff);
     for (const op of this.pendingOps()) {
       if (op.op === 'deleteBefore') this.statement(`DELETE FROM ${op.table} WHERE ${op.column} < ?`).run(op.value);
       else if (op.op === 'delete') this.deleteLocal(op.table, op.where);
@@ -372,6 +436,7 @@ export class Replica {
 
   async close() {
     this.closed = true;
+    this.unregisterMetrics?.();
     if (state().replica === this) state().replica = undefined;
     const listener = this.listener;
     this.listener = undefined;

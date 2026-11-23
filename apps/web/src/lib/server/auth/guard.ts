@@ -10,9 +10,11 @@
  * (./test-bypass, from test/setup.ts), which signs guarded requests without credentials in as a synthetic owner.
  */
 import { NextResponse } from 'next/server';
-import { can, hasScope, type Action, type Viewer } from '../../shared/auth';
+import { BACKGROUND_HEADER, can, hasScope, type Action, type Viewer } from '../../shared/auth';
 import { API_KEY_HEADER, API_KEY_PREFIX, isPublicPath, PATH_HEADER, SESSION_COOKIE } from '../../shared/auth-paths';
 import { verifyApiKey } from './api-keys';
+import { KEY_REFUSAL_MESSAGE, type KeyRefusal } from './api-key-refusal';
+import { allowListAddress } from '../net/ip-allow';
 import { requestAuth, type Principal, type RequestAuth } from './context';
 import { looksLikeDebugToken } from './debug-tokens';
 import { readCookie } from './cookies';
@@ -20,8 +22,10 @@ import { protectedWriteRefusal } from '../environments/protection';
 import { checkResourceRule } from '../projects/access';
 import { editLocks } from './edit-locks';
 import { AuthError } from './errors';
+import { countDenied } from '../rate-limit/counters';
+import { registryOpen } from '../plugins/registry-policy';
 import { sameSecret } from './passwords';
-import { resourceRule, routePolicy } from './policy';
+import { enrolmentRequired, enrolOnlyAllowed, resourceRule, routePolicy } from './policy';
 import { sessionUser } from './sessions';
 import { testPrincipal } from './test-bypass';
 import { setupRequired, viewerOf, type UserRecord } from './users';
@@ -44,29 +48,39 @@ export function apiKeyOf(request: Request): string | undefined {
   return bearer?.startsWith(API_KEY_PREFIX) && !bearer.startsWith('lf_mcp_') ? bearer : undefined;
 }
 
-export type Resolved = { ok: true; principal?: Principal } | { ok: false; status: 401; message: string };
+/** `refused` names the key behind an address refusal (for the audit row, written by the guard: the audit layer's second look must not repeat it). */
+export type Resolved = { ok: true; principal?: Principal } | { ok: false; status: 401; message: string; refused?: { reason: KeyRefusal; key: { id: string; label: string } } };
 
 /** Who the request's credentials belong to. An API key that doesn't check out fails (no fallback to the cookie). */
-export function resolvePrincipal(request: Request): Resolved {
+/** `touch: false` resolves without marking the session as used (see sessionUser). */
+export function resolvePrincipal(request: Request, { touch = true }: { touch?: boolean } = {}): Resolved {
   // A debug token is no one's credential: it opens three read-only MCP tools at /api/mcp and nothing here (docs/specs/19-debug-token.md).
   if (looksLikeDebugToken(bearerToken(request)) || looksLikeDebugToken(request.headers.get(API_KEY_HEADER)?.trim())) {
     return { ok: false, status: 401, message: 'A debug token only works for explain_failure, get_run_trace and get_execution at /api/mcp' };
   }
   const key = apiKeyOf(request);
   if (key) {
-    const checked = verifyApiKey(key);
-    if (!checked.ok) return { ok: false, status: 401, message: checked.reason === 'expired' ? 'This API key has expired' : 'Invalid API key' };
-    return { ok: true, principal: { user: checked.user, via: 'api-key', apiKey: { id: checked.key.id, scopes: checked.key.scopes } } };
+    const checked = verifyApiKey(key, { ip: allowListAddress(request) });
+    if (!checked.ok) {
+      if (checked.reason === 'ip_not_allowed' || checked.reason === 'uses_exhausted') return { ok: false, status: 401, message: KEY_REFUSAL_MESSAGE[checked.reason], refused: { reason: checked.reason, key: { id: checked.key.id, label: checked.key.label } } };
+      return { ok: false, status: 401, message: checked.reason === 'expired' ? 'This API key has expired' : 'Invalid API key' };
+    }
+    return { ok: true, principal: { user: checked.user, via: 'api-key', apiKey: { id: checked.key.id, scopes: checked.key.scopes, label: checked.key.label, ...(checked.key.maxUses && { maxUses: checked.key.maxUses }) } } };
   }
-  const found = sessionUser(readCookie(request, SESSION_COOKIE));
-  if (found) return { ok: true, principal: { user: found.user, via: 'session', sessionId: found.session.id } };
+  const found = sessionUser(readCookie(request, SESSION_COOKIE), Date.now(), { touch });
+  if (found) return { ok: true, principal: { user: found.user, via: 'session', sessionId: found.session.id, sessionMethod: found.session.method, ...(enrolmentRequired(found.user, found.session.method) && { enrolOnly: true }) } };
   return { ok: true };
 }
 
 /** A cookie-authenticated change from another site: refuse (SameSite=Lax already stops most; this stops the rest). */
 function crossSite(request: Request): boolean {
   const origin = request.headers.get('origin');
-  if (!origin || origin === 'null') return Boolean(origin);
+  if (!origin) {
+    // No Origin (some clients omit it): a browser still says where the request came from with Sec-Fetch-Site.
+    const site = request.headers.get('sec-fetch-site');
+    return Boolean(site) && !['same-origin', 'same-site', 'none'].includes(site as string);
+  }
+  if (origin === 'null') return true;
   let originHost: string;
   try {
     originHost = new URL(origin).host;
@@ -76,6 +90,9 @@ function crossSite(request: Request): boolean {
   const hosts = [request.headers.get('x-forwarded-host')?.split(',')[0]?.trim(), request.headers.get('host'), safeHost(request.url), safeHost(process.env.LANDFLOW_PUBLIC_URL)];
   return !hosts.includes(originHost);
 }
+
+/** C36: the same check for the public requester routes, which the guard lets through unauthenticated (lib/server/access/outside/http.ts). */
+export const crossSiteRequest = crossSite;
 
 function safeHost(url: string | undefined): string | undefined {
   try {
@@ -90,16 +107,26 @@ const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 /** LANDFLOW_REGISTRY_SECRET: plugins must send it to announce (header `X-Landflow-Registry-Secret` or Bearer). */
 export function registrySecretOk(request: Request): boolean {
   const secret = process.env.LANDFLOW_REGISTRY_SECRET;
-  if (!secret) return true;
+  // No secret: announces are open only in development or with LANDFLOW_REGISTRY_OPEN=true (registryOpen).
+  if (!secret) return registryOpen();
   return sameSecret(request.headers.get('x-landflow-registry-secret') ?? bearerToken(request), secret);
 }
 
 export const metricsPublic = () => process.env.LANDFLOW_METRICS_PUBLIC === 'true';
 
-export type GuardResult = { ok: true; auth: RequestAuth } | { ok: false; response: Response };
+/** `refused`: the key behind an address refusal; the caller (http.ts) writes its audit row, since the audit layer imports this guard. */
+export type GuardResult = { ok: true; auth: RequestAuth } | { ok: false; response: Response; refused?: { reason: KeyRefusal; key: { id: string; label: string } } };
 
-const deny = (message: string, status: number, extra: Record<string, unknown> = {}) =>
-  NextResponse.json({ error: message, ...extra }, { status, ...(status === 401 && { headers: { 'www-authenticate': 'Bearer realm="landflow"' } }) });
+/** A refusal: counted as landflow.http.denied{reason} (rate-limit/counters.ts) and answered as JSON. */
+const deny = (reason: string, message: string, status: number, extra: Record<string, unknown> = {}) => {
+  countDenied(reason);
+  return NextResponse.json({ error: message, ...extra }, { status, ...(status === 401 && { headers: { 'www-authenticate': 'Bearer realm="landflow"' } }) });
+};
+
+/** A request no person made: one sent with `X-Landflow-Background: 1` (lib/client/api.ts) or the live stream's (re)connect. */
+export function isBackground(request: Request, method: string, path: string): boolean {
+  return request.headers.get(BACKGROUND_HEADER) === '1' || (method === 'GET' && path === '/api/events');
+}
 
 /** The guard: decide whether `request` may reach its route handler, and as whom. */
 export function guardRequest(request: Request | undefined): GuardResult {
@@ -112,40 +139,52 @@ export function guardRequest(request: Request | undefined): GuardResult {
     method = request.method.toUpperCase();
   }
   if (request && isPublicPath(path, { bearer: bearerToken(request), metricsPublic: metricsPublic() })) {
-    if (path === '/api/plugins/announce' && !registrySecretOk(request)) return { ok: false, response: deny('Send the registry secret (LANDFLOW_REGISTRY_SECRET) as X-Landflow-Registry-Secret', 401) };
+    if (path === '/api/plugins/announce' && !registrySecretOk(request)) return { ok: false, response: deny('registry_secret', 'Send the registry secret (LANDFLOW_REGISTRY_SECRET) as X-Landflow-Registry-Secret', 401) };
     return { ok: true, auth: {} };
   }
 
-  const resolved = request ? resolvePrincipal(request) : ({ ok: true } as Resolved);
-  if (!resolved.ok) return { ok: false, response: deny(resolved.message, resolved.status) };
+  // A request the browser made on its own (a poll, the edit lock's heartbeat) or the live stream's (re)connect is not use:
+  // it leaves last_seen_at alone, so the idle limit still ends a session left open in a tab. The header can only shorten a
+  // session, so it needs no proof.
+  const resolved = request ? resolvePrincipal(request, { touch: !isBackground(request, method, path) }) : ({ ok: true } as Resolved);
+  if (!resolved.ok) {
+    return { ok: false, response: deny(resolved.refused?.reason ?? 'bad_credentials', resolved.message, resolved.status), ...(resolved.refused && { refused: resolved.refused }) };
+  }
   const principal = resolved.principal ?? testPrincipal();
   if (!principal) {
-    return { ok: false, response: deny('Sign in, or send an API key (Authorization: Bearer lf_…)', 401, setupRequired() ? { setupRequired: true } : {}) };
+    return { ok: false, response: deny('unauthenticated', 'Sign in, or send an API key (Authorization: Bearer lf_…)', 401, setupRequired() ? { setupRequired: true } : {}) };
+  }
+
+  // A covered user without a second factor: this session may only enrol one (docs/features/authentication.md#second-factor).
+  // API keys, MCP tokens and SCIM tokens are not asked.
+  if (principal.enrolOnly && !enrolOnlyAllowed(method, path)) {
+    return { ok: false, response: deny('mfa_enrolment_required', 'Add a second factor first: Sign-in & security', 403, { code: 'mfa_enrolment_required' }) };
   }
 
   const policy = routePolicy(method, path);
   if (principal.via === 'api-key') {
-    if (policy.sessionOnly) return { ok: false, response: deny('API keys can’t do this; sign in instead', 403) };
+    if (policy.sessionOnly) return { ok: false, response: deny('session_only', 'API keys can’t do this; sign in instead', 403) };
     if (policy.scope !== 'any' && !hasScope(principal.apiKey?.scopes ?? [], policy.scope)) {
-      return { ok: false, response: deny(`This API key lacks the “${policy.scope}” scope`, 403, { scope: policy.scope }) };
+      return { ok: false, response: deny('scope', `This API key lacks the “${policy.scope}” scope`, 403, { scope: policy.scope }) };
     }
   }
-  if (policy.action && !can(principal.user, policy.action)) return { ok: false, response: deny('Your role can’t do this. Ask an owner or admin.', 403) };
+  if (policy.action && !can(principal.user, policy.action)) return { ok: false, response: deny('role', 'Your role can’t do this. Ask an owner or admin.', 403) };
+  if (policy.instanceAdmin && principal.user.role !== 'owner' && principal.user.role !== 'admin') return { ok: false, response: deny('role', 'Only an owner or admin can do this: it reaches every project.', 403) };
   // A protected environment: workflows change only by pull or promotion (lib/server/environments/protection.ts).
   const readOnly = protectedWriteRefusal(method, path);
-  if (readOnly) return { ok: false, response: deny(readOnly, 403, { protected: true }) };
-  if (principal.via === 'session' && request && UNSAFE.has(method) && crossSite(request)) return { ok: false, response: deny('Cross-site request refused', 403) };
+  if (readOnly) return { ok: false, response: deny('protected_environment', readOnly, 403, { protected: true }) };
+  if (principal.via === 'session' && request && UNSAFE.has(method) && crossSite(request)) return { ok: false, response: deny('cross_site', 'Cross-site request refused', 403) };
   // Projects and sharing: the workflow, credential, data table, agent or execution the path names (./policy).
   const rule = resourceRule(method, path);
   const denied = rule && checkResourceRule(principal.user, rule);
-  if (denied) return { ok: false, response: deny(denied.message, denied.status) };
+  if (denied) return { ok: false, response: deny('resource', denied.message, denied.status) };
 
   // A save from an editor tab that lost the workflow's edit lock (someone took over).
   const tab = request?.headers.get('x-landflow-editor-tab');
   const saving = /^\/api\/workflows\/([^/]+)$/.exec(path);
   if (tab && saving && method === 'PUT') {
     const lock = editLocks.get(decodeURIComponent(saving[1]));
-    if (lock && lock.tabId !== tab) return { ok: false, response: deny(`${lock.userName} is editing this workflow`, 423, { lock }) };
+    if (lock && lock.tabId !== tab) return { ok: false, response: deny('edit_lock', `${lock.userName} is editing this workflow`, 423, { lock }) };
   }
   return { ok: true, auth: { principal } };
 }

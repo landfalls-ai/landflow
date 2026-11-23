@@ -6,8 +6,8 @@ import { CredentialError } from '../credentials/vault';
 import { error } from '../http';
 import { AlertError, alertStore } from './store';
 
-const kind = z.enum(['email', 'slack', 'webhook', 'telegram', 'teams', 'discord']);
-const event = z.enum(['failed', 'timedOut', 'retriesExhausted', 'waiting']);
+const kind = z.enum(['email', 'slack', 'webhook', 'telegram', 'teams', 'discord', 'servicenow']);
+const event = z.enum(['failed', 'timedOut', 'retriesExhausted', 'waiting', 'approval']); // AP01: approval
 const ruleKind = z.enum(['runs', 'failureRate', 'plugin', 'cost', 'evaluation']);
 
 const config = z
@@ -18,6 +18,12 @@ const config = z
     secret: z.string().max(500),
     credentialId: z.string().max(200),
     chatId: z.string().max(200),
+    tickets: z.boolean(), // C12
+    table: z.string().max(100),
+    approvedState: z.string().max(100),
+    deniedState: z.string().max(100),
+    expiredState: z.string().max(100),
+    cancelledState: z.string().max(100),
   })
   .partial();
 
@@ -35,7 +41,7 @@ const ruleFields = {
   kind: ruleKind.optional(),
   failureRate: z.object({ minRuns: z.number().int().min(1).max(100_000), percent: z.number().min(0).max(100), windowMinutes: z.number().int().min(1).max(1_440) }).optional(),
   plugins: z.object({ ids: z.array(z.string().min(1)).max(500).optional(), graceSeconds: z.number().int().min(0).max(86_400), notifyRecovery: z.boolean() }).optional(),
-  cost: z.object({ thresholdPercent: z.number().min(1).max(100) }).optional(),
+  cost: z.object({ thresholdPercent: z.number().min(1).max(100), forecast: z.boolean().optional(), anomalies: z.boolean().optional(), landledgerHandlesAgentModel: z.boolean().optional() }).optional(), // SP23: the three switches
   evaluation: z.object({ metric: z.string().max(200).optional(), below: z.number().min(0).max(1_000).optional(), dropPercent: z.number().min(0).max(100).optional() }).optional(),
   waitingMinutes: z.number().int().min(1).max(43_200).optional(),
   includeManual: z.boolean().optional(),

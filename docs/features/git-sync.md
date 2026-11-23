@@ -2,7 +2,7 @@
 
 Part of the [Landflow docs](../README.md); the [feature map](../README.md#feature-map) lists every feature page.
 
-Workflows as files you review and version in Git, like Windmill's `wmill sync` and n8n's source control. One layout (`landflow-sync/v1`, `apps/web/src/lib/server/sync/format.ts`) serves the CLI and the server's own Git:
+Workflows as files you review and version in Git, like Windmill's `wmill sync` and n8n's source control. One layout (`landflow-sync/v1`, `apps/web/src/lib/server/sync/format.ts`; the names and path rules shared with the CLI are in `packages/protocol/src/sync-format.ts`) serves the CLI and the server's own Git:
 
 ```
 landflow-sync.json                    { "format": "landflow-sync/v1" }

@@ -415,6 +415,14 @@ without items starts no run; `JSONReply(status, v)` builds a JSON reply. Signatu
 `VerifyHMACSHA256(secret, payload, signature, prefix)`, `VerifyHMACSHA256Base64`, `SafeEqual`, and the signing
 counterparts for tests.
 
+### Activity items
+
+`landflow.ActivityItem(landflow.Activity{Source, SourceID, OccurredAt, Kind, Title, Summary, URL, ActorEmail, TeamHint,
+InitiativeHint, CustomerHint, Raw, Cursor})` returns the normalised item an integration trigger or List Changed Since
+operation outputs ([protocol §16](../../docs/protocol.md#16-activity-items)), and `landflow.ActivityItemSchema()` is its
+`OutputSchema`. `OccurredAt` takes a `time.Time`, an ISO string or epoch milliseconds; `Raw` a map, a struct or JSON
+bytes. TypeScript and Python build the same item from the same input.
+
 ## Transports
 
 | | HTTP | gRPC (`landflow.plugin.v1.PluginService`) |

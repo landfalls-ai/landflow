@@ -41,3 +41,20 @@ export function noteAuditPrincipal(principal: Principal | undefined) {
   const ctx = storage().getStore();
   if (ctx && principal) ctx.principal = principal;
 }
+
+/**
+ * The fields the logger stamps on every line written while a request runs, so a line joins to its request id and actor
+ * (`landflow.api_key.id` is the key's id, never the key). Cheap: one store lookup and a small object; nothing outside a request.
+ */
+export function requestLogFields(): Record<string, string> | undefined {
+  const ctx = storage().getStore();
+  if (!ctx) return undefined;
+  const fields: Record<string, string> = { request_id: ctx.requestId };
+  const principal = ctx.principal;
+  if (principal) {
+    fields['user.id'] = principal.user.id;
+    if (principal.apiKey) fields['landflow.api_key.id'] = principal.apiKey.id;
+  }
+  if (ctx.route) fields['http.route'] = ctx.route;
+  return fields;
+}

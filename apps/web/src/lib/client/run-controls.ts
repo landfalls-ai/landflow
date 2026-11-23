@@ -52,7 +52,7 @@ export function useRunAsks(executionId: string | undefined, active: boolean): { 
     }
     let cancelled = false;
     const read = () =>
-      api<{ asks: RunAsk[] }>(`/api/executions/${executionId}/asks`)
+      api<{ asks: RunAsk[] }>(`/api/executions/${executionId}/asks`, { background: true })
         .then((r) => !cancelled && setAsks((now) => (JSON.stringify(now) === JSON.stringify(r.asks) ? now : r.asks)))
         .catch(() => {});
     void read();
@@ -83,7 +83,7 @@ export function useWorkingMembers(executionId: string | undefined, active: boole
     }
     let cancelled = false;
     const read = () =>
-      api<{ members: WorkingMember[] }>(`/api/executions/${executionId}/agents`)
+      api<{ members: WorkingMember[] }>(`/api/executions/${executionId}/agents`, { background: true })
         .then((r) => !cancelled && setMembers(r.members))
         .catch(() => {});
     void read();

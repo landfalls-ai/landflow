@@ -1,6 +1,6 @@
 'use client';
 /** The detail of a tapped row: a bottom sheet under 768 px, a side panel above. */
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { ExternalLink, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { artifactShape, safeUrl } from '@/lib/shared/artifact-kinds';
@@ -9,15 +9,19 @@ import type { RunGitHub } from '@/lib/shared/run-repo';
 import { fmtMs, spendLine, type RunArtifactItem, type RunCheckItem, type RunModel, type RunSpan } from '@/lib/shared/run-trace-model';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 import { ArtifactPreview, PREVIEWED } from './artifact-preview';
 import { ChangeDiff } from './diff-view';
 import { ConnectionList } from './connections';
 import { Avatar, ResultChip, SectionTitle, Tap, ValueBlock, clock, who } from './parts';
 import { Doc, TextBlock } from './rich-text';
+import { RunScopeChips, WhatItSaw, sawOf } from './what-it-saw';
 import { imagesOf, ToolImages, withoutImages } from './tool-images';
 import { RerunPanel, useRunControls } from './run-controls';
+import { Passages, passagesFor, ViaLine } from './passages'; // AG14:
+import { targetLine, type ToolTarget } from '@/lib/shared/tool-target'; // AG14:
 import { TeamPauseBar } from '../editor/team-pause';
-import { useNewLook } from '../shell/look-toggle';
+import { CallSpend } from './call-spend';
 
 export type Open = {
   kind: 'span' | 'artifact' | 'check' | 'actor';
@@ -34,17 +38,8 @@ const STATUS_TONE: Record<string, Tone> = {
 
 function Frame({ title, kicker, onClose, children }: { title: string; kicker?: ReactNode; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
-  const last = useRef<Element | null>(null);
-  useEffect(() => {
-    last.current = document.activeElement;
-    ref.current?.focus({ preventScroll: true });
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', key);
-    return () => {
-      window.removeEventListener('keydown', key);
-      if (last.current instanceof HTMLElement && last.current.isConnected) last.current.focus({ preventScroll: true });
-    };
-  }, [onClose]);
+  // Focus moves to the sheet, Tab stays in it, Escape closes it and the focus goes back to the row that opened it.
+  useDialogFocus(ref, true, { onEscape: onClose, initial: ref });
   return (
     <>
       <div className="fixed inset-0 z-40 bg-overlay animate-in" onClick={onClose} aria-hidden />
@@ -69,7 +64,7 @@ function Frame({ title, kicker, onClose, children }: { title: string; kicker?: R
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="grid size-9 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1"
+            className="grid size-9 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1 max-md:size-11"
           >
             <X className="size-4" />
           </button>
@@ -156,9 +151,17 @@ function ChangeSheet({ changes, file, git }: { changes: FileChange[]; file: stri
   );
 }
 
+/** AG14: a span's `target` attribute, read defensively (a journal from before ag3 has none). */
+function targetOfAttr(value: unknown): ToolTarget | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const t = value as ToolTarget;
+  return typeof t.name === 'string' && targetLine(t) ? t : undefined;
+}
+
 function SpanSheet({
   span,
   model,
+  full,
   open,
   onJump,
   changes,
@@ -166,6 +169,7 @@ function SpanSheet({
 }: {
   span: RunSpan;
   model: RunModel;
+  full: RunModel;
   open: (o: Open) => void;
   onJump: (ms: number) => void;
   changes?: RunChanges;
@@ -173,8 +177,10 @@ function SpanSheet({
 }) {
   const edits = span.kind === 'tool' ? changes?.files.flatMap((f) => f.changes.filter((c) => c.spanId === span.id).map((c) => ({ file: f.path, c }))) : undefined;
   const kids = span.children.map((id) => model.spans[id]).filter((s) => s && !s.hidden);
-  const attrs = Object.entries(span.attrs).filter(([k]) => k !== 'hidden');
-  const newLook = useNewLook();
+  const saw = sawOf(span.attrs.saw);
+  const attrs = Object.entries(span.attrs).filter(([k]) => k !== 'hidden' && k !== 'saw' && k !== 'target'); // AG14: the target has its own row
+  const target = targetOfAttr(span.attrs.target); // AG14:
+  const passages = span.kind === 'tool' ? passagesFor(span.output) : []; // AG14:
   return (
     <>
       <div className="flex flex-wrap items-center gap-1.5 pb-3">
@@ -182,13 +188,16 @@ function SpanSheet({
         {span.state && <Badge tone="muted">{span.state}</Badge>}
         {(span.kind === 'delegate' || span.kind === 'handoff') && <ResultChip span={span} />}
         <Badge tone="muted">{span.kind}</Badge>
+        {/* AG23: who decided the call's approval (Approved by Spotlight (autonomous fix session) / Approved by you / Denied by you). */}
+        {typeof span.attrs.approvedBy === 'string' && <Badge tone={/^(Left|Denied|Expired|Cancelled)/ /* AP03: the inbox's settled lines */.test(span.attrs.approvedBy) ? 'warning' : 'success'}>{span.attrs.approvedBy}</Badge>}
         {/* A person changed what the tool would do before approving it (the approval card's Edit). */}
-        {newLook && span.attrs.edited === true && (
+        {span.attrs.edited === true && (
           <Badge tone="warning" title={typeof span.attrs.editedBy === 'string' ? `Edited by ${span.attrs.editedBy}` : undefined}>
             Edited by {typeof span.attrs.editedBy === 'string' && span.attrs.editedBy !== 'A person' ? 'you' : 'a person'}
           </Badge>
         )}
       </div>
+      {span.id === 'run' && <RunScopeChips project={span.attrs.project} goal={span.attrs.goal} />}
       <Facts
         rows={[
           [
@@ -203,10 +212,13 @@ function SpanSheet({
           ['Started', <TimeButton key="s" iso={span.startedAt} onJump={onJump} />],
           ['Ended', span.endedAt ? <TimeButton key="e" iso={span.endedAt} onJump={onJump} /> : span.status === 'running' ? 'still going' : undefined],
           ['Took', fmtMs(span.ms)],
-          ['Tokens', span.usage ? `${span.usage.inputTokens.toLocaleString()} in · ${span.usage.outputTokens.toLocaleString()} out` : undefined],
+          ['Tokens', span.usage ? `${span.usage.inputTokens.toLocaleString()} in · ${span.usage.outputTokens.toLocaleString()} out${span.usage.cacheReadTokens ? ` · ${span.usage.cacheReadTokens.toLocaleString()} read from cache` : ''}${span.usage.cacheWriteTokens ? ` · ${span.usage.cacheWriteTokens.toLocaleString()} written to cache` : ''}` : undefined],
           ['Now', span.note],
+          ['Reached', target ? <ViaLine key="r" target={target} className="text-[13px] text-t1" /> : undefined], // AG14:
         ]}
       />
+      {/* SP07: a model call's composition and cache line. */}
+      {span.kind === 'model' && model.executionId && <CallSpend span={full.spans[span.id] ?? span} executionId={model.executionId} spans={Object.values(full.spans).filter((s) => s.kind === 'model')} live={full.live} />}
       <div className="mt-3 flex flex-col gap-2.5">
         {edits?.length ? (
           <ChangeSheet changes={edits.map((e) => e.c)} file={edits[0].file} git={Boolean(changes?.git)} />
@@ -214,9 +226,17 @@ function SpanSheet({
           <Value label="Asked" value={span.input} repo={repo} />
         )}
         <ToolImages images={imagesOf(span.output)} />
-        <Value label="Came back" value={withoutImages(span.output)} repo={repo} />
+        {passages.length > 0 ? (
+          <section className="min-w-0">
+            <div className="min-h-7 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Came back</div>
+            <Passages output={span.output} passages={passages} />
+          </section>
+        ) : (
+          <Value label="Came back" value={withoutImages(span.output)} repo={repo} />
+        )}{/* AG14: passages with their source, the raw output behind Raw */}
         <Value label="Error" value={span.error} tone="error" repo={repo} />
       </div>
+      {saw && <WhatItSaw mode={saw.mode} text={saw.text} persona={saw.persona} practices={saw.practices} memory={saw.memory} memoryText={saw.memoryText} executionId={model.executionId} withheld={saw.withheld} />}
       {span.id !== 'run' && span.kind !== 'wait' && span.kind !== 'model' && <RerunPanel model={model} spanId={span.id} />}
       {span.checks.length > 0 && (
         <>
@@ -399,6 +419,7 @@ function ActorSheet({ id, model, open }: { id: string; model: RunModel; open: (o
 export function DetailSheet({
   target,
   model,
+  full,
   onClose,
   open,
   onJump,
@@ -409,6 +430,8 @@ export function DetailSheet({
 }: {
   target: Open;
   model: RunModel;
+  /** The whole run (not the replay cut): a model step's spend pairs its call against every span and polls only while the run is live. */
+  full?: RunModel;
   onClose: () => void;
   open: (o: Open) => void;
   onJump: (ms: number) => void;
@@ -424,7 +447,7 @@ export function DetailSheet({
     if (!span) return null;
     return (
       <Frame title={span.name} kicker={span.kind === 'delegate' ? 'Request' : span.kind} onClose={onClose}>
-        <SpanSheet span={span} model={model} open={open} onJump={onJump} changes={changes} repo={repo} />
+        <SpanSheet span={span} model={model} full={full ?? model} open={open} onJump={onJump} changes={changes} repo={repo} />
       </Frame>
     );
   }

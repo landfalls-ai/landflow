@@ -30,8 +30,9 @@ One row of `team_notes` (migration 2010; `lib/shared/notebook.ts`):
   files a suggestion in the second brain's inbox ([second-brain.md](second-brain.md)), with the note as the proposal, and
   **Keep it** there writes it. Kept until deleted.
 
-An expired note stays for 14 days (hidden unless asked for with `expired=1`) before it is deleted. A boot and a daily job in
-`maintenance.ts` do the expiring.
+A note past its `expires_at` is gone from every read at once, not at the next sweep (the notebook tab, the search and the
+prompt block); `expired=1` brings it back into the list. An expired note then stays for 14 days before it is deleted: a boot and a
+daily job in `maintenance.ts` mark and delete them. A forgotten note (below) is never deleted by that job.
 
 ## What a member can do
 
@@ -56,6 +57,11 @@ the ids stay and the excerpt is not kept.
 A note is **tainted** when it gives a `url`, has a URL in its text, or its author used a web or fetch tool in the same
 run (a conservative reading: the author may not have used what it read). A tainted note shows a warning, and it cannot be
 promoted until a person has **Verified** it. This stops a page's instructions from becoming the team's standing memory.
+A note pulled from Notion is the same: `unverified` and tainted, with `source.tool: notion` and the page's URL
+([features/notion-brain.md](features/notion-brain.md#how-it-is-built)). A row a person adds to the Notebook database in the linked
+Notion page with a Team of the project becomes such a note; its author is the Landflow user whose email Notion gave, else "A Notion
+user" (a note added without a user and not from Notion is authored "Landflow"), and an edit of it in Notion is put back
+([details](features/notion-brain.md#what-comes-back-from-notion)).
 
 ### Search by meaning
 
@@ -85,12 +91,19 @@ A disagreement is a pair, not an edit: the Notebook tab shows the two notes side
   note** form are always there.
 - A note that arrives while the tab is open rings once and a deleted one fades out.
 
+### Try a search
+
+**Try** beside the notebook's search opens the memory playground (docs/run-trace.md#memory-playground): the same ranking as the
+tab and the notebook tools with mode, threshold and an optional rerank, showing each note's score. It never moves a note's expiry or
+last-access time, so looking does not keep a note alive.
+
 ## On the canvas and in the Run Trace
 
 When a member writes, searches or disputes a note, the team node and the live strip (`team-live.tsx`) say so in plain words
 ("Noting a fact", "Noting a decision", "Searching the notebook · 3 found", "Disputing a note") with a notebook-pen icon and an entrance animation, and the run's headlines
 include note moments (`shared/run-headlines.ts`, `shared/team-progress.ts`). In the Run Trace each note tool call is a
-step of its member.
+step of its member, and the notebook block the member was given (the open questions and decisions, with the note ids) is listed under
+**What it saw → Memory** on each member's span that got it (run-trace.md#what-it-saw), as a `team-notebook` source; the block's text shows only to those who may read memory text there.
 
 ## Claude Code members: the notebook over MCP
 
@@ -115,11 +128,23 @@ kagent, not in the host, so it cannot be handed host functions. It gets the same
 Redeploy an agent after upgrading for kagent's own runtime to list the new tool names. Claude Code reads the tool list from
 the MCP server at the start of each session, so it needs nothing.
 
+## Forgetting a note
+
+**Forget** (the tab, `POST /api/agent-teams/:id/notes/:noteId { action: 'forget', reason, forgetAfter? }`) takes a note out of
+every list, search and prompt block without deleting it: it stays with the reason (1 to 500 characters, required) and who, and the
+sweeper never deletes it. **Forgotten** on the tab lists them with **Restore** (`{ action: 'restore' }`). With `forgetAfter` (a
+minute to five years ahead) it only sets the note's expiry to that time; **Restore** then puts back the expiry its scope and standing give (a project note never expires), and the **Forgotten** list holds such a note too. The reason shows only in that list, never to a reader or in a prompt, and the Forget button is for people who may edit the team. Both are audited (`notebook.note_forgotten`,
+`notebook.note_restored`). Delete stays for removing a note for good. It is the same words as forgetting a brain fact
+([second-brain.md](second-brain.md#forgetting-a-fact)); the reason never goes into a prompt.
+
+Settling a dispute (`resolve`) writes both notes in one transaction: the one that loses is marked replaced and expires, the one
+that holds is verified, or neither changes.
+
 ## The routes
 
 See [reference/api.md](reference/api.md). `GET /api/agent-teams/:id/notes` lists (`scope`, `kind`, `status`, `q`, `run`,
-`expired=1`) and returns the counts; `POST` adds a person's note; `POST /api/agent-teams/:id/notes/:noteId { action }` does
-`verify`, `answer`, `reopen`, `dispute`, `resolve`, `promote` or `edit`; `DELETE` forgets a note. They follow the team's
+`expired=1`, `forgotten=1`) and returns the counts; `POST` adds a person's note; `POST /api/agent-teams/:id/notes/:noteId { action }` does
+`verify`, `answer`, `reopen`, `dispute`, `resolve`, `promote`, `edit`, `forget` or `restore`; `DELETE` deletes a note. They follow the team's
 access (`agentTeam` resource).
 
 ## Settings

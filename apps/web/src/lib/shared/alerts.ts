@@ -3,7 +3,7 @@
  * the API (lib/server/alerts, /api/settings/alerts) and Settings → Alerts. No runtime imports beyond plain data.
  */
 
-export type AlertChannelKind = 'email' | 'slack' | 'webhook' | 'telegram' | 'teams' | 'discord';
+export type AlertChannelKind = 'email' | 'slack' | 'webhook' | 'telegram' | 'teams' | 'discord' | 'servicenow'; // C12: servicenow
 
 /**
  * What a rule reacts to. `failed`: a production run ended in error (after its last automatic retry); `timedOut`: it
@@ -12,7 +12,7 @@ export type AlertChannelKind = 'email' | 'slack' | 'webhook' | 'telegram' | 'tea
  * The rest belong to rules of another kind (`AlertRuleKind`): `failureRate`, `pluginOffline` (and its recovery),
  * `costThreshold` and `evaluationScore`.
  */
-export type AlertEvent = 'failed' | 'timedOut' | 'retriesExhausted' | 'waiting' | 'failureRate' | 'pluginOffline' | 'pluginOnline' | 'costThreshold' | 'evaluationScore';
+export type AlertEvent = 'failed' | 'timedOut' | 'retriesExhausted' | 'waiting' | 'failureRate' | 'pluginOffline' | 'pluginOnline' | 'costThreshold' | 'costForecast' | 'spendAnomaly' | 'evaluationScore' | 'approval'; // SP23: costForecast, spendAnomaly; AP01: approval
 
 /**
  * What a rule watches. `runs` (the default): single runs that failed or waited too long (the `events`);
@@ -43,6 +43,7 @@ export const ALERT_EVENTS: readonly { id: AlertEvent; label: string; hint: strin
   { id: 'timedOut', label: 'Timed out', hint: 'The workflow or a node hit its timeout' },
   { id: 'retriesExhausted', label: 'Retries exhausted', hint: 'The last automatic retry failed too' },
   { id: 'waiting', label: 'Waiting too long', hint: 'A run has been waiting longer than the minutes you set' },
+  { id: 'approval', label: 'Waits for your approval', hint: 'A run nobody watches paused at a tool that asks first and waits in Needs you (the message never carries the parameters)' }, // AP01:
 ];
 
 export const ALERT_CHANNEL_KINDS: readonly { id: AlertChannelKind; label: string; hint: string }[] = [
@@ -52,6 +53,7 @@ export const ALERT_CHANNEL_KINDS: readonly { id: AlertChannelKind; label: string
   { id: 'telegram', label: 'Telegram', hint: 'A saved Telegram API credential and a chat ID' },
   { id: 'teams', label: 'Microsoft Teams', hint: 'A Workflows (or incoming) webhook URL; sends an Adaptive Card' },
   { id: 'discord', label: 'Discord', hint: 'A channel webhook URL; sends an embed' },
+  { id: 'servicenow', label: 'ServiceNow', hint: 'Opens a ticket for each approval request and adds the decision as a work note' },
 ];
 
 /** Channel settings; secret ones (`webhookUrl`, `secret`) never come back from the API, `secretsSet` lists those set. */
@@ -68,7 +70,19 @@ export interface AlertChannelConfig {
   credentialId?: string;
   /** telegram: the chat, group or channel ID (or @channelusername). */
   chatId?: string;
+  /** webhook: opens a ticket per approval request (the receiver answers `{ ticket: { id, url? } }`) and hears when it settles. */
+  tickets?: boolean;
+  /** servicenow: the table a ticket goes into (default `change_request`); `url` is the instance and `credentialId` a Basic or Bearer login. */
+  table?: string;
+  /** servicenow: the `state` to set when the request is approved, denied, expired or cancelled; none = leave the state alone. */
+  approvedState?: string;
+  deniedState?: string;
+  expiredState?: string;
+  cancelledState?: string;
 }
+
+/** Whether a channel opens a ticket for an approval request: ServiceNow, and a webhook with "Opens tickets" ticked. */
+export const opensTickets = (channel: Pick<AlertChannel, 'kind'> & { config: AlertChannelConfig }): boolean => channel.kind === 'servicenow' || (channel.kind === 'webhook' && channel.config.tickets === true);
 
 /** The secret settings of a channel: stored encrypted, masked in the API. */
 export const ALERT_SECRET_FIELDS = ['webhookUrl', 'secret'] as const;
@@ -123,7 +137,14 @@ export interface AlertRule {
    */
   plugins?: { ids?: string[]; graceSeconds: number; notifyRecovery: boolean };
   /** `cost`: alert once per period when usage reaches this share of any cap (default 80). */
-  cost?: { thresholdPercent: number };
+  cost?: {
+    thresholdPercent: number;
+    // SP23: a forecast over a cap and unusual spend go through the rule too; absent = on.
+    forecast?: boolean;
+    anomalies?: boolean;
+    /** Landledger flags agent and model spikes itself: no channel alert for those two dimensions here. Absent = off. */
+    landledgerHandlesAgentModel?: boolean;
+  };
   /** `evaluation`: a metric (none = every metric) whose average fell below `below` (0–1 scores) or by more than `dropPercent` % against the run before. */
   evaluation?: { metric?: string; below?: number; dropPercent?: number };
   /** Made by a workflow's Settings → "Notify on failure": the workflow it belongs to. */

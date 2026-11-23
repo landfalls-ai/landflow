@@ -5,7 +5,7 @@
  */
 import { lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { DATA_TABLES_DIR, isManagedPath, isSafePath, WORKFLOWS_DIR, type SyncFile } from './format';
+import { DATA_TABLES_DIR, isManagedPath, isSafePath, WORKFLOWS_DIR, type SyncFile } from '@landflow/protocol';
 
 /**
  * Every regular file under `root` as a `/`-separated relative path, skipping `.git` and other dot-directories.

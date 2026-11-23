@@ -1,44 +1,57 @@
 'use client';
 /**
- * Version history: every save is a version (lib/server/versions.ts). The list
+ * Version history: every save is a version, except that one person's autosaves within 10 minutes share one
+ * (lib/server/versions.ts). The list
  * shows when, how many nodes and what changed against the version before; the
  * selected version is previewed on a read-only canvas, and Restore saves it as
  * a new version (the current state stays in the history). The published version
  * (what production triggers run) is marked; publishing an older one rolls back. A version can also be scheduled to
  * go live at a chosen time (./publish-schedules); versions with a schedule waiting say so.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { CalendarClock, History, Loader2, Rocket, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
+import { timeAgo, dayTime, stamp } from '@/lib/client/format';
 import type { VersionDiff, Workflow, WorkflowVersion, WorkflowVersionSummary } from '@/lib/shared/types';
 import { ExecutionCanvas } from '../executions/execution-canvas';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
+import { FieldDiff, type FieldChange } from '../ui/field-diff';
 import { SectionLabel } from '../ui/inputs';
 import { publishVersion, toastApprovalRequested } from './publish-control';
 import { ScheduleForm, ScheduleRows, useSchedules } from './publish-schedules';
 import { useEditor } from './store';
+import { usePinnedVersions } from '@/lib/client/agent-bubble-data'; // AG16
+import { usePhone } from '@/lib/client/use-phone';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 
 export const useVersionHistory = create<{ open: boolean; setOpen: (open: boolean) => void }>((set) => ({ open: false, setOpen: (open) => set({ open }) }));
 
 const NO_RUN_DATA = {};
 
-function stamp(iso: string) {
-  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
+/** What a version changed against the one before, as the kit's field lines: Added, Removed, Changed and Moved steps by name. */
 function DiffDetail({ diff }: { diff: VersionDiff }) {
-  const rows: Array<[string, string[], string]> = [
-    ['Added', diff.nodesAdded, 'text-gn'],
-    ['Removed', diff.nodesRemoved, 'text-rd'],
-    ['Changed', diff.nodesChanged, 'text-t1'],
-    ['Moved', diff.nodesMoved, 'text-t3'],
+  const rows: Array<[string, string[], FieldChange['tone']]> = [
+    ['Added', diff.nodesAdded, 'good'],
+    ['Removed', diff.nodesRemoved, 'bad'],
+    ['Changed', diff.nodesChanged, undefined],
+    ['Moved', diff.nodesMoved, 'muted'],
   ];
+  const changes: FieldChange[] = rows
+    .filter(([, names]) => names.length)
+    .map(([label, names, tone]) => ({
+      field: label,
+      label,
+      kind: 'changed',
+      after: `${names.slice(0, 4).join(', ')}${names.length > 4 ? ` +${names.length - 4}` : ''}`,
+      long: false,
+      title: names.join(', '),
+      ...(tone && { tone }),
+    }));
   const other = [
     diff.connectionsAdded && `${diff.connectionsAdded} connection${diff.connectionsAdded === 1 ? '' : 's'} added`,
     diff.connectionsRemoved && `${diff.connectionsRemoved} connection${diff.connectionsRemoved === 1 ? '' : 's'} removed`,
@@ -48,13 +61,7 @@ function DiffDetail({ diff }: { diff: VersionDiff }) {
   ].filter(Boolean);
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
-      {rows
-        .filter(([, names]) => names.length)
-        .map(([label, names, tone]) => (
-          <span key={label} className="min-w-0 truncate" title={names.join(', ')}>
-            <span className="text-t3">{label}:</span> <span className={tone}>{names.slice(0, 4).join(', ')}{names.length > 4 ? ` +${names.length - 4}` : ''}</span>
-          </span>
-        ))}
+      {changes.length > 0 && <FieldDiff changes={changes} unchanged={0} className="flex flex-wrap items-center gap-x-4 gap-y-1 space-y-0" />}
       {other.length > 0 && <span className="text-t3">{other.join(' · ')}</span>}
     </div>
   );
@@ -62,6 +69,10 @@ function DiffDetail({ diff }: { diff: VersionDiff }) {
 
 export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
   const open = useVersionHistory((s) => s.open);
+  // A phone: full screen, the list over the preview, as a dialog that keeps the focus (docs/mobile.md#sheets-and-dialogs).
+  const phone = usePhone();
+  const frame = useRef<HTMLDivElement>(null);
+  useDialogFocus(frame, phone && open);
   const workflowId = useEditor((s) => s.workflowId);
   const dirty = useEditor((s) => s.dirty);
   const nodeTypes = useEditor((s) => s.nodeTypes);
@@ -159,19 +170,23 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
 
   const newestId = versions?.[0]?.id;
   const preview = useMemo(() => version?.workflow, [version]);
+  // AG16: the agent version each bound node of this workflow version was published with (a 404 draws the plain nodes).
+  const pinned = usePinnedVersions(workflowId, version?.id);
   if (!open) return null;
   const isCurrent = version?.id === newestId && !dirty;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-overlay p-6" onMouseDown={close}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-overlay p-6 max-md:p-0" onMouseDown={close}>
       <div
-        role="region"
+        ref={frame}
+        role={phone ? 'dialog' : 'region'}
+        aria-modal={phone || undefined}
         aria-label="Version history"
         onMouseDown={(e) => e.stopPropagation()}
-        className="flex h-full max-h-[820px] w-full max-w-[1320px] animate-in overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop"
+        className="flex h-full max-h-[820px] w-full max-w-[1320px] animate-in overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop max-md:max-h-none max-md:flex-col max-md:rounded-none max-md:border-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]"
       >
         {/* list */}
-        <div className="flex w-[330px] shrink-0 flex-col border-r border-hair bg-sf2">
+        <div className="flex w-[330px] shrink-0 flex-col border-r border-hair bg-sf2 max-md:max-h-[40dvh] max-md:w-full max-md:border-b max-md:border-r-0">
           <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-hair px-4">
             <History className="size-4 text-t2" />
             <span className="text-[14px] font-semibold text-t1">Version history</span>
@@ -209,7 +224,7 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
                       published
                     </Badge>
                   )}
-                  <span className="ml-auto shrink-0 text-[11px] text-t3" title={new Date(v.createdAt).toLocaleString()}>
+                  <span className="ml-auto shrink-0 text-[11px] text-t3" title={dayTime(v.createdAt)}>
                     {timeAgo(v.createdAt)}
                   </span>
                 </div>
@@ -286,7 +301,7 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
                   <RotateCcw className="size-3.5" /> Restore this version
                 </Button>
               ))}
-            <Button variant="ghost" size="icon-sm" onClick={close} aria-label="Close version history">
+            <Button variant="ghost" size="icon-sm" onClick={close} aria-label="Close version history" className="max-md:size-11">
               <X className="size-4" />
             </Button>
           </div>
@@ -311,7 +326,7 @@ export function VersionHistory({ onSave }: { onSave: () => Promise<boolean> }) {
           )}
           <div className="relative min-h-0 flex-1">
             {preview ? (
-              <ExecutionCanvas key={version?.id} workflow={preview} nodeTypes={nodeTypes} runData={NO_RUN_DATA} />
+              <ExecutionCanvas key={version?.id} workflow={preview} nodeTypes={nodeTypes} runData={NO_RUN_DATA} agentVersions={pinned} />
             ) : (
               <div className="canvas-readonly grid size-full place-items-center bg-[repeating-linear-gradient(-45deg,transparent_0_14px,var(--acdim)_14px_28px)]">
                 {selectedId && <Loader2 className="size-5 animate-spin text-t3" />}

@@ -9,14 +9,14 @@ const answer = (noul: number, name = 'flagged') => reply({ model: 'jev-1.13.0', 
 
 describe('the TypeSafe client', () => {
   it('trims the key and the base URL, and refuses a credential without a key', () => {
-    expect(connection).toEqual({ label: 'TypeSafe', apiKey: 'key-1', baseUrl: 'https://jev.test', model: 'jev-latest' });
+    expect(connection).toEqual({ label: 'TypeSafe', system: 'typesafe', apiKey: 'key-1', baseUrl: 'https://jev.test', model: 'jev-latest' });
     expect(typesafeConnection({ apiKey: 'k' }).baseUrl).toBe('https://api.typesafe.ai');
     expect(() => typesafeConnection({ apiKey: ' ' })).toThrow(/no API key/);
   });
 
   it('talks to a Strands Decider server with no key and no model', async () => {
     const strands = strandsConnection({ baseUrl: 'http://127.0.0.1:8000/' });
-    expect(strands).toEqual({ label: 'Strands Decider', baseUrl: 'http://127.0.0.1:8000' });
+    expect(strands).toEqual({ label: 'Strands Decider', system: 'strands', baseUrl: 'http://127.0.0.1:8000' });
     expect(() => strandsConnection({ baseUrl: ' ' })).toThrow(/no server address/);
     const fetcher = vi.fn(async () => answer(0.7, 'ok'));
     const result = await systemOneDecide(strands, 'ping', { ok: 'Is this a greeting?' }, { fetcher });

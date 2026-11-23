@@ -9,6 +9,10 @@
  */
 import { baseMimeType, extensionFromMimeType, type DisplayOptions, type JsonObject, type NodeCredentialRequirement, type NodeItem, type PropertyDescriptor } from '@landflow/protocol';
 import { NodeOperationError, type IExecuteContext } from '@landflow/sdk';
+import { RUN_IN_HOST } from '../../shared/networks';
+import { RunnerCallError } from '../networks/calls';
+import { networkFetch } from '../networks/fetch';
+import { OutboundBlockedError } from '../net/safe-fetch';
 import { dispositionFileName, isTextual, safeFileName } from '../binary/http';
 
 export const BODY_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
@@ -159,13 +163,23 @@ export async function executeHttpRequest(ctx: IExecuteContext): Promise<NodeItem
     const headers = pairs('headers', 'header');
     authenticate(ctx, i, headers);
     const body = BODY_METHODS.includes(method) ? await requestBody(ctx, i, headers) : undefined;
-    const response = await ctx.http(url, {
-      method,
-      headers,
-      body,
-      signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
-      ...(body instanceof ReadableStream && { duplex: 'half' }),
-    } as RequestInit);
+    // Run In (C29): a network sends the request to a runner inside it (networks/fetch.ts); Host (the default) fetches here.
+    const runIn = String(ctx.getNodeParameter('runIn', i, RUN_IN_HOST) || RUN_IN_HOST);
+    const send = runIn === RUN_IN_HOST ? (target: URL, init: RequestInit) => ctx.http(target, init) : networkFetch(runIn, { executionId: ctx.getExecutionId(), workflowId: ctx.getWorkflowId(), node: ctx.getNode().name }, options.timeoutMs ?? 30_000);
+    const response = await send(url, {
+        method,
+        headers,
+        body,
+        signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
+        ...(body instanceof ReadableStream && { duplex: 'half' }),
+      } as RequestInit)
+      .catch((error) => {
+        // The outbound policy (net/safe-fetch.ts) refused the address or a redirect hop: say so on the node.
+        if (error instanceof OutboundBlockedError) throw new NodeOperationError(error.message, { itemIndex: i });
+        // A runner's refusal, a lost runner or no runner online (networks/calls.ts): said on the node, not a 500.
+        if (error instanceof RunnerCallError) throw new NodeOperationError(error.message, { itemIndex: i });
+        throw error;
+      });
     const responseHeaders: Record<string, string> = {};
     response.headers.forEach((value, key) => (responseHeaders[key] = value));
     if (response.status >= 400) throw new NodeOperationError(`HTTP ${response.status}`, { itemIndex: i, description: (await response.text()).slice(0, 500) });

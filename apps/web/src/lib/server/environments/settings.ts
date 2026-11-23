@@ -17,19 +17,21 @@
 import type { CredentialMapping, CredentialSecretMapping, EnvironmentSettings, PullPublishMode } from '../../shared/secrets';
 import { database } from '../db';
 import { parse } from '../db/rows';
+import { flag } from '../config';
+import { HttpError } from '../errors';
 
 const SETTINGS_KEY = 'environments';
 /** A name for LANDFLOW_ENVIRONMENT and the environments list. */
 export const ENVIRONMENT_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
 export const DEFAULT_ENVIRONMENTS = ['development', 'staging', 'production'];
 
-export class EnvironmentError extends Error {
+export class EnvironmentError extends HttpError {
+  static readonly errorName: string = 'EnvironmentError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
-    this.name = 'EnvironmentError';
+    super(message, status, { expose: true });
   }
 }
 
@@ -54,9 +56,10 @@ export function writeEnvironmentSettings(next: EnvironmentSettings): void {
 /** Whether workflows are read-only here, and why. */
 export function protection(): { protected: boolean; source: 'env' | 'settings' | 'none' } {
   if (!currentEnvironment()) return { protected: false, source: 'none' };
-  const env = process.env.LANDFLOW_ENVIRONMENT_PROTECTED?.trim().toLowerCase();
-  if (env === 'true' || env === '1' || env === 'yes') return { protected: true, source: 'env' };
-  if (env === 'false' || env === '0' || env === 'no') return { protected: false, source: 'env' };
+  const raw = process.env.LANDFLOW_ENVIRONMENT_PROTECTED;
+  // Both fallbacks agree only for a real flag value; anything else falls through to the Settings value, as unset does.
+  const asTrue = flag(raw, true, 'LANDFLOW_ENVIRONMENT_PROTECTED');
+  if (raw?.trim() && asTrue === flag(raw, false)) return { protected: asTrue, source: 'env' };
   return readEnvironmentSettings().protected ? { protected: true, source: 'settings' } : { protected: false, source: 'none' };
 }
 

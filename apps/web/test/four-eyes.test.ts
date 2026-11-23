@@ -163,6 +163,26 @@ describe('four-eyes publishing', () => {
     expect(queryEvents({ action: ['publish_request.stale'], targetId: workflow.id }).events).toHaveLength(1);
   });
 
+  it('goes stale when the author autosaves after asking, so an approver never publishes unseen content', async () => {
+    const workflow = await newWorkflow('Autosaved');
+    const autosave = async (value: string) => {
+      const current = store.getWorkflow(workflow.id)!;
+      const request = new Request(`http://four-eyes.test/api/workflows/${workflow.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...current, nodes: [start, setV(value)] }),
+        headers: { 'content-type': 'application/json', 'x-landflow-autosave': '1' },
+      });
+      return as(alice, () => workflowRoute.PUT(request, params({ id: workflow.id })));
+    };
+    expect((await autosave('reviewed')).status).toBe(200);
+    const { status, body } = await askPublish(alice, workflow.id);
+    expect(status).toBe(202);
+    expect((await autosave('NOT REVIEWED')).status).toBe(200);
+    const approve = await decide(bob, 'approve', body.request.id);
+    expect(approve.status).toBe(409);
+    expect(publishedVersionId(workflow.id)).toBeUndefined();
+  });
+
   it('rejects with a comment, withdraws, and replaces a pending request with a newer one', async () => {
     const workflow = await newWorkflow('Payroll');
     const first = (await askPublish(alice, workflow.id, { note: 'v1' })).body.request;

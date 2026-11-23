@@ -17,13 +17,12 @@ import {
   discardSamlEncryptionKey,
   generateSamlEncryptionKey,
   removeSamlEncryptionKey,
-  SamlKeyError,
   samlEncryptionView,
   setSamlEncryptionRequired,
   switchSamlEncryptionKey,
   uploadSamlEncryptionKey,
 } from '@/lib/server/auth/saml-keys';
-import { error, handler, json, parseBody } from '@/lib/server/http';
+import { handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,17 +37,6 @@ const postSchema = z.discriminatedUnion('action', [
 ]);
 const patchSchema = z.object({ required: z.boolean() });
 
-/** Key errors are the caller's (400); anything else is ours. */
-async function attempt(fn: () => unknown): Promise<Response | undefined> {
-  try {
-    await fn();
-    return undefined;
-  } catch (caught) {
-    if (caught instanceof SamlKeyError) return error(caught.message, 400);
-    throw caught;
-  }
-}
-
 export const GET = handler(async () => {
   await requireUser('settings:manage');
   return json(samlEncryptionView());
@@ -60,13 +48,10 @@ export const POST = handler(async (request: Request) => {
   if (!body.ok) return body.response;
   const input = body.data;
   const before = samlEncryptionView();
-  const failed = await attempt(() => {
-    if (input.action === 'generate') return generateSamlEncryptionKey(`Landflow SAML ${new URL(publicOrigin(request)).host}`, me.id, input.slot);
-    if (input.action === 'upload') return uploadSamlEncryptionKey({ cert: input.cert, key: input.key, passphrase: input.passphrase }, me.id, input.slot);
-    if (input.action === 'switch') return switchSamlEncryptionKey();
-    return discardSamlEncryptionKey(input.slot);
-  });
-  if (failed) return failed;
+  if (input.action === 'generate') generateSamlEncryptionKey(`Landflow SAML ${new URL(publicOrigin(request)).host}`, me.id, input.slot);
+  else if (input.action === 'upload') uploadSamlEncryptionKey({ cert: input.cert, key: input.key, passphrase: input.passphrase }, me.id, input.slot);
+  else if (input.action === 'switch') switchSamlEncryptionKey();
+  else discardSamlEncryptionKey(input.slot);
   const view = samlEncryptionView();
   const next = input.action !== 'switch' && input.action !== 'discard' && input.slot === 'next';
   const summary = {
@@ -95,8 +80,7 @@ export const PATCH = handler(async (request: Request) => {
   await requireUser('settings:manage');
   const body = await parseBody(request, patchSchema);
   if (!body.ok) return body.response;
-  const failed = await attempt(() => setSamlEncryptionRequired(body.data.required));
-  if (failed) return failed;
+  setSamlEncryptionRequired(body.data.required);
   recordAudit({ action: 'settings.update', target: TARGET, summary: body.data.required ? 'Required encrypted SAML assertions' : 'Stopped requiring encrypted SAML assertions', details: { required: body.data.required } });
   return json(samlEncryptionView());
 });
@@ -104,8 +88,7 @@ export const PATCH = handler(async (request: Request) => {
 export const DELETE = handler(async () => {
   await requireUser('settings:manage');
   const before = samlEncryptionView();
-  const failed = await attempt(() => removeSamlEncryptionKey());
-  if (failed) return failed;
+  removeSamlEncryptionKey();
   recordAudit({ action: 'settings.update', target: TARGET, summary: 'Removed the SAML decryption key', details: { fingerprint: before.fingerprint } });
   return json(samlEncryptionView());
 });

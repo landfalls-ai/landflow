@@ -175,7 +175,7 @@ describe('Run Trace connections', () => {
   it('shows GitHub MCP with the GitHub mark and what it is for', () => {
     const reviewer = agentStore.publish(agentStore.create({ name: 'Reviewer', tools: [githubTool('review')] }).id)!;
     const reader = agentStore.publish(agentStore.create({ name: 'Planner', tools: [githubTool('read')] }).id)!;
-    expect(agentConnections(reviewer, { model: true })).toEqual([{ kind: 'tool', name: 'GitHub MCP', detail: 'Tool · pull requests, reviews, line comments', icon: 'brand:github', from: 'agent' }]);
+    expect(agentConnections(reviewer, { model: true })).toEqual([{ kind: 'tool', name: 'GitHub MCP', detail: 'Tool · pull requests, reviews, line comments', icon: 'brand:github', from: 'agent', toolId: 'tool_gh_review', credential: 'GitHub token' }]); // AG12: the tool's id and its credential's name
     expect(agentConnections(reader, { model: true })[0]).toMatchObject({ name: 'GitHub MCP', icon: 'brand:github', detail: 'Tool · repositories, pull requests, issues (read)', from: 'agent' });
   });
 });

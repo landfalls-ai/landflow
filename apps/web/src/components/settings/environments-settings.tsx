@@ -16,11 +16,15 @@ import type { CredentialMapping, CredentialSecretMapping, EnvironmentView, Promo
 import type { SourceControlPullResult } from '@/lib/shared/sync';
 import type { DataTableSummary } from '@/lib/shared/data-tables';
 import type { WorkflowSummary } from '@/lib/shared/types';
+import { isBuiltInAdmin } from '@/lib/shared/auth';
+import { useViewer } from '@/components/auth/viewer';
 import { useCredentials } from '@/components/credentials/use-credentials';
 import { Card } from '@/components/shell/page-header';
 import { Badge, type Tone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { HelpTip } from '@/components/ui/help-tip';
 import { FieldLabel, Input, SectionLabel, Select, Switch } from '@/components/ui/inputs';
+import { plural } from '@/lib/client/format';
 
 const PUBLISH_LABELS: Record<PullPublishMode, string> = {
   file: 'Follow each file (publish workflows that are active in the branch)',
@@ -30,7 +34,6 @@ const PUBLISH_LABELS: Record<PullPublishMode, string> = {
 const STATUS_TONES: Record<PromotionEntry['status'], Tone> = { added: 'success', modified: 'accent', unchanged: 'muted', deleted: 'warning' };
 const FILE_TONES: Record<'A' | 'M' | 'D', Tone> = { A: 'success', M: 'accent', D: 'warning' };
 const FILE_LABELS: Record<'A' | 'M' | 'D', string> = { A: 'added', M: 'modified', D: 'deleted' };
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** A unified diff, colored by line. */
 export function DiffView({ diff }: { diff: string }) {
@@ -488,6 +491,7 @@ const draftOf = (view: EnvironmentView): Draft => ({
 });
 
 export function EnvironmentsSettings() {
+  const viewer = useViewer();
   const [view, setView] = useState<EnvironmentView>();
   const [draft, setDraft] = useState<Draft>();
   const [error, setError] = useState<string>();
@@ -509,6 +513,8 @@ export function EnvironmentsSettings() {
   /** The secret (password) fields of a credential type, by its descriptor. */
   const secretFieldsOf = (type: string) => credentialTypes?.find((t) => t.type === type)?.descriptor.properties.filter((p) => p.typeOptions?.password).map((p) => p.name) ?? [];
 
+  // Promotion and pull change workflows in every project: the built-in owner or admin role (the routes enforce it; a null viewer is a host without sign-in).
+  if (viewer && !isBuiltInAdmin(viewer)) return <Card className="px-5 py-4 text-[13px] text-t2">Environments reach every project: ask an owner or admin.</Card>;
   if (!view || !draft) {
     return error ? <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div> : <div className="h-56 rounded-2xl border border-hair bg-sf animate-pulse-soft" />;
   }
@@ -520,9 +526,12 @@ export function EnvironmentsSettings() {
           <SectionLabel>No environment</SectionLabel>
         </div>
         <p>
-          This instance isn’t an environment. Start it with <code className="font-mono text-[12px]">LANDFLOW_ENVIRONMENT=development</code> (or staging, production, …) and give each environment its own
-          branch in Settings → Source control; then promote workflows from one environment’s branch to the next and pull them there, with that environment’s credentials, variables and
-          external secrets. <code className="font-mono text-[12px]">LANDFLOW_ENVIRONMENT_PROTECTED=true</code> makes workflows read-only there.
+          This instance isn’t an environment.
+          <HelpTip label="How to make this an environment" className="ml-1 align-middle">
+            Start it with <code className="font-mono text-[12px]">LANDFLOW_ENVIRONMENT=development</code> (or staging, production, …) and give each environment its own branch in Settings → Source control; then promote
+            workflows from one environment’s branch to the next and pull them there, with that environment’s credentials, variables and external secrets.{' '}
+            <code className="font-mono text-[12px]">LANDFLOW_ENVIRONMENT_PROTECTED=true</code> makes workflows read-only there.
+          </HelpTip>
         </p>
       </Card>
     );

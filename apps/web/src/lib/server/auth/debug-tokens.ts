@@ -19,6 +19,7 @@ import { authDb } from './db';
 import { randomToken, tokenHash } from './passwords';
 import { getDebugNodeSettings } from '../debug-node/settings';
 import { getUser, type UserRecord } from './users';
+import { HttpError } from '../errors';
 
 export const DEBUG_TOKEN_PREFIX = 'lf_dbg_';
 export const DEBUG_TOKEN_SCOPES = ['executions:read', 'trace:read'] as const;
@@ -38,12 +39,13 @@ export const DEBUG_TOKEN_MAX_USES = 1000;
 /** Live tokens per execution, so a loop cannot fill the table. */
 export const DEBUG_TOKEN_MAX_LIVE_PER_EXECUTION = 20;
 
-export class DebugTokenError extends Error {
+export class DebugTokenError extends HttpError {
+  static readonly errorName: string = 'DebugTokenError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

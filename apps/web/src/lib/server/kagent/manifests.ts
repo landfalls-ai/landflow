@@ -21,6 +21,10 @@
  *   sandbox, which the Agent references after its other policies: kagent grants an MCP server's origin only to an agent
  *   that binds tools from it, and the mod posts what it sees to /api/agent-trace/:id on every agent.
  *
+ * With secret routes (docs/a2a.md, "Secret routes") two more objects: a Secret `<name>-routes` with each route's credential
+ * value and an EgressPolicy `<name>-routes` whose destinations carry `authentication` for the gateway to add it; the Agent
+ * references that policy too.
+ *
  * The object kagent holds is compared with these to find drift (./deploy.ts), so every field here is one Landflow owns.
  */
 import { createHash } from 'node:crypto';
@@ -34,8 +38,12 @@ export const VERSION_ANNOTATION = 'landflow.dev/agent-version';
 export const TOKEN_ANNOTATION = 'landflow.dev/token-sha256';
 /** A hash of the tool names a RemoteMCPServer serves: a changed list changes the object, so kagent lists the tools again. */
 export const TOOLS_ANNOTATION = 'landflow.dev/tools-sha256';
+/** The routes policy's keyed hash of the route values it was written with: drift is visible without reading the Secret. */
+export const ROUTES_HMAC_ANNOTATION = 'landflow.dev/routes-hmac';
 const MANAGED_BY = { 'app.kubernetes.io/managed-by': 'landflow' };
 export const MCP_TIMEOUT = '120s';
+/** C09: with cross-session memory on, the persona says to recall first; the memory key is in the conversation's first message. */
+export const MEMORY_PERSONA_LINE = 'At the start of a task, call recall_memory with the memory key from the conversation and the task, and use remember and forget_memory to keep what you know about the person up to date.';
 
 /** A tool as kagent binds it: its MCP name and whether kagent pauses for a person before it runs. */
 export interface ExposedTool {
@@ -50,6 +58,12 @@ export interface ModelSettings {
   baseUrl?: string;
   /** OpenAI or Anthropic: the key, written to the Secret. */
   apiKey?: string;
+  /**
+   * The agent's model goes through the LLM gateway (docs/llm-gateway.md): `apiKey` is the agent's virtual key and `baseUrl`
+   * the gateway as the cluster reaches it. The provider is the API format the gateway is called in (the gateway serves
+   * Ollama's models over the OpenAI one); `alias` names the key in LiteLLM.
+   */
+  gateway?: { provider: 'Anthropic' | 'OpenAI'; alias: string };
 }
 
 export interface CompileInput {
@@ -72,6 +86,19 @@ export interface CompileInput {
   egressPolicies?: string[];
   /** Claude Code with the landflow-harness mod: open Landflow's origin to the sandbox, which the mod reports to. */
   landflowEgress?: boolean;
+  /** Claude Code: the secret routes (values resolved; the status passes none, so only their shape is compared) and the keyed hash for the policy's annotation. */
+  routes?: { entries: ResolvedRoute[]; hash: string };
+}
+
+/** One secret route as written: the Secret key it takes (`r0`…), what the gateway sends, to which hosts, and the credential's value. */
+export interface ResolvedRoute {
+  key: string;
+  header: string;
+  prefix: string;
+  hosts: string[];
+  value: string;
+  credentialId: string;
+  credentialName: string;
 }
 
 /** A DNS label for kagent from an agent's name: `Text formatter` → `text-formatter`. */
@@ -90,13 +117,15 @@ export function kagentName(name: string): string {
 export const validKagentName = (name: string) => /^[a-z0-9]([-a-z0-9]{0,51}[a-z0-9])?$/.test(name);
 
 export const secretName = (name: string) => `${name}-landflow`;
+/** The Secret and the EgressPolicy of an agent's secret routes (two kinds, one name; `<name>-landflow` and `<name>` are the agent's other objects). */
+export const routesName = (name: string) => `${name}-routes`;
 /** The EgressPolicy that lets the sandbox reach Landflow (its mod's reports): the Secret's name, as another kind. */
 export const landflowEgressName = (name: string) => `${name}-landflow`;
 /** Claude Code: the RemoteMCPServer with the tools kagent pauses on. */
 export const approvalServerName = (name: string) => `${name}-approval`;
 export const mcpServerPath = (agentId: string) => `/api/mcp/agents/${encodeURIComponent(agentId)}`;
 
-function metadata(input: CompileInput, name: string, annotations: Record<string, string> = {}) {
+function metadata(input: Pick<CompileInput, 'agentId' | 'version' | 'cluster'>, name: string, annotations: Record<string, string> = {}) {
   return {
     name,
     namespace: input.cluster.namespace,
@@ -126,7 +155,8 @@ export function claudeToolBindings(name: string, tools: ExposedTool[]) {
 export function claudeModelSpec(config: AgentConfig, settings: ModelSettings, secret: string): Record<string, unknown> | undefined {
   const model = config.model;
   if (!model?.model) return undefined;
-  const baseUrl = model.provider === 'ollama' ? settings.ollamaHost : settings.baseUrl;
+  // Through the gateway: the gateway's Anthropic Messages endpoint, called with the agent's virtual key.
+  const baseUrl = settings.gateway ? settings.baseUrl : model.provider === 'ollama' ? settings.ollamaHost : settings.baseUrl;
   return { provider: 'Anthropic', model: model.model, apiKeySecret: secret, apiKeySecretKey: 'api-key', anthropic: { ...(baseUrl && { baseUrl }) } };
 }
 
@@ -136,6 +166,14 @@ export function modelSpec(config: AgentConfig, settings: ModelSettings, secret: 
   if (!model?.model) return undefined;
   const temperature = model.temperature === undefined ? undefined : String(model.temperature);
   const key = settings.apiKey ? { apiKeySecret: secret, apiKeySecretKey: 'api-key' } : {};
+  // Through the gateway the provider is the one the gateway is called in, whatever the agent's own: an Ollama agent's
+  // `ollama.host` is not used.
+  if (settings.gateway) {
+    const { provider } = settings.gateway;
+    return provider === 'OpenAI'
+      ? { provider, model: model.model, ...key, openAI: { ...(settings.baseUrl && { baseUrl: settings.baseUrl }), ...(temperature && { temperature }) } }
+      : { provider, model: model.model, ...key, anthropic: { ...(settings.baseUrl && { baseUrl: settings.baseUrl }), ...(temperature && { temperature }) } };
+  }
   switch (model.provider) {
     case 'ollama':
       return { provider: 'Ollama', model: model.model, ollama: { host: settings.ollamaHost ?? '', ...(temperature && { options: { temperature } }) } };
@@ -184,6 +222,39 @@ function mcpServer(input: CompileInput, name: string, secret: string, tools?: 'f
   };
 }
 
+/**
+ * The Secret (one key per route, the credential's value) and the EgressPolicy (a destination per host with `authentication`,
+ * as deploy/kind/egress-github.yaml writes by hand) of an agent's secret routes. The value is only in the Secret: the gateway
+ * adds `prefix` itself, so the key holds the bare value. A route with no prefix leaves the field out.
+ */
+export function routeObjects(input: Pick<CompileInput, 'agentId' | 'version' | 'cluster'>, name: string, entries: ResolvedRoute[], hash: string): KubeObject[] {
+  const target = routesName(name);
+  const meta = (annotations: Record<string, string> = {}) => metadata(input, target, annotations);
+  return [
+    {
+      apiVersion: 'v1',
+      kind: 'Secret',
+      metadata: meta(),
+      type: 'Opaque',
+      // `data`, not `stringData`: server-side apply then owns each key, so a route removed from the list drops its key.
+      data: Object.fromEntries(entries.map((route) => [route.key, Buffer.from(route.value).toString('base64')])),
+    },
+    {
+      apiVersion: KAGENT_API,
+      kind: 'EgressPolicy',
+      metadata: meta({ [ROUTES_HMAC_ANNOTATION]: hash }),
+      spec: {
+        destinations: entries.flatMap((route) =>
+          route.hosts.map((origin) => ({
+            origin,
+            authentication: { header: route.header, ...(route.prefix && { prefix: route.prefix }), secretKeyRef: { name: target, key: route.key } },
+          })),
+        ),
+      },
+    },
+  ];
+}
+
 export function kagentManifests(input: CompileInput): KubeObject[] {
   const { name, config } = input;
   const secret = secretName(name);
@@ -191,7 +262,11 @@ export function kagentManifests(input: CompileInput): KubeObject[] {
   const model = (claude ? claudeModelSpec : modelSpec)(config, input.model ?? {}, secret);
   const plugins = claude ? (input.plugins ?? []) : [];
   const landflowOrigin = claude && input.landflowEgress ? egressOrigin(input.cluster.landflowUrl) : undefined;
-  const egress = [...(input.egressPolicies ?? []), ...(landflowOrigin ? [landflowEgressName(name)] : [])];
+  // Claude Code through the gateway: its sandbox reaches the gateway too (its key's budget bounds what it can spend there).
+  const gatewayOrigin = claude && input.model?.gateway ? egressOrigin(input.model.baseUrl) : undefined;
+  const destinations = [...new Set([landflowOrigin, gatewayOrigin].filter((origin): origin is string => Boolean(origin)))].map((origin) => ({ origin }));
+  const routes = claude && input.routes?.entries.length ? routeObjects(input, name, input.routes.entries, input.routes.hash) : [];
+  const egress = [...(input.egressPolicies ?? []), ...(destinations.length ? [landflowEgressName(name)] : []), ...(routes.length ? [routesName(name)] : [])];
   return [
     {
       apiVersion: 'v1',
@@ -200,6 +275,7 @@ export function kagentManifests(input: CompileInput): KubeObject[] {
       type: 'Opaque',
       stringData: { authorization: `Bearer ${input.token}`, ...(input.model?.apiKey && { 'api-key': input.model.apiKey }) },
     },
+    ...routes.filter((o) => o.kind === 'Secret'),
     mcpServer(input, name, secret, claude ? 'free' : undefined),
     ...(claude && input.tools.some((t) => t.requireApproval) ? [mcpServer(input, approvalServerName(name), secret, 'approval')] : []),
     ...(model ? [{ apiVersion: KAGENT_API, kind: 'ModelConfig', metadata: metadata(input, name), spec: model }] : []),
@@ -210,14 +286,15 @@ export function kagentManifests(input: CompileInput): KubeObject[] {
       spec: {
         description: config.description || config.name,
         ...(model && { modelConfig: { name } }),
-        systemPrompt: personaPrompt(config),
+        systemPrompt: config.memory?.crossSession ? `${personaPrompt(config)}\n\n${MEMORY_PERSONA_LINE}` : personaPrompt(config),
         tools: (claude ? claudeToolBindings : toolBindings)(name, input.tools),
         ...(plugins.length && { plugins: plugins.map(pluginSource) }),
       },
     },
-    ...(landflowOrigin
-      ? [{ apiVersion: KAGENT_API, kind: 'EgressPolicy', metadata: metadata(input, landflowEgressName(name)), spec: { destinations: [{ origin: landflowOrigin }] } }]
+    ...(destinations.length
+      ? [{ apiVersion: KAGENT_API, kind: 'EgressPolicy', metadata: metadata(input, landflowEgressName(name)), spec: { destinations } }]
       : []),
+    ...routes.filter((o) => o.kind === 'EgressPolicy'),
     {
       apiVersion: KAGENT_API,
       kind: 'Agent',

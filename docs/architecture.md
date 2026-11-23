@@ -59,7 +59,7 @@ errors into JSON. The server code under `src/lib/server` is organised by domain:
 
 | Area | Directories and files |
 |---|---|
-| Runs | `runner.ts` (starts and finishes executions), `waits.ts`, `retries.ts`, `concurrency.ts`, `idempotency.ts`, `sub-executions.ts`, `streaming.ts`, `trigger-buffers.ts` (debounce and batching) |
+| Runs | `runner.ts` (a barrel over `runner/`: `run.ts` starts runs and runs a stretch of one, `resume.ts`, `rerun.ts` (re-runs and retries), `queue.ts` (the concurrency FIFO), `recovery.ts` (checkpoints, boot recovery), `links.ts` (sub-executions, error workflow), `live.ts`, `stop.ts`, `jobs.ts` (queue-mode workers), `state.ts`, `limits.ts`, `persist.ts`, `types.ts`), `waits.ts`, `retries.ts`, `concurrency.ts`, `idempotency.ts`, `sub-executions.ts`, `streaming.ts`, `trigger-buffers.ts` (debounce and batching) |
 | Triggers | `webhooks.ts`, `forms.ts`, `app-webhooks.ts`, `scheduler.ts`, `poller.ts`, `imap-idle.ts`, `chat.ts`, `test-webhooks.ts` |
 | Plugins | `plugins/` (registry, discovery, Kubernetes watch, marketplace), `transports/` (selector, Auto, brokers, policies), `nodes/` (the built-in `core` plugin), `composites.ts` (composite types from the plugins and this instance's library, the checks the publish gate and templates run, the run's scopes) |
 | Data | `db/` (SQLite and Postgres, migrations), `store.ts`, `binary/`, `datatables/`, `versions.ts`, `folders.ts`, `variables.ts`, `config-store.ts` |
@@ -69,9 +69,16 @@ errors into JSON. The server code under `src/lib/server` is organised by domain:
 | Cluster | `cluster/` (queue, workers, leader, control channel, shared debug sessions) |
 | Telemetry | `telemetry/` (OpenTelemetry setup, metrics, logs) |
 
-`bootstrap.ts` starts everything once per process: migrations, the registry, discovery, broker connections, the
-scheduler and pollers (on the leader), the gateway sync and the telemetry. `bus.ts` is the in-process event bus that
-carries live run events to SSE streams; in queue mode the same events travel over Valkey pub/sub.
+`runtime.ts` is the composition root: one service table (`SERVICES`) that both the main (`startRuntime({ role: 'main' })`,
+via `instrumentation.ts` and `bootstrap.ts`) and the worker (`cluster/worker-main.ts`) run, each the entries of its role in
+list order: the configuration check, the database, the cluster runtime, the registry, discovery, broker connections, the
+scheduler and pollers (on the leader), the gateway sync and the shutdown steps. Route modules do not import it: `handler()` and
+`scimRoute()` await `whenReady()` (`lifecycle.ts`), which boots through the bootstrapper `instrumentation.ts` (or the test setup)
+registered. `bus.ts` is the in-process event bus that
+carries live run events to SSE streams; in queue mode the same events travel over Valkey pub/sub. The bus numbers each
+event and keeps the last 500 in a ring, which `/api/events` (`events-stream.ts`) replays after a reconnect's
+`Last-Event-ID`; every stream goes through `sse.ts` (`sseResponse`), which bounds a client's unread bytes and writes the
+heartbeats.
 
 ## A run, end to end
 
@@ -160,7 +167,8 @@ announcing. An expired lease turns a plugin offline: its nodes grey out and its 
 ## Transports
 
 The host reaches a plugin directly (HTTP, gRPC: the host connects to the plugin) or through a broker (both connect out,
-so the plugin needs no inbound port). Eleven broker kinds have drivers: Kafka, RabbitMQ (AMQP 0-9-1), NATS, JetStream,
+so the plugin needs no inbound port). Ten brokers have drivers, eleven transport kinds in all, because JetStream is a kind of its own
+on the NATS server (`packages/transports/package.json` exports them): Kafka, RabbitMQ (AMQP 0-9-1), NATS, JetStream,
 Valkey Streams, MQTT 5, SQS, Google Pub/Sub, Pulsar, Azure Service Bus and AMQP 1.0 ([transports.md](transports.md)).
 
 ```
@@ -224,6 +232,11 @@ and renews the token before it expires (`lib/server/mcp/oauth.ts`).
 
 ## Storage
 
+The store does not call up into features. `store.saveExecution` upserts the run and, for a finished run (not running or
+queued, not a backtest's), emits `onExecutionFinished` to a listener list held in `singleton()`. `lib/server/execution-reactions.ts`
+subscribes insights, the usage ledger and retention, in that order, and `runtime.ts` calls `ensureExecutionReactions()`
+before the first service of either role, so a worker records them too.
+
 | What | Where |
 |---|---|
 | Workflows, versions, executions, checkpoints, waits, users, projects, settings, data tables, audit events… | SQLite (`<data dir>/landflow.db`, WAL) or Postgres (`LANDFLOW_DB=postgres`) |
@@ -237,6 +250,36 @@ On Postgres the host loads the database into an in-memory copy at boot, serves r
 ordered queue spooled to disk, so the store API stays synchronous; other processes' writes arrive through
 `LISTEN/NOTIFY`. Migrations are versioned (`db/schema.ts`, recorded in `schema_version`), each written for both
 databases; a migration can add columns only where they are missing.
+
+**The hot mirror (Postgres mode).** The copy does not hold the whole history. An execution is *hot* while it is running,
+waiting or queued, for `LANDFLOW_PG_HOT_MINUTES` (default 15) after it finished, while an automatic retry waits for it, or
+while its parent is still in flight (the parent reads it when it wakes); a hot execution keeps its row, its `data` and its
+`execution_events` in the copy. A *cold* one keeps its row (every column, the summary included) with `data` set to the empty
+string, and none of its events. Boot loads only the hot part (`db/hot-mirror.ts`, `mirrorSelect`), and each minute every
+process evicts what cooled down with `Database.evictLocal`, which changes the copy only: nothing goes to the write queue
+or the observers, and a run with a write not yet in Postgres (`sink.pendingExecutions()`) is left until it lands. Writes
+to a cold run still replay: a `delete` or `deleteBefore` on `executions` or `execution_events` is queued even when the copy
+had nothing to delete, so deleting a cold run and the retention sweeps reach its events in Postgres. In queue mode a
+change another process sends keeps `data` only for a hot run and loads no events of a cold one.
+
+Reads through the seam below follow from it: `readExecutionData` and `readExecutionEvents` go to Postgres (one query on a
+pool connection) for a cold run, and a scan (`readRows`) first waits up to two seconds for this process's queued writes
+(`Database.barrier`) and then runs the same SQL on Postgres, because the copy would miss cold runs; if the queue does not
+drain or Postgres fails it scans the copy and logs a warning. A writer that must append to a finished run's journal (a
+person's decision on a failed check, `journal/checks.ts`) first awaits `promoteExecution(id)`, which loads the run's data
+and events back into the copy and keeps them for the hot window (the re-run, retry, run and webhook routes call it as
+`store.promoteExecution`, since routes never import `lib/server/db`); `journalStore.append` refuses a cold run, and
+`lastSeq` says 1 for one. The audit log, the usage ledger, insights rows and AI usage still live in the copy whole
+([limitations](limitations.md)).
+
+**The read seam for run data.** `db/reads.ts` holds the reads of `executions.data` and `execution_events` that code serving
+finished runs uses, all async: `readExecutionData`, `readExecutionEvents` and `readRows` for scans (the EXISTS search in
+`journal/runs-query.ts`, `executionsMentioningAsync`). On SQLite each is the synchronous read in a resolved promise; on
+Postgres they serve what the copy does not hold, as above. The store API follows one rule: `store.getExecution` is synchronous and is for **runs in flight**
+(running, waiting, queued) and the runner, cluster, waits, approvals and resume routes that handle them; anything that may
+read a finished run uses `await store.loadExecution(id)` and the async journal readers (`journalStore.readEventsAsync`,
+`readAllAsync`, `checksSinceAsync`, `spanStartAsync`, `spanEventsAsync`). `test/execution-reads.test.ts` scans the source and
+fails when a file outside its allow-list calls `store.getExecution(`.
 
 ## Queue mode and high availability
 
@@ -310,10 +353,11 @@ See [agents.md](agents.md) and [assistant.md](assistant.md).
 
 ## The code runner
 
-The Code node runs JavaScript or Python either in process (a `node:vm` context of the host, not isolated) or in the code
+The Code node runs JavaScript or Python either in process (a `node:vm` context of the host, not isolated; off by default in the production profile, which
+runs Code nodes in the runner unless `LANDFLOW_CODE_IN_PROCESS=true`) or in the code
 runner: a separate service that starts a fresh process per run, with n8n's globals, no network, a read-only root, resource
 limits and a shared secret for its callers ([deployment.md, "Code runner"](deployment.md#code-runner)).
-Both paths give the code the same `$('Node')` helpers (the expression engine's accessors, `packages/engine/src/expression.ts`) and the same file helpers (`this.helpers.getBinaryDataBuffer` / `prepareBinaryData`): in process they use the context's binary client, and the runner, having no network, receives input file bytes in the request and returns created files as base64 for the host to store.
+Both paths give the code the same `$('Node')` helpers (the expression engine's accessors, `packages/engine/src/expression.ts`; expressions themselves run in a sealed realm, `packages/engine/src/sandbox/`, which `nodeAccessor` mirrors) and the same file helpers (`this.helpers.getBinaryDataBuffer` / `prepareBinaryData`): in process they use the context's binary client, and the runner, having no network, receives input file bytes in the request and returns created files as base64 for the host to store.
 
 ## Observability
 
@@ -330,7 +374,7 @@ AI usage and every plugin; logs carry the trace id. `/api/metrics` serves Promet
 | Docker | `deploy/compose.yml`: the host (:53000) with the gateway sidecar (:54000), seven plugins and the code runner (:53300) |
 | Queue mode | `deploy/compose.queue.yml`: two mains, two workers, a load balancer (:53080), gateway sidecars |
 | Infrastructure | `deploy/compose.infra.yml`: Postgres, Valkey (and a six-node Valkey Cluster, profile `valkey-cluster`), MinIO, Mailpit, Keycloak, OpenBao, LocalStack, Jaeger, MySQL, GreenMail, a Git SSH server (profile `git`), every broker (one profile each), agentgateway |
-| Kubernetes | `deploy/k8s`: a base (the host with its gateway sidecar and a namespaced Role, seven plugins), components (Postgres, Valkey, MinIO, the brokers, broker transports, queue mode, Ingress, Gateway API routes, gateway sign-in with one or two issuers, cluster-wide discovery) and overlays for OrbStack (`orbstack`, `orbstack-brokers`, `orbstack-queue`…); KEDA examples scale plugins on broker backlog and workers on the queue's |
+| Kubernetes | `deploy/k8s`: a base (the host with its gateway sidecar and a namespaced Role, twelve plugins), components (Postgres, Valkey, MinIO, the brokers, broker transports, queue mode, Ingress, Gateway API routes, gateway sign-in with one or two issuers, cluster-wide discovery) and overlays for OrbStack (`orbstack`, `orbstack-brokers`, `orbstack-queue`…); KEDA examples scale plugins on broker backlog and workers on the queue's |
 
 See [deployment.md](deployment.md) for every stack and how each was checked.
 

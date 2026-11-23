@@ -13,32 +13,22 @@ import { database } from '../db';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { auditDestinations } from './destinations';
+import { ensureAuditMetrics, recordAuditDeliveryFailure } from './metrics';
 import { recordAudit, setOutboxKick } from './index';
 import { getAuditSettings } from './settings';
 import { BATCH_SIZE, deliver } from './sinks';
 import { getEvents, pruneEventsAsync } from './store';
+import type { OutboxRow as OutboxCoreRow } from '../outbox/core';
+import { AUDIT_OUTBOX, backoffMs, claimDue, makeDue, MAX_BACKOFF_MS, settleRows } from '../outbox/core';
 
 const TICK_MS = 5_000;
 const KICK_DELAY_MS = 150;
-const LEASE_MS = 60_000;
 const HOUR_MS = 3_600_000;
-export const MAX_BACKOFF_MS = 300_000;
 
-interface OutboxRow {
-  destination_id: string;
-  event_id: string;
-  created_at: string;
-  attempts: number;
-  next_at: string;
-  lease_until: string | null;
-  last_error: string | null;
-}
+// The claim, settle and backoff code is the shared outbox core's (../outbox/core); these names stay for the callers and tests.
+export { backoffMs, MAX_BACKOFF_MS };
 
-/** The delay before attempt `attempts + 1` after `attempts` failures: 2 s doubling, at most 5 minutes, ±20 %. */
-export function backoffMs(attempts: number, random = Math.random()): number {
-  const base = Math.min(MAX_BACKOFF_MS, 2_000 * 2 ** Math.max(0, attempts - 1));
-  return Math.round(Math.min(MAX_BACKOFF_MS, base * (0.8 + 0.4 * random)));
-}
+type OutboxRow = OutboxCoreRow & { destination_id: string };
 
 interface State {
   running: boolean;
@@ -53,41 +43,8 @@ interface State {
 
 const state = () => singleton<State>('audit-outbox', () => ({ running: false, backoff: new Map() }));
 
-/** Claim up to `limit` due rows of `destinationId` for this process (a lease of a minute). */
-function claim(destinationId: string, limit: number, now: number): OutboxRow[] {
-  const db = database();
-  const at = new Date(now).toISOString();
-  const lease = new Date(now + LEASE_MS).toISOString();
-  return db.transaction(() => {
-    const rows = db.all<OutboxRow>(
-      'SELECT * FROM audit_outbox WHERE destination_id = ? AND next_at <= ? AND (lease_until IS NULL OR lease_until < ?) ORDER BY created_at, event_id LIMIT ?',
-      destinationId,
-      at,
-      at,
-      limit,
-    );
-    for (const row of rows) db.upsert('audit_outbox', { ...row, lease_until: lease });
-    return rows;
-  });
-}
-
-function settle(rows: OutboxRow[], error: Error | undefined, now: number): number {
-  const db = database();
-  return db.transaction(() => {
-    if (!error) {
-      for (const row of rows) db.delete('audit_outbox', { destination_id: row.destination_id, event_id: row.event_id });
-      return 0;
-    }
-    let next = 0;
-    for (const row of rows) {
-      const attempts = Number(row.attempts) + 1;
-      const at = now + backoffMs(attempts);
-      next = Math.max(next, at);
-      db.upsert('audit_outbox', { ...row, attempts, next_at: new Date(at).toISOString(), lease_until: null, last_error: error.message.slice(0, 500) });
-    }
-    return next;
-  });
-}
+const claim = (destinationId: string, limit: number, now: number) => claimDue<OutboxRow>(AUDIT_OUTBOX, destinationId, limit, now, false);
+const settle = (rows: OutboxRow[], error: Error | undefined, now: number) => settleRows(AUDIT_OUTBOX, rows, error ? { error } : { ok: true }, now);
 
 /** Deliver what is due to one destination. Returns how many events it took. */
 async function drainDestination(destinationId: string, now: number): Promise<number> {
@@ -114,6 +71,7 @@ async function drainDestination(destinationId: string, now: number): Promise<num
     auditDestinations.noteDelivery(destinationId, { at: new Date().toISOString(), ok: !failure, ...(failure ? { message: failure.message } : { message: `Delivered ${events.length} event${events.length === 1 ? '' : 's'}` }) });
     if (failure) {
       s.backoff.set(destinationId, next);
+      recordAuditDeliveryFailure(destination.name);
       logger.warn('audit destination delivery failed', { 'landflow.audit.destination': destination.name, error: failure.message });
       break;
     }
@@ -174,6 +132,7 @@ export function startAuditOutbox() {
   const s = state();
   if (s.running) return;
   s.running = true;
+  ensureAuditMetrics();
   setOutboxKick(kick);
   s.timer = setInterval(() => void drainOutbox(), TICK_MS);
   s.timer.unref?.();
@@ -205,14 +164,9 @@ export function resetOutboxBackoff(destinationId?: string) {
 /** Make every queued row of `destinationId` due now (after fixing its settings). */
 export function retryDestinationNow(destinationId: string): number {
   resetOutboxBackoff(destinationId);
-  const db = database();
-  const now = new Date().toISOString();
-  const rows = db.all<OutboxRow>('SELECT * FROM audit_outbox WHERE destination_id = ? AND next_at > ?', destinationId, now);
-  db.transaction(() => {
-    for (const row of rows) db.upsert('audit_outbox', { ...row, next_at: now });
-  });
+  const changed = makeDue(AUDIT_OUTBOX, destinationId, Date.now());
   kick();
-  return rows.length;
+  return changed;
 }
 
 /**

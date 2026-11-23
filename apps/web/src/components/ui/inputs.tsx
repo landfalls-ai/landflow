@@ -1,6 +1,6 @@
 'use client';
-import { forwardRef, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { forwardRef, type InputHTMLAttributes, type KeyboardEvent, type ReactNode, type RefObject, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { ChevronDown, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const field = 'w-full rounded-[10px] border border-hair bg-wl px-3 text-[13px] text-t1 placeholder:text-t3 outline-none transition-colors duration-[120ms] focus:border-ac';
@@ -37,6 +37,99 @@ export function Switch({ checked, onChange, disabled, label }: { checked: boolea
     >
       <span className={cn('size-3.5 rounded-full shadow-sm transition-transform duration-[120ms]', checked ? 'translate-x-[18px] bg-on-ac' : 'translate-x-[2px] bg-t3')} />
     </button>
+  );
+}
+
+/**
+ * The search field above a list (docs/ui-review.md#controls): a pill with the magnifier, × to clear, Escape clears too
+ * (and only then lets Escape through to close a dialog). 32 px, 44 px on a phone; `className` sets its width.
+ */
+export function SearchInput({
+  value,
+  onChange,
+  placeholder,
+  label,
+  className,
+  autoFocus,
+  inputRef,
+  onKeyDown,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  /** For a screen reader; the placeholder when not given. */
+  label?: string;
+  className?: string;
+  autoFocus?: boolean;
+  inputRef?: RefObject<HTMLInputElement | null>;
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
+}) {
+  return (
+    <div className={cn('relative w-[240px] max-md:w-full', className)}>
+      <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
+      <input
+        ref={inputRef}
+        type="search"
+        value={value}
+        autoFocus={autoFocus}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          onKeyDown?.(e);
+          if (e.defaultPrevented || e.key !== 'Escape' || !value) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onChange('');
+        }}
+        placeholder={placeholder}
+        aria-label={label ?? placeholder}
+        className={cn(field, 'h-8 rounded-full pl-8 pr-8 max-md:h-11 [&::-webkit-search-cancel-button]:appearance-none')}
+      />
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          aria-label="Clear search"
+          className="absolute right-1.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1 max-md:right-0 max-md:size-11"
+        >
+          <X className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** A checkbox in the accent colour, with its label beside it when given (a 44 px row on a phone). */
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  disabled,
+  className,
+  ariaLabel,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  label?: ReactNode;
+  disabled?: boolean;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  const box = (
+    <input
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      onChange={(e) => onChange(e.target.checked)}
+      className="size-4 shrink-0 cursor-pointer accent-[var(--ac2)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ac disabled:cursor-not-allowed"
+    />
+  );
+  if (!label) return box;
+  return (
+    <label className={cn('flex w-fit cursor-pointer select-none items-center gap-2 text-[13px] text-t2 max-md:min-h-11', disabled && 'cursor-not-allowed opacity-60', className)}>
+      {box}
+      {label}
+    </label>
   );
 }
 

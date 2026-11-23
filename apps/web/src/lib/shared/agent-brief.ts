@@ -1,0 +1,199 @@
+/**
+ * What Spotlight and the AI flow builder know about the caller's published agents (docs/assistant.md#agents and teams):
+ * enough to tell whether one already does the job a step needs, so the flow runs that agent (Run an Agent) instead of a
+ * new AI Agent, or Spotlight says a dedicated agent is needed and proposes one.
+ */
+import type { Agent } from './agents';
+import type { ConnectionType } from './types';
+
+export interface AgentBrief {
+  id: string;
+  name: string;
+  /** What it does: its description, else its persona's mission. */
+  description?: string;
+  /** The persona's role ("Editor for the docs team"). */
+  role?: string;
+  /** The team it belongs to on the Agents page. */
+  team?: string;
+  version: number;
+  /** Skill names, each with its "use when". */
+  skills: string[];
+  /** What it can do: tool names, knowledge bases, MCP servers, the agents it asks. */
+  tools: string[];
+  // AG18: what else Spotlight reads of an agent (all optional: a brief from before has none of them).
+  /** `provider/model` it runs on; absent: the host's default. */
+  model?: string;
+  /** The collections (or plugin knowledge bases) it searches. */
+  knowledge?: string[];
+  /** The tools (by the name in `tools`) that ask a person first. */
+  asksFirst?: string[];
+  /** False for an agent never published (a draft only: a Run an Agent node cannot run it yet). */
+  published?: boolean;
+  /** How many workflows run it. */
+  usedBy?: number;
+  /** Each node tool with what decides whether a flow step would repeat it: its type, whether it asks first, and its destination (fixed value, or free when empty / `$fromAI`). */
+  nodeTools?: AgentNodeTool[];
+}
+
+export interface AgentNodeTool {
+  type: string;
+  name: string;
+  requireApproval?: boolean;
+  /** The destination parameters (to / channel / url…) that hold a fixed value, by name. */
+  fixed?: Record<string, string>;
+  /** The destination parameters the model fills (`$fromAI`) or leaves empty. */
+  free?: string[];
+}
+
+/** AG25: the settings of a removed AI Agent step, for the saved agent made in its place. */
+export interface NewAgentHint {
+  /** The AI Agent's system message. */
+  instructions?: string;
+  /** The names of the tool nodes it had. */
+  tools: string[];
+  /** The tool nodes by type (and operation), as the design route's `toolNodes`. */
+  toolNodes: Array<{ nodeType: string; operation?: string }>;
+  /** The Chat Model it had, as `provider/model`. */
+  model?: string;
+}
+
+/**
+ * AG25: the ask calls for an agent ("have an agent write …", "my agent", "the sales agent"): the word "agent" outside "AI Agent"
+ * (the person who names that node asked for it). A step the ask calls an agent is a Run an Agent step, never an inline AI Agent.
+ */
+export function callsAnAgent(ask: string): boolean {
+  // "AI agent" names the node; "user agent" is a header; "support agent" or "sales agent" with a verb for a person ("when a support agent closes…") is a person.
+  const stripped = ask.replace(/\bAI[\s-]+agents?\b/gi, ' ').replace(/\buser[\s-]?agents?\b/gi, ' ').replace(/\b(?:when|whenever|if|after|once)\s+(?:a|an|each|every|the)\s+(?:\w+\s+)?agent\b/gi, ' ');
+  return /\bagents?\b/i.test(stripped);
+}
+
+/** The destination parameter of the one send node a flow step may repeat (`dropRepeatedAgentWork`): Send Email's To. Nothing else is ever dropped. */
+export const SENDER_DESTINATIONS: Record<string, string[]> = { 'messaging.emailSend': ['toEmail'] };
+
+const clip = (value: string | undefined, max: number) => {
+  const text = value?.replace(/\s+/g, ' ').trim();
+  return text ? (text.length > max ? `${text.slice(0, max - 1)}…` : text) : undefined;
+};
+
+/**
+ * A published agent as Spotlight reads it; undefined for one never published (a flow can't run it yet), unless `drafts`
+ * (AG18): then its draft is read, with `published: false` and version 0.
+ */
+export function agentBrief(agent: Agent, nameOf: (id: string) => string | undefined = () => undefined, options: { drafts?: boolean; usedBy?: number } = {}): AgentBrief | undefined {
+  const { published } = agent;
+  if (!published && !options.drafts) return undefined;
+  const config = published ? published.config : agent;
+  const toolName = (t: Agent['tools'][number]) => (t.type === 'agent' ? `asks ${nameOf(t.agentId) ?? 'another agent'}` : t.type === 'knowledge' && t.source !== 'node' ? t.collection : (t as { name: string }).name);
+  const shown = config.tools.slice(0, 12);
+  const asksFirst = shown.filter((t) => t.requireApproval).map(toolName);
+  const knowledge = config.tools.flatMap((t) => (t.type === 'knowledge' ? [toolName(t)] : []));
+  const description = clip(config.description, 200) ?? clip(config.persona?.mission, 200);
+  const role = clip(config.persona?.role, 80);
+  const nodeTools = config.tools.flatMap((t): AgentNodeTool[] => {
+    if (t.type !== 'node') return [];
+    const fixed: Record<string, string> = {};
+    const free: string[] = [];
+    for (const key of SENDER_DESTINATIONS[t.nodeType] ?? []) {
+      const value = (t.parameters as Record<string, unknown> | undefined)?.[key];
+      if (typeof value === 'string' && value.trim() && !value.includes('$fromAI')) fixed[key] = value.trim();
+      else free.push(key);
+    }
+    return [{ type: t.nodeType, name: (t as { name: string }).name, ...(t.requireApproval && { requireApproval: true }), ...(Object.keys(fixed).length && { fixed }), ...(free.length && { free }) }];
+  });
+  return {
+    id: agent.id,
+    name: config.name,
+    ...(description && { description }),
+    ...(role && { role }),
+    ...(config.team && { team: config.team }),
+    version: published?.version ?? 0,
+    skills: config.skills.slice(0, 8).map((s) => (s.whenToUse ? `${s.name} (${clip(s.whenToUse, 80)})` : s.name)),
+    tools: shown.map((t) => (t.type === 'agent' ? `asks ${nameOf(t.agentId) ?? 'another agent'}` : t.name)),
+    ...(config.model?.model && { model: `${config.model.provider}/${config.model.model}` }), // AG18:
+    ...(knowledge.length && { knowledge }),
+    ...(asksFirst.length && { asksFirst }),
+    ...(!published && { published: false }),
+    ...(options.usedBy && { usedBy: options.usedBy }),
+    ...(nodeTools.length && { nodeTools }),
+  };
+}
+
+/** The published agents as prompt text, one line each. */
+export function describeAgents(agents: readonly AgentBrief[]): string {
+  return agents
+    .map((a) => {
+      const parts = [
+        `- “${a.name}” (agentId ${a.id}, ${a.published === false ? 'not published' : `v${a.version}`}${a.team ? `, team ${a.team}` : ''})${a.description ? `: ${a.description}` : ''}`,
+        a.role && `Role: ${a.role}.`,
+        a.skills.length && `Skills: ${a.skills.join('; ')}.`,
+        a.tools.length && `Tools: ${a.tools.map((t) => (a.asksFirst?.includes(t) ? `${t} (asks first)` : t)).join(', ')}.`, // AG18:
+        a.model && `Model: ${a.model.split('/').pop()}.`,
+        a.knowledge?.length && `Knowledge: ${a.knowledge.join(', ')}.`,
+      ];
+      return parts.filter(Boolean).join(' ');
+    })
+    .join('\n');
+}
+
+const agentKey = (value: string) => value.trim().toLowerCase().replace(/\s+agent$/, '');
+
+/**
+ * A Run an Agent node's parameters as a model wrote them: models put the agent's name where its id goes. A name that
+ * matches one published agent becomes its id; anything else is left as written (the node then asks for an agent).
+ */
+export function withAgentId<T>(parameters: T, agents: readonly AgentBrief[]): T {
+  if (!parameters || typeof parameters !== 'object' || !agents.length) return parameters;
+  const p = parameters as Record<string, unknown>;
+  const written = typeof p.agentId === 'string' ? p.agentId.trim() : '';
+  if (!written || written.includes('{{') || agents.some((a) => a.id === written)) return parameters;
+  const named = agents.filter((a) => a.published !== false && agentKey(a.name) === agentKey(written)); // AG18: a draft-only agent is never bound
+  return named.length === 1 ? ({ ...p, agentId: named[0].id } as T) : parameters;
+}
+
+/**
+ * AG19: a Run an Agent step bound to an agent that has a Send Email tool (`send_email`: `messaging.emailSend`) sends the mail
+ * itself, so a Send Email step right after it is dropped (the later steps hang on the agent instead) and the summary says
+ * why. The model still adds such a step now and then. The rule is narrow on purpose; the step is dropped only when all hold:
+ * the agent has a Send Email tool that does not ask first (a workflow run refuses one that asks, so the step would be the
+ * only mail); the agent is the step's only main input; the step has no wired sub-nodes; it sets no CC, BCC or attachments;
+ * and its To is empty, or a literal equal (trimmed, any case) to the tool's fixed To. Any expression, any other address, a
+ * tool that takes the address from the model (unless the step's To is empty), and every other node type: the step stays.
+ */
+export function dropRepeatedAgentWork<N extends { key: string; type: string; name: string; parameters?: Record<string, unknown> }>(
+  nodes: N[],
+  edges: Array<[string, string, number, ConnectionType]>,
+  agents: readonly AgentBrief[],
+): { nodes: N[]; edges: Array<[string, string, number, ConnectionType]>; notes: string[]; dropped: string[]; /** The dropped step's key and the name of the agent that does its work. */ by: Array<{ key: string; name: string; agent: string }> } {
+  let keptNodes = nodes;
+  let keptEdges = edges;
+  const notes: string[] = [];
+  const dropped: string[] = [];
+  const by: Array<{ key: string; name: string; agent: string }> = [];
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  for (const n of nodes) {
+    if (n.type !== 'core.messageAgent') continue;
+    const id = typeof n.parameters?.agentId === 'string' ? n.parameters.agentId : '';
+    const agent = id ? agents.find((a) => a.id === id) : undefined;
+    const tools = (agent?.nodeTools ?? []).filter((t) => t.type === 'messaging.emailSend');
+    if (!agent || !tools.length || tools.some((t) => t.requireApproval)) continue;
+    for (const [from, to, output, type] of keptEdges) {
+      if (from !== n.key || type !== 'main') continue;
+      const next = keptNodes.find((m) => m.key === to);
+      if (!next || next.type !== 'messaging.emailSend') continue;
+      const options = (next.parameters?.options ?? {}) as Record<string, unknown>;
+      if (text(options.ccEmail) || text(options.bccEmail) || (Array.isArray(options.attachments) ? options.attachments.length : text(options.attachments))) continue;
+      const toEmail = text(next.parameters?.toEmail);
+      if (toEmail && !tools.some((t) => t.fixed?.toEmail && t.fixed.toEmail.trim().toLowerCase() === toEmail.toLowerCase())) continue;
+      if (keptEdges.some((e) => e[1] === next.key && (e[3] !== 'main' || e[0] !== n.key))) continue; // another input, or wired sub-nodes
+      if (keptEdges.some((e) => e[0] === next.key && e[3] !== 'main')) continue;
+      const after = keptEdges.filter((e) => e[0] === next.key && e[3] === 'main');
+      keptNodes = keptNodes.filter((m) => m.key !== next.key);
+      keptEdges = [...keptEdges.filter((e) => e[0] !== next.key && e[1] !== next.key), ...after.map(([, target, , t]): [string, string, number, ConnectionType] => [n.key, target, output, t])];
+      notes.push(`“${agent.name}” sends the email itself, so the flow has no “${next.name}” step after it`);
+      dropped.push(next.name);
+      by.push({ key: next.key, name: next.name, agent: agent.name });
+    }
+  }
+  return { nodes: keptNodes, edges: keptEdges, notes, dropped, by };
+}
+

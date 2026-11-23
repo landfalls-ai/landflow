@@ -21,7 +21,7 @@ export interface NoteSource {
   spanId?: string;
   /** The name of the workflow step (the team node) that ran the member, when it is known. */
   step?: string;
-  /** The tool call that wrote it (`note_add`). */
+  /** The tool call that wrote it (`note_add`); `notion` for a note pulled from a linked Notion page (unverified and tainted; NB01). */
   tool?: string;
   /** A page or file it was read from: such a note is `tainted`. */
   url?: string;
@@ -64,6 +64,10 @@ export interface TeamNote {
   lastAccessAt: string;
   /** When it goes if nobody uses or verifies it. */
   expiresAt?: string;
+  /** C02: a person forgot it (it stays, out of every read, until restored or deleted). */
+  forgottenAt?: string;
+  forgetReason?: string;
+  forgottenBy?: string;
   /** Whether it can be found by meaning (an embedding was made). */
   embedded: boolean;
 }

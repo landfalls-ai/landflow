@@ -8,9 +8,10 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { ArrowRight, KeyRound, MailCheck, TriangleAlert } from 'lucide-react';
 import { ApiError, api } from '@/lib/client/api';
-import { MIN_PASSWORD_LENGTH, type Role } from '@/lib/shared/auth';
+import { MIN_PASSWORD_LENGTH, type MfaChallengeResponse, type Role } from '@/lib/shared/auth';
 import { Button } from '@/components/ui/button';
 import { FieldLabel, Input } from '@/components/ui/inputs';
+import { MfaStep } from './mfa-step';
 
 /** The message to show for a failed request: the first validation issue, else the error. */
 function messageOf(caught: unknown): string {
@@ -71,18 +72,39 @@ function useSubmit(run: () => Promise<void>) {
       setBusy(false);
     }
   };
-  return { busy, error, submit, setError };
+  return { busy, error, submit, setError, setBusy };
 }
 
 const passwordHint = `At least ${MIN_PASSWORD_LENGTH} characters`;
 
-export function LoginForm({ next, oidcLabel, samlLabel, initialError, smtp }: { next: string; oidcLabel?: string; samlLabel?: string; initialError?: string; smtp: boolean }) {
+export function LoginForm({ next, oidcLabel, samlLabel, initialError, smtp, localSignIn = 'all' }: { next: string; oidcLabel?: string; samlLabel?: string; initialError?: string; smtp: boolean; localSignIn?: 'all' | 'owner' | 'off' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { busy, error, submit } = useSubmit(async () => {
-    await api('/api/auth/login', { method: 'POST', json: { email, password } });
+  const [second, setSecond] = useState<MfaChallengeResponse>();
+  const { busy, error, submit, setBusy } = useSubmit(async () => {
+    const answer = await api<Partial<MfaChallengeResponse> | undefined>('/api/auth/login', { method: 'POST', json: { email, password } });
+    // 202: the password was right and a second factor is next (no session yet).
+    if (answer?.mfaRequired) {
+      setSecond(answer as MfaChallengeResponse);
+      setBusy(false);
+      return;
+    }
     window.location.assign(next);
   });
+  const ssoOnly = localSignIn === 'off';
+  if (second) {
+    return (
+      <MfaStep
+        challenge={second.challenge}
+        methods={second.methods}
+        next={next}
+        onBack={() => {
+          setSecond(undefined);
+          setPassword('');
+        }}
+      />
+    );
+  }
   return (
     <form method="post" onSubmit={submit} className="space-y-3.5">
       {(oidcLabel || samlLabel) && (
@@ -103,26 +125,37 @@ export function LoginForm({ next, oidcLabel, samlLabel, initialError, smtp }: { 
               <KeyRound className="size-3.5" /> {samlLabel}
             </a>
           )}
-          <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">
-            <span className="h-px flex-1 bg-hair" /> or <span className="h-px flex-1 bg-hair" />
+          {!ssoOnly && (
+            <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">
+              <span className="h-px flex-1 bg-hair" /> or <span className="h-px flex-1 bg-hair" />
+            </div>
+          )}
+        </>
+      )}
+      {ssoOnly ? (
+        <>
+          {!oidcLabel && !samlLabel && <p className="text-[13px] text-t2">Signing in with a password is turned off here, and single sign-on is not set up. Ask an admin of this instance.</p>}
+          <ErrorBox message={initialError} />
+        </>
+      ) : (
+        <>
+          <Field label="Email">
+            <Input type="email" name="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+          </Field>
+          <Field label="Password">
+            <Input type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
+          <ErrorBox message={error ?? initialError} />
+          <Button type="submit" variant="primary" loading={busy} className="w-full">
+            Sign in <ArrowRight className="size-3.5" />
+          </Button>
+          <div className="text-center text-[12px]">
+            <Link href="/forgot-password" className="text-t3 hover:text-ac">
+              {smtp ? 'Forgot your password?' : 'Can’t sign in?'}
+            </Link>
           </div>
         </>
       )}
-      <Field label="Email">
-        <Input type="email" name="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
-      </Field>
-      <Field label="Password">
-        <Input type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-      </Field>
-      <ErrorBox message={error ?? initialError} />
-      <Button type="submit" variant="primary" loading={busy} className="w-full">
-        Sign in <ArrowRight className="size-3.5" />
-      </Button>
-      <div className="text-center text-[12px]">
-        <Link href="/forgot-password" className="text-t3 hover:text-ac">
-          {smtp ? 'Forgot your password?' : 'Can’t sign in?'}
-        </Link>
-      </div>
     </form>
   );
 }
@@ -154,6 +187,16 @@ export function SetupForm() {
   );
 }
 
+/**
+ * What the invite card shows: the message alone when the invite is invalid or expired (nothing about choosing a
+ * password, since there is nothing to choose it for), a placeholder while it loads, else the form.
+ */
+export function InviteView({ loadError, loaded, children }: { loadError?: string; loaded: boolean; children: ReactNode }) {
+  if (loadError) return <ErrorBox message={loadError} />;
+  if (!loaded) return <div className="h-40 rounded-xl bg-sf2 animate-pulse-soft" />;
+  return <>{children}</>;
+}
+
 export function InviteForm({ token }: { token: string }) {
   const [invite, setInvite] = useState<{ email: string; role: Role; invitedBy?: string }>();
   const [loadError, setLoadError] = useState<string>();
@@ -168,14 +211,14 @@ export function InviteForm({ token }: { token: string }) {
     await api(`/api/auth/invites/${encodeURIComponent(token)}`, { method: 'POST', json: { name, password } });
     window.location.assign('/');
   });
-  if (loadError) return <ErrorBox message={loadError} />;
-  if (!invite) return <div className="h-40 rounded-xl bg-sf2 animate-pulse-soft" />;
   return (
+    <InviteView loadError={loadError} loaded={Boolean(invite)}>
+      {invite && (
     <form method="post" onSubmit={submit} className="space-y-3.5">
       <p className="text-[13px] leading-relaxed text-t2">
         {invite.invitedBy ? `${invite.invitedBy} invited you to join as ` : 'You are invited to join as '}
         <span className="font-semibold text-t1">{invite.role === 'admin' ? 'an admin' : 'a member'}</span>. You’ll sign in as{' '}
-        <span className="font-mono text-[12px] text-t1">{invite.email}</span>.
+        <span className="font-mono text-[12px] text-t1">{invite.email}</span>. Choose your name and a password to finish creating your account.
       </p>
       <Field label="Your name">
         <Input name="name" autoComplete="name" required autoFocus value={name} onChange={(e) => setName(e.target.value)} />
@@ -189,6 +232,8 @@ export function InviteForm({ token }: { token: string }) {
         Create account <ArrowRight className="size-3.5" />
       </Button>
     </form>
+      )}
+    </InviteView>
   );
 }
 
@@ -236,11 +281,19 @@ export function ResetForm({ token }: { token: string }) {
       .then(setAccount)
       .catch((e) => setLoadError(messageOf(e)));
   }, [token]);
-  const { busy, error, submit, setError } = useSubmit(async () => {
-    await api('/api/auth/password/reset', { method: 'POST', json: { token, password } });
+  const [second, setSecond] = useState<MfaChallengeResponse>();
+  const { busy, error, submit, setError, setBusy } = useSubmit(async () => {
+    const answer = await api<Partial<MfaChallengeResponse> | undefined>('/api/auth/password/reset', { method: 'POST', json: { token, password } });
+    // The password is set; an account with a second factor still answers it before it is signed in.
+    if (answer?.mfaRequired) {
+      setSecond(answer as MfaChallengeResponse);
+      setBusy(false);
+      return;
+    }
     window.location.assign('/');
   });
   if (loadError) return <ErrorBox message={loadError} />;
+  if (second) return <MfaStep challenge={second.challenge} methods={second.methods} next="/" onBack={() => window.location.assign('/login')} />;
   if (!account) return <div className="h-40 rounded-xl bg-sf2 animate-pulse-soft" />;
   return (
     <form

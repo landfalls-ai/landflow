@@ -3,7 +3,7 @@
  * to the plugins they registered, and takes jobs from the Valkey stream (cluster/worker.ts). No UI, API or webhooks:
  * just a health and metrics endpoint (LANDFLOW_WORKER_PORT, default 5690: `/healthz`, `/metrics`).
  *
- * SIGTERM / SIGINT: stop taking jobs, let runs finish for LANDFLOW_WORKER_SHUTDOWN_SECONDS, put the rest back in the
+ * SIGTERM / SIGINT (lib/server/lifecycle.ts): stop taking jobs, let runs finish for LANDFLOW_WORKER_SHUTDOWN_SECONDS, put the rest back in the
  * queue (another worker continues them from their last checkpoint), flush the database and exit. A second signal
  * exits at once.
  *
@@ -31,63 +31,28 @@ async function main() {
     throw error;
   }
 
-  const { openDatabase, closeDatabase } = await import('../db');
-  await openDatabase();
-  const { registry } = await import('../plugins/registry');
-  const { corePlugin } = await import('../nodes');
-  const { observePluginsOnline } = await import('../telemetry');
-  registry.registerBuiltin(corePlugin);
-  registry.start();
-  observePluginsOnline(() => registry.list());
-  // Workers open the broker connections too and choose transports for themselves (own hostInstanceId and reply channel).
-  const { registerBrokerProviders } = await import('../transports/broker-provider');
-  const { brokerConnections } = await import('../transports/brokers');
-  await registerBrokerProviders();
-  void brokerConnections.start(registry).catch((error: Error) => logger.warn('broker connections did not start', { error: error.message }));
-  const seeds = (process.env.LANDFLOW_PLUGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  await Promise.allSettled(seeds.map((endpoint) => registry.addEndpoint(endpoint, 'static')));
-  if ((process.env.LANDFLOW_PLUGIN_DISCOVERY ?? '').split(',').some((mode) => mode.trim().toLowerCase() === 'kubernetes')) {
-    void import('../plugins/kubernetes').then((k8s) => k8s.startKubernetesDiscovery());
-  }
-  // Files go with their execution (a run that isn't kept is deleted here); online evaluations grade what runs here.
-  const { startBinaryMaintenance } = await import('../binary/access');
-  startBinaryMaintenance();
-  const { startOnlineEvaluations } = await import('../evaluations/online');
-  startOnlineEvaluations();
+  // Signal handlers before the boot, as on the main: a SIGTERM while a later step waits still runs the shutdown steps
+  // registered once the database opened (flush, release the lease) instead of the default kill.
+  const { installProcessHandlers } = await import('../lifecycle');
+  installProcessHandlers({ role: 'worker', deadlineMs: config.shutdownMs + 10_000 });
 
-  const { startCluster, stopCluster } = await import('./index');
+  // The one service table (lib/server/runtime.ts): config check, database, registry, brokers, seeds, discovery, binary
+  // maintenance, online evaluations and, last, the cluster runtime that starts taking jobs.
+  const { startRuntime } = await import('../runtime');
+  // Hold the event loop while booting: the Valkey client's reconnect and command timers are unref'd, so with Valkey
+  // unreachable nothing else keeps the process alive and it would exit 0 silently before the ping times out.
+  const hold = setInterval(() => {}, 60_000);
   try {
-    await startCluster({ role: 'worker' });
+    await startRuntime({ role: 'worker' });
   } catch (error) {
-    logger.error((error as Error).message);
+    logger.error('worker failed to start', { error: (error as Error).message });
+    const { closeDatabase } = await import('../db');
     await closeDatabase().catch(() => {});
     process.exit(1);
+  } finally {
+    clearInterval(hold);
   }
   logger.info('worker ready', { 'landflow.cluster.instance': config.instanceId, 'landflow.worker.concurrency': config.workerConcurrency, 'landflow.worker.port': config.workerPort });
-
-  let stopping = false;
-  const shutdown = async (signal: string) => {
-    if (stopping) {
-      logger.warn('worker: second signal, exiting now', { signal });
-      process.exit(1);
-    }
-    stopping = true;
-    logger.info('worker: stopping', { signal, 'landflow.jobs.active': clusterState().activeJobs.size });
-    try {
-      await clusterState().worker?.stop(config.shutdownMs);
-      await brokerConnections.stop();
-      await stopCluster();
-      await closeDatabase();
-      const { startTelemetry: telemetry } = await import('../telemetry/sdk');
-      await telemetry().shutdown?.();
-    } catch (error) {
-      logger.warn('worker: shutdown error', { error: (error as Error).message });
-    }
-    process.exit(0);
-  };
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
-  process.on('SIGINT', () => void shutdown('SIGINT'));
-  process.on('unhandledRejection', (reason) => logger.warn('worker: unhandled rejection', { error: reason instanceof Error ? reason.message : String(reason) }));
 }
 
 main().catch((error) => {

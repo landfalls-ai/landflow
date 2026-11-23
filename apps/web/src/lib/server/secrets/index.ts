@@ -6,6 +6,7 @@
  */
 export * from './service';
 export * from './resolve';
+export * from './leases';
 export * from './runtime';
 export * from './redact';
 export * from './settings';

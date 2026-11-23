@@ -1,22 +1,26 @@
 /**
  * The reset-password page's API (public): GET ?token= names the account a reset link is for (404 when invalid,
  * used or expired); POST { token, password } sets the new password, signs the user out everywhere else and signs
- * this browser in.
+ * this browser in. Both are refused (403) when LANDFLOW_LOCAL_SIGN_IN does not allow this user a password, so the page
+ * says so before it shows a form.
  */
 import { z } from 'zod';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '@/lib/shared/auth';
-import { clientIp, deleteUserSessions, findToken, formLimit, getUser, markTokenUsed, setPassword, signedInResponse } from '@/lib/server/auth';
+import { clientIp, deleteUserSessions, findToken, formLimit, getUser, hasConfirmedFactor, markTokenUsed, secondStepResponse, setPassword, signedInResponse } from '@/lib/server/auth';
+import { localSignInAllowed } from '@/lib/server/auth/local-sign-in';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { recordAudit } from '@/lib/server/audit';
 
 export const dynamic = 'force-dynamic';
 
 const GONE = 'This reset link is invalid, was used already or has expired. Ask for a new one.';
+const LOCAL_OFF = 'Password sign-in is turned off on this instance. Use single sign-on.';
 
 export const GET = handler(async (request: Request) => {
   const reset = findToken('reset', new URL(request.url).searchParams.get('token') ?? undefined);
   const user = reset?.userId ? getUser(reset.userId) : undefined;
   if (!reset || !user) return error(GONE, 404);
+  if (!localSignInAllowed(user)) return error(LOCAL_OFF, 403);
   return json({ email: user.email, name: user.name });
 });
 
@@ -36,9 +40,14 @@ export const POST = handler(async (request: Request) => {
   const reset = findToken('reset', body.data.token);
   const existing = reset?.userId ? getUser(reset.userId) : undefined;
   if (!reset || !existing) return error(GONE, 404);
-  const user = await setPassword(existing.id, body.data.password);
+  // LANDFLOW_LOCAL_SIGN_IN: a reset link must not be a way round it (it would mint a session with no identity-provider MFA).
+  if (!localSignInAllowed(existing)) return error(LOCAL_OFF, 403);
+  // Always a reset, even from a browser that is signed in (as this user or another): auth.password_reset, below, is the event.
+  const user = await setPassword(existing.id, body.data.password, 'reset');
   markTokenUsed(reset.id);
   deleteUserSessions(user.id);
   recordAudit({ action: 'auth.password_reset', actor: { id: user.id, name: user.name, email: user.email }, target: { type: 'user', id: user.id, name: user.email }, summary: `${user.email} reset their password` });
+  // A reset link is not a way round a second factor (C16 FR-7): a user with one still answers it.
+  if (hasConfirmedFactor(user.id)) return secondStepResponse(user, 'reset');
   return signedInResponse(request, user, 'reset');
 });

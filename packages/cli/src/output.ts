@@ -44,7 +44,8 @@ export function duration(ms: number | null | undefined): string {
   return `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
 }
 
-export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+/** `3 workflows`, `1 entry`, `0 entries`: a word ending in a consonant and y takes -ies. */
+export const plural = (n: number, word: string) => `${n} ${n === 1 ? word : /[^aeiou]y$/.test(word) ? `${word.slice(0, -1)}ies` : `${word}s`}`;
 
 /** `key: value` lines, aligned. */
 export function fields(pairs: Array<[string, unknown]>): string {

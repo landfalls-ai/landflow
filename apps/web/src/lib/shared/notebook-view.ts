@@ -95,7 +95,7 @@ export interface SourcePart {
 export function sourceParts(note: Pick<TeamNote, 'source'>): SourcePart[] {
   const parts: SourcePart[] = [];
   const run = traceHref(note);
-  if (run) parts.push({ kind: 'run', label: 'Run Trace', href: run });
+  if (run) parts.push({ kind: 'run', label: 'Run trace', href: run });
   if (note.source.step) parts.push({ kind: 'step', label: note.source.step });
   const host = hostOf(note.source.url);
   if (host) parts.push({ kind: 'url', label: host, ...(note.source.url && /^https?:\/\//i.test(note.source.url) && { href: note.source.url }) });

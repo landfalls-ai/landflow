@@ -19,14 +19,15 @@ import { parse } from '../db/rows';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { transportProviders, type TransportConnectionConfig, type TransportProviderRegistry } from './provider';
+import { HttpError } from '../errors';
 
-export class TransportError extends Error {
+export class TransportError extends HttpError {
+  static readonly errorName: string = 'TransportError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
-    this.name = 'TransportError';
+    super(message, status, { expose: true });
   }
 }
 

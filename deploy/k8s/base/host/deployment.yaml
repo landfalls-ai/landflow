@@ -30,6 +30,8 @@ spec:
             - { name: http, containerPort: 3000 }
             - { name: registry, containerPort: 7070 }
           env:
+            # The in-repo cluster runs development secrets; a real deployment sets production (docs/deployment.md).
+            - { name: LANDFLOW_PROFILE, value: development }
             - { name: LANDFLOW_DATA_DIR, value: /data }
             - { name: LANDFLOW_PLUGIN_DISCOVERY, value: kubernetes }
             # Empty: the host's own namespace. A comma-separated list watches more (each needs the Role, see rbac.yaml).
@@ -51,18 +53,28 @@ spec:
               valueFrom: { secretKeyRef: { name: landflow-registry, key: secret, optional: true } }
             - name: LANDFLOW_ENCRYPTION_KEY # unset: generated into /data/encryption.key on first use
               valueFrom: { secretKeyRef: { name: landflow-host, key: encryption-key, optional: true } }
+            - name: LANDFLOW_ENCRYPTION_KEYS # the key ring for rotation (kid:key, the new key first); unset: the key above only
+              valueFrom: { secretKeyRef: { name: landflow-host, key: encryption-keys, optional: true } }
             - name: LANDFLOW_OWNER_EMAIL # the first owner, created at boot while there is no user
               valueFrom: { secretKeyRef: { name: landflow-host, key: owner-email, optional: true } }
             - name: LANDFLOW_OWNER_PASSWORD
               valueFrom: { secretKeyRef: { name: landflow-host, key: owner-password, optional: true } }
-          readinessProbe:
-            httpGet: { path: /api/health, port: http }
+          # Next holds requests until boot (instrumentation) finishes, so no probe answers before then: the startup
+          # probe gives boot up to 5 min (60 x 5 s) before liveness and readiness begin.
+          startupProbe:
+            httpGet: { path: /api/health/live, port: http }
             periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /api/health/ready, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3 # above the 1 s per-check limit, so a slow check is a 503 with its name
             failureThreshold: 3
           livenessProbe:
-            httpGet: { path: /api/health, port: http }
-            initialDelaySeconds: 30
+            httpGet: { path: /api/health/live, port: http }
             periodSeconds: 20
+            timeoutSeconds: 3
             failureThreshold: 6
           resources:
             requests: { cpu: 100m, memory: 384Mi }

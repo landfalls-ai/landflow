@@ -1,4 +1,5 @@
 /** Settings → MCP (the instance MCP server at /api/mcp): types shared by the API route and the client. */
+import { hasScope, type ApiKeyScope } from './auth';
 import type { McpApprovalMode } from './mcp-approval';
 
 export interface McpAccessView {
@@ -190,4 +191,85 @@ export interface ProjectMcpView {
   gateway: boolean;
   gatewayPath?: string;
   canEdit: boolean;
+}
+
+// ---- B13: API-key scopes per tool of the instance MCP server (/api/mcp; docs/features/ai.md "MCP") ----
+
+/**
+ * The API-key scope each tool of the instance server needs. A key sees (tools/list) and calls only the tools its scopes
+ * cover; sessions, Landflow MCP tokens, identity-provider tokens and the instance access token keep every tool.
+ * `retry_execution` and `run_node` start work, so they are `run`; the debug reads are `executions:read`.
+ */
+export const TOOL_SCOPES = {
+  list_workflows: 'workflows:read',
+  get_workflow: 'workflows:read',
+  validate_workflow: 'workflows:read',
+  list_agent_updates: 'workflows:read', // AG21
+  list_node_types: 'workflows:read',
+  search_node_types: 'workflows:read',
+  get_node_type: 'workflows:read',
+  create_workflow: 'workflows:write',
+  update_workflow: 'workflows:write',
+  execute_workflow: 'run',
+  retry_execution: 'run',
+  run_node: 'run',
+  list_executions: 'executions:read',
+  get_execution: 'executions:read',
+  explain_failure: 'executions:read',
+  get_run_trace: 'executions:read',
+  get_plugin_logs: 'executions:read',
+  get_run_log: 'executions:read', // AG20:
+  brain_search_facts: 'brain:read',
+  brain_list_suggestions: 'brain:read',
+  brain_workflow_knowledge: 'brain:read',
+  brain_usage_report: 'brain:read',
+  check_overlap: 'brain:read',
+  brain_ask: 'brain:read',
+  brain_search_knowledge: 'brain:read', // NB06
+  my_briefing: 'brain:read',
+  my_ai_spend: 'brain:read', // SP14
+  // C08: memory over MCP, named as Supermemory's tools so prompts that know them work against a local Landflow
+  search_memory: 'brain:read',
+  get_profile: 'brain:read',
+  list_memories: 'brain:read',
+  list_documents: 'brain:read',
+  get_document: 'brain:read',
+  list_spaces: 'brain:read',
+  who_am_i: 'brain:read',
+  add_memory: 'brain:write',
+  forget_memory: 'brain:write',
+  brain_suggest: 'brain:write',
+  record_work: 'brain:write',
+  // PR04: practices (docs/practices.md)
+  practices_for: 'brain:read',
+  practice_get: 'brain:read',
+  practice_cite: 'brain:write',
+  practice_draft: 'brain:write',
+  project_context: 'brain:read', // PC10
+  // AG18: the tenant reads and the agent writes (decision 4 of wave ag4: the existing scopes, no agents:* scope)
+  list_agents: 'workflows:read',
+  get_agent: 'workflows:read',
+  list_tool_nodes: 'workflows:read',
+  list_knowledge_bases: 'workflows:read',
+  list_models: 'workflows:read',
+  list_credentials: 'workflows:read',
+  read_agent_practices: 'workflows:read',
+  create_agent: 'workflows:write',
+  update_agent: 'workflows:write',
+  test_agent: 'run',
+  publish_agent: 'run',
+} as const satisfies Record<string, ApiKeyScope>;
+
+/** Whether a caller with `keyScopes` (an API key's; undefined for every other caller) may see and call `tool`. A tool not in the map needs `admin`. */
+export function toolAllowed(keyScopes: readonly ApiKeyScope[] | undefined, tool: string): boolean {
+  if (!keyScopes) return true;
+  const needed = (TOOL_SCOPES as Record<string, ApiKeyScope>)[tool];
+  return hasScope(keyScopes, needed ?? 'admin');
+}
+
+/** The names of the tools a key with `scopes` sees (`tools/list` on the instance server), sorted: what /connect says it reaches, derived so a count never drifts. */
+export function toolsFor(scopes: readonly ApiKeyScope[]): string[] {
+  return Object.keys(TOOL_SCOPES)
+    .filter((tool) => toolAllowed(scopes, tool))
+    .sort();
 }

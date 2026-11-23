@@ -5,7 +5,7 @@
 # into it, so it is only for the local compose stack: see deploy/compose.yml (profile `desktop`) and docs/deployment.md
 # "Desktop". Build context: the repository root.
 #
-#   docker build -f plugins/desktop/Dockerfile --build-arg HTTP_PORT=7117 --build-arg GRPC_PORT=7217 \
+#   docker build -f plugins/desktop/Dockerfile --build-arg HTTP_PORT=7124 --build-arg GRPC_PORT=7224 \
 #     -t landflow/plugin-desktop:dev .
 ARG NODE_IMAGE=node:22.23.2-bookworm-slim
 ARG DOCKER_CLI_IMAGE=docker:27-cli
@@ -29,8 +29,8 @@ RUN --mount=type=cache,id=landflow-pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --prod --shamefully-hoist --store-dir /pnpm/store --filter "@landflow/plugin-desktop..."
 
 FROM ${NODE_IMAGE} AS runtime
-ARG HTTP_PORT=7117
-ARG GRPC_PORT=7217
+ARG HTTP_PORT=7124
+ARG GRPC_PORT=7224
 ARG TSX_VERSION=4.23.15
 LABEL org.opencontainers.image.title="landflow-plugin-desktop"
 RUN npm install -g --no-audit --no-fund "tsx@${TSX_VERSION}" && npm cache clean --force

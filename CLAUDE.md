@@ -7,6 +7,15 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 
 ## Read first
 
+- `docs/constitution.md`: the rules every research and implementation starts from (non-negotiables, architecture,
+  security, observability, UI, tests, docs, definition of done, the feature workflow). Loaded into every session:
+  @docs/constitution.md
+- `docs/platform/README.md`: the platform guide: overview, server layers, agents, Kubernetes and the three SDKs, each
+  page paired with a skill.
+- `.claude/skills/` and `.claude/agents/` hold two kinds of files. The 14 contributor agents (`landflow-researcher`,
+  `landflow-planner`, ... for working on this repository) and the `landflow-feature` skill are edited in place. The seven
+  other skills and the two plugin agents (`landflow-platform-guide`, `landflow-plugin-builder`, for people building on
+  Landflow) are copies of `claude-plugins/landflow-dev`: edit there, then run `node scripts/sync-claude-plugin.mjs --write`.
 - `docs/README.md`: the docs index, with a feature map that names the page for each feature.
 - `docs/architecture.md`: the processes, a run end to end, every subsystem and a code map.
 - `docs/development.md`: setup, where each area's code starts, conventions, every test command and the
@@ -21,18 +30,30 @@ engine, protocol, SDK, transports and CLI are in `packages/`, the Go and Python 
 - Migrations: append to `MIGRATIONS` in `apps/web/src/lib/server/db/schema.ts` (one SQL for SQLite and Postgres;
   never edit a shipped one; new tables also go in `TABLES`).
 - Routes: `handler()`, `json()`, `error()` and `parseBody()` from `apps/web/src/lib/server/http.ts`; access rules in
-  `apps/web/src/lib/server/auth/policy.ts`; public routes in `apps/web/src/lib/server/openapi.ts`.
+  `apps/web/src/lib/server/auth/policy.ts`; public routes in `apps/web/src/lib/server/openapi.ts`. Refuse with an
+  `HttpError` (`lib/server/errors.ts`), and call any URL a user or a model can influence through `safeFetch`
+  (`lib/server/net/safe-fetch.ts`); `docs/constitution.md` has the rest.
 - Tests sit next to their package; route tests call handlers directly as a synthetic owner (`apps/web/test/setup.ts`).
   Tests against real services skip unless `LANDFLOW_INTEGRATION` names them.
 - Every change updates its docs: the feature page, `docs/reference/` for routes and variables, `docs/limitations.md`
-  and `docs/roadmap.md` when it adds, closes or lifts something, and each commit gets a row in `docs/history.md`. New
-  pages go in `docs/README.md`.
+  and `docs/roadmap.md` when it adds, closes or lifts something, and each change writes its history rows as a fragment in
+  `docs/history.d/` (format in `docs/development.md#history-fragments`); never edit `docs/history.md` on a package
+  branch. The integrator runs `pnpm history:assemble` once per wave; outside a wave, the branch's author runs it as the
+  last commit before merging. New pages go in `docs/README.md`.
+
+## Agents and the feature skill
+
+- `.claude/agents/`: Claude Code subagents specialised for this repository: `landflow-researcher`, `landflow-planner`,
+  `landflow-implementer`, the reviewers (`landflow-security-reviewer`, `landflow-code-reviewer`), `landflow-integrator`,
+  and specialists for data, UI, AI, plugins, observability, tests, docs and local operations.
+- `.claude/skills/landflow-feature/`: the pipeline a new feature follows (research → plan → implement in worktrees →
+  review → integrate and gate → live check → secret scan → PR when asked). Use it for any feature or multi-step change.
+- `docs/development.md` ("Working with Claude Code") explains how they fit together.
 
 ## Checking a change
 
 ```bash
-(cd apps/web && npx vitest run) && pnpm typecheck
-pnpm test                                     # the TypeScript packages
+pnpm check                                    # typecheck, every TypeScript package's tests (the host's too), dependency rules
 ```
 
 Run the suites for whatever else you touched: Go modules with `go test ./...`, the Python SDK and plugins with their

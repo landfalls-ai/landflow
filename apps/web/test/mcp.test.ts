@@ -596,20 +596,58 @@ describe('Instance MCP server', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
+        'brain_ask',
+        'brain_list_suggestions',
+        'brain_search_facts',
+        'brain_search_knowledge', // NB06
+        'brain_suggest',
+        'brain_usage_report',
+        'brain_workflow_knowledge',
+        'check_overlap',
+        'create_agent', // AG18
         'create_workflow',
         'execute_workflow',
         'explain_failure',
+        'get_agent', // AG18
         'get_execution',
         'get_node_type',
         'get_plugin_logs',
+        'get_run_log', // AG20
         'get_run_trace',
         'get_workflow',
+        'list_agent_updates', // AG21
+        'list_agents', // AG18
+        'list_credentials',
         'list_executions',
+        'list_knowledge_bases',
+        'list_models',
         'list_node_types',
+        'list_tool_nodes',
         'list_workflows',
+        'my_ai_spend',
+        'my_briefing',
+        'add_memory', // C08
+        'forget_memory',
+        'get_document',
+        'get_profile',
+        'list_documents',
+        'list_memories',
+        'list_spaces',
+        'search_memory',
+        'who_am_i',
+        'practice_cite',
+        'practice_draft',
+        'practice_get',
+        'practices_for',
+        'project_context',
+        'publish_agent', // AG18
+        'read_agent_practices',
+        'record_work',
         'retry_execution',
         'run_node',
         'search_node_types',
+        'test_agent',
+        'update_agent',
         'update_workflow',
         'validate_workflow',
       ].sort(),
@@ -671,6 +709,11 @@ describe('Instance MCP server', () => {
     const executions = (await call('list_executions', { workflowId: created.id })).data;
     expect(executions.executions.map((e: { id: string }) => e.id)).toContain(ran.id);
     expect(executions.executions.every((e: { mode: string }) => e.mode === 'mcp')).toBe(true);
+    // A status filter is SQL over pages of saved runs: the successful run is found, and no run of another status.
+    const succeeded = (await call('list_executions', { workflowId: created.id, status: 'success', limit: 1 })).data;
+    expect(succeeded.executions).toHaveLength(1);
+    expect(succeeded.executions[0].status).toBe('success');
+    expect((await call('list_executions', { workflowId: created.id, status: 'error' })).data.executions).toEqual([]);
 
     const one = (await call('get_execution', { id: ran.id, includeData: true })).data;
     expect(one).toMatchObject({ id: ran.id, status: 'success', output: { total: 2 } });

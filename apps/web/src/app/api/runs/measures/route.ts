@@ -19,5 +19,5 @@ export const GET = handler(async (request: Request) => {
   const workflow = store.getWorkflow(workflowId);
   const visible = visibleIds(routeActor(), 'workflow', [workflowId]);
   if (!workflow || (visible && !visible.has(workflowId))) return error('Workflow not found', 404);
-  return json({ workflowId, workflowName: workflow.name, runs: measuresOf(workflowId, q.has('limit') ? Number(q.get('limit')) : 30) });
+  return json({ workflowId, workflowName: workflow.name, runs: await measuresOf(workflowId, q.has('limit') ? Number(q.get('limit')) : 30) });
 });

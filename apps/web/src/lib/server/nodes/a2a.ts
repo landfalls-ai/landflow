@@ -30,10 +30,28 @@ import {
   type AgentCard,
   type HitlRequest,
 } from '../a2a/client';
-import type { AgentTraceSummary } from '../../shared/agents';
+import type { AgentTraceSummary, RemoteRun } from '../../shared/agents';
+import { BlockedNodeError, blockedOf, countBlocked } from '../a2a/blocked';
+import { BLOCKED_LABEL, type BlockedKind } from '../../shared/quota-block';
 import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
+import { memoryKeyLine, withMemoryKey } from '../kagent/memory-line';
 import { callAgent, landflowTags, taskCall, throttled } from '../a2a/traced';
 import { CUT } from '../journal/content';
+import { CONTEXT_HEADING, type RunContext } from '../../shared/project-context';
+import { currentRunContext, runContextProvider } from '../project-context/seam';
+import { practicesIndexFor, recordRemoteCitations, withPracticesIndex, type PracticesIndex } from '../practices/remote';
+
+/**
+ * A new remote conversation's first message with the project's compact block in front (docs/a2a.md). `context` is
+ * undefined for a follow-up, an answer or a resumed task, and a mode `off` run gives nothing: the text is then unchanged.
+ */
+export function withProjectContext(text: string, context: Pick<RunContext, 'mode' | 'compact' | 'projectId' | 'goalId'> | undefined): { text: string; tags: Record<string, string> } {
+  if (!context || context.mode === 'off') return { text, tags: {} };
+  // A team already put the block in front of its member's request.
+  const tags = landflowTags({ 'project.id': context.projectId, 'goal.id': context.goalId });
+  if (text.startsWith(CONTEXT_HEADING)) return { text, tags };
+  return { text: context.compact ? `${context.compact}\n\n${text}` : text, tags };
+}
 
 const main = [{ type: 'main' as const }];
 
@@ -174,10 +192,20 @@ export function progressReporter(ctx: Pick<IExecuteContext, 'sendProgress'>, car
 }
 
 /** A failed, rejected or canceled task fails the item (the agent's status message says why). */
-function assertNotFailed(card: AgentCard, result: A2aResult, itemIndex: number) {
+function assertNotFailed(ctx: IExecuteContext, card: AgentCard, result: A2aResult, itemIndex: number) {
   if (result.kind !== 'task') return;
   const { state } = result.task.status;
   if (state === 'TASK_STATE_FAILED' || state === 'TASK_STATE_REJECTED' || state === 'TASK_STATE_CANCELED') {
+    // C05: a provider limit (Codex usage or credits) is Blocked, said as such, not a generic failure.
+    const verdict = blockedOf(result.task);
+    if (verdict.blocked) {
+      countBlocked(verdict.kind, 'a2a');
+      // The typed remote run (W1 follow-up): its `blocked` field is the one the Run Trace badge reads.
+      const blocked: RemoteRun = { agent: card.name, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message, label: verdict.label }, steps: [] };
+      ctx.sendProgress?.(blocked as unknown as JsonObject);
+      ctx.check({ name: 'blocked', status: 'warn', message: BLOCKED_LABEL.unknown, subject: card.name });
+      throw new BlockedNodeError(card.name, verdict.kind, verdict.message, itemIndex, verdict.label);
+    }
     throw new NodeOperationError(`${card.name}: the task ${stateName(state)}`, { description: statusText(result.task), itemIndex });
   }
 }
@@ -198,6 +226,8 @@ interface Remembered {
   contextId: string;
   taskId?: string;
   question?: { id: string; questions: string[] };
+  /** The practices indexed to this conversation, kept until the answer that completes it. */
+  practices?: PracticesIndex;
 }
 
 /** The question a calling agent has to answer, as its tool result. */
@@ -307,6 +337,29 @@ export const a2aAgentNode = defineNode({
         values: [
           a2aTimeoutOption,
           {
+            name: 'projectContext',
+            displayName: 'Project context',
+            type: 'options',
+            default: 'compact',
+            options: [
+              { name: 'Compact', value: 'compact' },
+              { name: 'Off', value: 'off' },
+            ],
+            description: "Send the project's goals and brief (short) with the first message",
+          },
+          {
+            // PR07: the practices index for a Landflow agent on kagent.
+            name: 'practices',
+            displayName: 'Practices',
+            type: 'options',
+            default: 'on',
+            options: [
+              { name: 'On', value: 'on' },
+              { name: 'Off', value: 'off' },
+            ],
+            description: "Send an index of the approved practices that apply with the first message, when the agent is a Landflow agent on kagent",
+          },
+          {
             name: 'humanInTheLoop',
             displayName: 'Human in the Loop',
             type: 'boolean',
@@ -337,12 +390,16 @@ export const a2aAgentNode = defineNode({
   async execute(ctx) {
     const items = ctx.getInputData();
     const out: NodeItem[] = [];
+    // C05: an agent that was Blocked by its provider is not called again for the later items of this execute; they fail the same way, without a second check.
+    const blockedBy = new Map<string, { kind: BlockedKind; message: string; label: string }>();
     for (let i = 0; i < Math.max(items.length, 1); i++) {
       try {
         const endpoint = endpointOf(ctx, i);
         const operation = String(ctx.getNodeParameter('operation', i, 'sendMessage') ?? 'sendMessage');
         const card = await getAgentCard(endpoint, { signal: ctx.signal });
-        const options = ctx.getNodeParameter<{ humanInTheLoop?: boolean; questionsGoTo?: string }>('options', i, {}) ?? {};
+        const already = operation === 'sendMessage' ? blockedBy.get(endpoint.url) : undefined;
+        if (already) throw new BlockedNodeError(card.name, already.kind, already.message, i, already.label);
+        const options = ctx.getNodeParameter<{ humanInTheLoop?: boolean; questionsGoTo?: string; projectContext?: string; practices?: 'on' | 'off' }>('options', i, {}) ?? {};
         // As an agent's tool the node keeps the conversation for the run and hands the agent the remote agent's questions.
         const asTool = ctx.getMode() === 'tool' && Boolean(ctx.getNodeState && ctx.setNodeState);
         const questionsToCaller = asTool && options.questionsGoTo !== 'person';
@@ -353,6 +410,9 @@ export const a2aAgentNode = defineNode({
         const send = { signal: ctx.signal, extensions, caller: 'node' as const, onUpdate: progressReporter(ctx, card, { questionsToCaller }) };
         // Tags for finding this run from the agent's side (kagent documents copying them onto its spans; see lib/server/a2a/traced.ts).
         const metadata = landflowTags({ 'workflow.id': ctx.getWorkflowId(), 'execution.id': ctx.getExecutionId(), 'node.name': ctx.getNode().name });
+        // The project's compact block goes with a new conversation's first message only (not an answer, a follow-up or a resumed task).
+        let contextBlock: RunContext | undefined;
+        let practiceIndex: PracticesIndex | undefined;
         let result: A2aResult;
         let traced: AgentTraceSummary | undefined;
         if (operation === 'sendMessage') {
@@ -363,10 +423,27 @@ export const a2aAgentNode = defineNode({
             // The remote agent asked a question last time: this call answers it, on the same task.
             const request: Extract<HitlRequest, { type: 'ask_user_request' }> = { type: 'ask_user_request', id: remembered.question.id, questions: remembered.question.questions };
             const answer = answerMessage({ id: remembered.taskId, contextId: remembered.contextId }, request, [text]);
+            practiceIndex = remembered.practices;
             result = await callAgent(endpoint, card, { ...answer, metadata: { ...metadata, ...answer.metadata } }, send);
           } else {
             // A Landflow agent on kagent with the landflow-harness mod reports its real usage, cost and tool calls here.
-            const message = { text, metadata, ...(contextId && { contextId }), ...(remembered?.taskId && { taskId: remembered.taskId }) };
+            if (remembered?.taskId) practiceIndex = remembered.practices;
+            if (!contextId && !remembered?.taskId && options.projectContext !== 'off') {
+              contextBlock = asTool
+                ? currentRunContext()
+                : runContextProvider()?.build({ caller: 'workflow', workflowId: ctx.getWorkflowId(), executionId: ctx.getExecutionId(), nodeName: ctx.getNode().name }, 'compact');
+            }
+            // PR07: a Landflow agent on kagent also gets the index of the practices that apply, after the project block.
+            if (!contextId && !remembered?.taskId) {
+              const projectId =
+                contextBlock?.projectId ??
+                (asTool ? currentRunContext()?.projectId : runContextProvider()?.resolve({ caller: 'workflow', workflowId: ctx.getWorkflowId(), executionId: ctx.getExecutionId(), nodeName: ctx.getNode().name }).projectId);
+              practiceIndex = practicesIndexFor(endpoint.url, options.practices, text, projectId);
+            }
+            // C09: a Landflow agent on kagent with memory on gets the signed key of the person (a workflow run is `workflow:<id>`) in a new conversation's first message.
+            const keyLine = !contextId && !remembered?.taskId && ctx.getWorkflowId() ? memoryKeyLine(endpoint.url, `workflow:${ctx.getWorkflowId()}`) : undefined;
+            const framed = withProjectContext(withMemoryKey(withPracticesIndex(text, practiceIndex?.text ?? ''), keyLine), contextBlock);
+            const message = { text: framed.text, ...(keyLine && { keyLine }), metadata: { ...metadata, ...framed.tags }, ...(contextId && { contextId }), ...(remembered?.taskId && { taskId: remembered.taskId }) };
             const trace = message.taskId ? undefined : traceFor(endpoint.url, ctx.getExecutionId() && ctx.getWorkflowId() ? { executionId: ctx.getExecutionId()!, workflowId: ctx.getWorkflowId()!, nodeId: ctx.getNode().id, member: ctx.getNode().name } : undefined);
             try {
               result = await callAgent(endpoint, card, withMarker(message, trace), send);
@@ -397,7 +474,14 @@ export const a2aAgentNode = defineNode({
             }
           }
         }
-        if (operation !== 'cancelTask') assertNotFailed(card, result, i);
+        if (operation !== 'cancelTask') {
+          try {
+            assertNotFailed(ctx, card, result, i);
+          } catch (error) {
+            if (error instanceof BlockedNodeError) blockedBy.set(endpoint.url, { kind: error.kind, message: error.providerMessage, label: error.label });
+            throw error;
+          }
+        }
         const item = withTraced(resultItem(card, result), traced);
         if (asTool && operation === 'sendMessage') {
           const contextId = result.kind === 'message' ? result.message.contextId : result.task.contextId;
@@ -405,17 +489,21 @@ export const a2aAgentNode = defineNode({
           const waiting = result.kind === 'task' && result.task.status.state === 'TASK_STATE_INPUT_REQUIRED' && request?.type !== 'tool_approval_request';
           if (waiting && questionsToCaller && result.kind === 'task') {
             const questions = request?.type === 'ask_user_request' ? questionTexts(request) : [statusText(result.task) ?? 'The agent needs more input'];
-            ctx.setNodeState!({ contextId: result.task.contextId, taskId: result.task.id, ...(request?.type === 'ask_user_request' && { question: { id: request.id, questions } }) });
+            ctx.setNodeState!({ contextId: result.task.contextId, taskId: result.task.id, ...(practiceIndex && { practices: practiceIndex as unknown as JsonObject }), ...(request?.type === 'ask_user_request' && { question: { id: request.id, questions } }) });
             delete item.pause;
             item.reply = questionText(card, questions, toolName);
             item.asksCaller = true;
           } else if (contextId) ctx.setNodeState!({ contextId });
         }
+        // PR07: the practices the answer cites, among those indexed, are recorded against the run, on the answer that completes the conversation (not the question to the caller).
+        if (practiceIndex && !item.asksCaller) recordRemoteCitations(practiceIndex, String(item.reply ?? ''), ctx.getExecutionId());
         out.push({ json: item, pairedItem: { item: i } });
       } catch (error) {
         const failure = error instanceof A2aError ? new NodeOperationError(error.message, { itemIndex: i }) : error;
         if (!ctx.continueOnFail()) throw failure;
-        out.push({ json: { error: (failure as Error).message }, pairedItem: { item: i } });
+        // C05: a flow can route a Blocked item differently.
+        const blocked: JsonObject = failure instanceof BlockedNodeError ? { blocked: true, blockedKind: failure.kind, blockedMessage: failure.providerMessage } : {};
+        out.push({ json: { error: (failure as Error).message, ...blocked }, pairedItem: { item: i } });
       }
     }
     return [out];

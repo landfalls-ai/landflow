@@ -491,6 +491,33 @@ describe('a request that goes on after its node waited', () => {
   });
 });
 
+describe('an approval nobody answered in time (AP03)', () => {
+  const EXPIRED = 'Expired at 14:12: nobody approved “Send Email” in time, so it did not run';
+  function expiredRun(line: string) {
+    const { events, add } = journal();
+    add(0, { type: 'span.started', spanId: 'run', kind: 'run', name: 'Alerts', actor: flow });
+    add(0, { type: 'span.started', spanId: 'node:agent:0', parentSpanId: 'run', kind: 'agent', name: 'Mailer', actor: lead, nodeId: 'agent' });
+    add(5, { type: 'span.started', spanId: 'node:agent:0/step:c1', parentSpanId: 'node:agent:0', kind: 'tool', name: 'Send Email', actor: lead, attrs: { tool: 'send_email' } });
+    add(5, { type: 'span.started', spanId: 'run/wait:1', parentSpanId: 'run', kind: 'wait', name: 'Approve send_email', actor: person, caller: lead, attrs: { wait: 'approval', nodeId: 'agent', inbox: true, calls: [{ id: 'c1', tool: 'send_email' }] } });
+    add(125, { type: 'span.ended', spanId: 'run/wait:1', status: 'success' });
+    add(125, { type: 'span.started', spanId: 'node:agent:1', parentSpanId: 'run', kind: 'agent', name: 'Mailer', actor: lead, nodeId: 'agent' });
+    add(126, { type: 'span.started', spanId: 'node:agent:1/step:c1', parentSpanId: 'node:agent:1', kind: 'tool', name: 'Send Email', actor: lead, attrs: { tool: 'send_email' } });
+    add(126, { type: 'span.ended', spanId: 'node:agent:1/step:c1', status: 'canceled', error: line, attrs: { approvedBy: line } });
+    return events;
+  }
+
+  it('reads as Expired with the inbox\'s words, not Answered', () => {
+    const wait = foldJournal(expiredRun(EXPIRED)).spans['run/wait:1']!;
+    expect(resultOf(wait)).toEqual(['Expired', 'warn']);
+    expect(wait.attrs.settled).toBe(EXPIRED);
+  });
+
+  it('a denied call stays Answered: someone answered', () => {
+    const wait = foldJournal(expiredRun('Denied by Ann in Needs you')).spans['run/wait:1']!;
+    expect(resultOf(wait)).toEqual(['Answered', '']);
+  });
+});
+
 describe('a member waiting on a tool approval', () => {
   /** The live shape: the wait is journaled for the tool call, for the request and for the run; the request goes on after it. */
   function approvalRun(resumed: boolean) {

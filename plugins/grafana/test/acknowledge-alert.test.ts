@@ -39,7 +39,7 @@ describe('AcknowledgeAlert node', () => {
     expect(result[0].json.acknowledged).toBe(true);
 
     // Verify the HTTP call was made with correct parameters
-    expect(mockContext.http).toHaveBeenCalledWith('https://grafana.example.com/api/v2/silence', {
+    expect(mockContext.http).toHaveBeenCalledWith('https://grafana.example.com/api/v2/silences', {
       method: 'POST',
       headers: {
         'Authorization': 'Bearer test-token',

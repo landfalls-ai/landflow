@@ -8,6 +8,10 @@
  */
 import { z } from 'zod';
 
+// As in @landflow/protocol's schema: zod probes `new Function` when an object schema is built, which the page CSP reports
+// as a violation. This module builds schemas at load and its chunk may load before protocol's, so it sets jitless too.
+if (typeof window !== 'undefined') z.config({ jitless: true });
+
 /**
  * The flag. `saved` is the instance setting (Settings → General, `jsonRender`): when set it wins. Unset, the environment
  * decides: `LANDFLOW_JSON_RENDER=1` (server) or `NEXT_PUBLIC_LANDFLOW_JSON_RENDER=1` (inlined at build, so the browser

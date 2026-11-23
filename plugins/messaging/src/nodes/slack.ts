@@ -1,5 +1,6 @@
-import { defineCredentialType, defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type JsonValue, type PropertyOption } from '@landflow/sdk';
+import { ACTIVITY_ITEM_SCHEMA, defineCredentialType, defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type JsonValue, type PropertyOption } from '@landflow/sdk';
 import { apiError, baseUrl, countSent, fetchJson, ItemWithFiles, jsonParameter, mapItems, oauth2Hidden, pickCredentials, requireString, unsupported, type ApiContext } from '../shared';
+import { ACTIVITY_OPTIONS, getMessageActivity, messagesSince, namesFilter } from '../slack-activity-ops';
 
 export interface SlackCredentials extends JsonObject {
   accessToken: string;
@@ -138,8 +139,8 @@ export const slackOAuth2Api = defineCredentialType<SlackCredentials>({
       name: 'scope',
       displayName: 'Bot Scopes',
       type: 'string',
-      default: 'chat:write,channels:read,groups:read,reactions:write,users:read,users:read.email,files:write,files:read',
-      description: 'Comma-separated bot scopes asked for at Connect. Drop the ones your workflows do not need.',
+      default: 'chat:write,channels:read,channels:history,groups:read,reactions:write,users:read,users:read.email,files:write,files:read',
+      description: 'Comma-separated bot scopes asked for at Connect. Drop the ones your workflows do not need. channels:history reads public channels (Get Many Since, the Slack Activity Trigger); add groups:history, im:history and mpim:history only to read private channels and DMs.',
     },
     { name: 'baseUrl', displayName: 'Base URL', type: 'string', default: DEFAULT_BASE_URL, description: 'Change it only for a proxy or a test double' },
     {
@@ -203,13 +204,21 @@ function simplifyUser(user: JsonObject): JsonObject {
     is_bot: user.is_bot ?? false,
     is_admin: user.is_admin ?? false,
     deleted: user.deleted ?? false,
+    // Who may act for the workspace: a guest (multi- or single-channel) or someone from another organization (Slack
+    // Connect, `is_stranger`, or a home team other than the workspace's) is not a member, whatever their email says.
+    team_id: user.team_id ?? null,
+    is_restricted: user.is_restricted ?? false,
+    is_ultra_restricted: user.is_ultra_restricted ?? false,
+    is_guest: user.is_restricted === true || user.is_ultra_restricted === true,
+    is_stranger: user.is_stranger ?? false,
+    is_app_user: user.is_app_user ?? false,
   };
 }
 
 const PAGE_SIZE = 200;
 
 /** conversations.list, following next_cursor until `max` channels (or the end). */
-async function listChannels(api: ApiContext, credentials: SlackCredentials, params: JsonObject, max = Infinity): Promise<JsonObject[]> {
+export async function listChannels(api: ApiContext, credentials: SlackCredentials, params: JsonObject, max = Infinity): Promise<JsonObject[]> {
   const channels: JsonObject[] = [];
   let cursor: string | undefined;
   do {
@@ -224,6 +233,28 @@ async function listChannels(api: ApiContext, credentials: SlackCredentials, para
     cursor = page.response_metadata?.next_cursor || undefined;
   } while (cursor && channels.length < max);
   return channels.slice(0, max);
+}
+
+/** users.list, following next_cursor; bots (except none) and deactivated members only when asked. Slackbot counts as a bot. */
+async function listUsers(api: ApiContext, credentials: SlackCredentials, filters: { includeBots: boolean; includeDeleted: boolean }, max = Infinity): Promise<JsonObject[]> {
+  const users: JsonObject[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await slackCall<{ members?: JsonObject[]; response_metadata?: { next_cursor?: string } }>(
+      api,
+      credentials,
+      'users.list',
+      { limit: PAGE_SIZE, ...(cursor && { cursor }) },
+      'GET',
+    );
+    for (const user of page.members ?? []) {
+      if (!filters.includeBots && (user.is_bot === true || user.id === 'USLACKBOT')) continue;
+      if (!filters.includeDeleted && user.deleted === true) continue;
+      users.push(user);
+    }
+    cursor = page.response_metadata?.next_cursor || undefined;
+  } while (cursor && users.length < max);
+  return users.slice(0, max);
 }
 
 /** POST to an upload URL or GET a file URL, mapping network and HTTP failures to node errors. */
@@ -275,6 +306,42 @@ async function getFile(ctx: IExecuteContext, api: ApiContext, credentials: Slack
   return new ItemWithFiles(file, { [property]: ref });
 }
 
+// SB10: what Send, Update and Get Permalink return (Slack's own answer without ok/response_metadata), so a later step reads `$json.ts`.
+const MESSAGE_SENT_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    channel: { type: 'string', description: 'The id of the channel the message was posted in (C…)' },
+    ts: { type: 'string', description: 'The message timestamp: its id in the channel (use it as the thread_ts of a reply, or as Message Timestamp to update it)' },
+    message: { type: 'object', description: 'The message as Slack stored it: text, ts, user, blocks' },
+  },
+  required: ['channel', 'ts'],
+};
+const MESSAGE_UPDATED_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    channel: { type: 'string', description: 'The id of the channel the message is in' },
+    ts: { type: 'string', description: 'The timestamp of the updated message' },
+    text: { type: 'string', description: 'The new text of the message' },
+    message: { type: 'object', description: 'The message as Slack stored it after the update' },
+  },
+  required: ['channel', 'ts'],
+};
+const PERMALINK_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    channel: { type: 'string', description: 'The id of the channel the message is in' },
+    permalink: { type: 'string', description: 'The URL that opens the message in Slack' },
+  },
+  required: ['channel', 'permalink'],
+};
+
+/** Get: an activity item plus the message's full text. */
+const ACTIVITY_WITH_TEXT_SCHEMA: JsonObject = {
+  ...ACTIVITY_ITEM_SCHEMA,
+  properties: { ...(ACTIVITY_ITEM_SCHEMA.properties as JsonObject), text: { type: 'string', description: 'The message’s full text, Slack markup made readable' } },
+  required: [...(ACTIVITY_ITEM_SCHEMA.required as string[]), 'text'],
+};
+
 const messageOps = (operation: string[]) => ({ show: { resource: ['message'], operation } });
 const fileOps = (operation: string[]) => ({ show: { resource: ['file'], operation } });
 
@@ -282,7 +349,7 @@ export const Slack = defineNode({
   description: {
     name: 'slack',
     displayName: 'Slack',
-    description: 'Send, update and delete Slack messages, upload and download files, list channels, look up users and add reactions',
+    description: 'Send, update and delete Slack messages, read them since a time as activity items, upload and download files, list channels and members, look up users and add reactions',
     version: 1,
     kind: 'action',
     categories: ['Communication'],
@@ -294,7 +361,7 @@ export const Slack = defineNode({
     usableAsTool: true,
     // Sends, posts and edits are at most once over a broker; read operations opt back in with `idempotent: true`.
     idempotent: false,
-    toolDescription: 'Send, update or delete a Slack message, get its permalink, upload or download a file, list channels, find a user by email, or add an emoji reaction.',
+    toolDescription: 'Send, update or delete a Slack message, read one or the messages posted since a time in matching channels, get its permalink, upload or download a file, list channels or members, find a user by email, or add an emoji reaction.',
     inputs: [{ type: 'main' }],
     outputs: [{ type: 'main' }],
     credentials: [
@@ -352,7 +419,11 @@ export const Slack = defineNode({
         noDataExpression: true,
         default: 'getByEmail',
         displayOptions: { show: { resource: ['user'] } },
-        options: [{ name: 'Get by Email', value: 'getByEmail', description: 'Find a user by email address', action: 'Get a user by email', idempotent: true }],
+        options: [
+          { name: 'Get', value: 'get', description: 'A user by member ID, with their email (users.info; the email needs users:read.email) and whether they are a guest, from another organization or deactivated', action: 'Get a user', idempotent: true },
+          { name: 'Get by Email', value: 'getByEmail', description: 'Find a user by email address', action: 'Get a user by email', idempotent: true },
+          { name: 'Get Many', value: 'getAll', description: 'List the workspace’s members with their email addresses', action: 'Get many users', idempotent: true },
+        ],
       },
       {
         name: 'operation',
@@ -376,9 +447,25 @@ export const Slack = defineNode({
         displayOptions: { show: { resource: ['message'] } },
         options: [
           { name: 'Delete', value: 'delete', action: 'Delete a message' },
-          { name: 'Get Permalink', value: 'getPermalink', action: 'Get a message permalink', idempotent: true },
-          { name: 'Send', value: 'post', action: 'Send a message' },
-          { name: 'Update', value: 'update', action: 'Update a message' },
+          {
+            name: 'Get',
+            value: 'get',
+            description: 'One message as an activity item, with its full text',
+            action: 'Get a message',
+            idempotent: true,
+            outputSchema: ACTIVITY_WITH_TEXT_SCHEMA,
+          },
+          {
+            name: 'Get Many Since',
+            value: 'getManySince',
+            description: 'Messages posted since a time, across the channels whose names match, as activity items (oldest first)',
+            action: 'Get messages since a time',
+            idempotent: true,
+            outputSchema: ACTIVITY_ITEM_SCHEMA,
+          },
+          { name: 'Get Permalink', value: 'getPermalink', action: 'Get a message permalink', idempotent: true, outputSchema: PERMALINK_SCHEMA },
+          { name: 'Send', value: 'post', action: 'Send a message', outputSchema: MESSAGE_SENT_SCHEMA },
+          { name: 'Update', value: 'update', action: 'Update a message', outputSchema: MESSAGE_UPDATED_SCHEMA },
         ],
       },
       {
@@ -388,9 +475,10 @@ export const Slack = defineNode({
         required: true,
         default: '',
         typeOptions: { loadOptionsMethod: 'getChannels' },
-        displayOptions: { show: { resource: ['message', 'reaction'] } },
+        displayOptions: { show: { resource: ['message', 'reaction'] }, hide: { operation: ['getManySince'] } },
         description: 'Pick a channel, or set a channel ID (C0123ABCD) with an expression',
       },
+      ...ACTIVITY_OPTIONS,
       {
         name: 'channelId',
         displayName: 'Channel',
@@ -475,7 +563,7 @@ export const Slack = defineNode({
         required: true,
         default: '',
         placeholder: '1663233118.856619',
-        displayOptions: messageOps(['update', 'delete', 'getPermalink']),
+        displayOptions: messageOps(['update', 'delete', 'getPermalink', 'get']),
         description: 'The ts of the message (returned when it was sent)',
       },
       {
@@ -524,14 +612,24 @@ export const Slack = defineNode({
         required: true,
         default: '',
         placeholder: 'name@example.com',
-        displayOptions: { show: { resource: ['user'] } },
+        displayOptions: { show: { resource: ['user'], operation: ['getByEmail'] } },
+      },
+      {
+        name: 'userId',
+        displayName: 'User ID',
+        type: 'string',
+        required: true,
+        default: '',
+        placeholder: 'U0123456789',
+        description: 'The member ID (a message\'s or a button press\'s `user`)',
+        displayOptions: { show: { resource: ['user'], operation: ['get'] } },
       },
       {
         name: 'returnAll',
         displayName: 'Return All',
         type: 'boolean',
         default: false,
-        displayOptions: { show: { resource: ['channel'] } },
+        displayOptions: { show: { resource: ['channel', 'user', 'message'], operation: ['getAll', 'getManySince'] } },
         description: 'Whether to return all results or only up to a limit',
       },
       {
@@ -540,7 +638,7 @@ export const Slack = defineNode({
         type: 'number',
         default: 50,
         typeOptions: { minValue: 1, numberPrecision: 0 },
-        displayOptions: { show: { resource: ['channel'], returnAll: [false] } },
+        displayOptions: { show: { resource: ['channel', 'user', 'message'], operation: ['getAll', 'getManySince'], returnAll: [false] } },
         description: 'Max number of results to return',
       },
       {
@@ -552,6 +650,14 @@ export const Slack = defineNode({
         displayOptions: { show: { resource: ['channel'] } },
         values: [
           { name: 'excludeArchived', displayName: 'Exclude Archived Channels', type: 'boolean', default: true },
+          {
+            name: 'names',
+            displayName: 'Name Patterns',
+            type: 'string',
+            default: '',
+            placeholder: 'customer-*, proj-*',
+            description: 'Only channels whose name matches one of these patterns (* any characters, ? one; comma-separated)',
+          },
           {
             name: 'types',
             displayName: 'Types',
@@ -573,6 +679,18 @@ export const Slack = defineNode({
         default: true,
         displayOptions: { show: { resource: ['channel', 'user'] } },
         description: 'Whether to return a few flat fields instead of the raw Slack object',
+      },
+      {
+        name: 'userFilters',
+        displayName: 'Filters',
+        type: 'collection',
+        default: {},
+        placeholder: 'Add filter',
+        displayOptions: { show: { resource: ['user'], operation: ['getAll'] } },
+        values: [
+          { name: 'includeBots', displayName: 'Include Bots', type: 'boolean', default: false },
+          { name: 'includeDeleted', displayName: 'Include Deactivated Members', type: 'boolean', default: false },
+        ],
       },
     ],
   },
@@ -622,6 +740,10 @@ export const Slack = defineNode({
             const result = await slackCall(api, credentials, 'chat.delete', { channel: channel(), ts: requireString(ctx, 'ts', 'Message Timestamp', i) });
             return { success: true, ...strip(result) };
           }
+          case 'get':
+            return getMessageActivity(ctx, api, credentials, i, channel(), requireString(ctx, 'ts', 'Message Timestamp', i));
+          case 'getManySince':
+            return messagesSince(ctx, api, credentials, i);
           case 'getPermalink':
             return strip(
               await slackCall(
@@ -643,9 +765,24 @@ export const Slack = defineNode({
         const limit = Math.max(1, Number(ctx.getNodeParameter('limit', i, 50)) || 50);
         const filters = ctx.getNodeParameter<JsonObject>('filters', i, {}) ?? {};
         const types = Array.isArray(filters.types) && filters.types.length ? filters.types.join(',') : 'public_channel';
-        const channels = await listChannels(api, credentials, { types, exclude_archived: filters.excludeArchived !== false }, returnAll ? Infinity : limit);
+        const names = namesFilter(filters.names);
+        const channels = names
+          ? (await listChannels(api, credentials, { types, exclude_archived: filters.excludeArchived !== false })).filter((c) => names(String(c.name ?? ''))).slice(0, returnAll ? Infinity : limit)
+          : await listChannels(api, credentials, { types, exclude_archived: filters.excludeArchived !== false }, returnAll ? Infinity : limit);
         const simplify = ctx.getNodeParameter<boolean>('simplify', i, true);
         return channels.map((c) => (simplify ? simplifyChannel(c) : c));
+      }
+      if (resource === 'user' && operation === 'getAll') {
+        const returnAll = ctx.getNodeParameter<boolean>('returnAll', i, false);
+        const limit = Math.max(1, Number(ctx.getNodeParameter('limit', i, 50)) || 50);
+        const filters = ctx.getNodeParameter<JsonObject>('userFilters', i, {}) ?? {};
+        const users = await listUsers(api, credentials, { includeBots: filters.includeBots === true, includeDeleted: filters.includeDeleted === true }, returnAll ? Infinity : limit);
+        const simplify = ctx.getNodeParameter<boolean>('simplify', i, true);
+        return users.map((u) => (simplify ? simplifyUser(u) : u));
+      }
+      if (resource === 'user' && operation === 'get') {
+        const { user } = await slackCall<{ user: JsonObject }>(api, credentials, 'users.info', { user: requireString(ctx, 'userId', 'User ID', i) }, 'GET');
+        return ctx.getNodeParameter<boolean>('simplify', i, true) ? simplifyUser(user) : user;
       }
       if (resource === 'user' && operation === 'getByEmail') {
         const { user } = await slackCall<{ user: JsonObject }>(

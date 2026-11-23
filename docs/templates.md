@@ -50,6 +50,36 @@ A team template shows on the Templates page with its own card (above). Its page 
 address), says how many agents come with it, and shows the flow's canvas if it has one. **Export** and **Import** carry
 it (the template file's `bundle`). Its flow can't be swapped by **Edit**: save it again from the team page.
 
+### Built in: Learn practices
+
+"Read how your repositories are set up, and draft the practices they follow." The template `practices-learn-github`
+(**Learn practices from GitHub**, categories Productivity and Data, `templates/builtin-practices.ts`): **Start** →
+**What to read** (a JSON list of `{ owner, repository, paths }`, made-up defaults `your-org`, `your-repo`, `["deploy/", "CLAUDE.md"]`,
+one item per repository) → the GitHub plugin's **Repository** and **Default branch** (the commit `sha` it reads at) →
+**One item per path** → **List files** (a path that is a file is read as it is) → **Files to read** (files only, text
+extensions, under 20 KB) → **Read file** at that commit → **Group by repository** (the prompt) → **AI Agent** with an
+**Ollama Chat Model** (swap it for any chat model) → **Practices to items** → **Draft Practice**. A directory is read one
+level deep, at most 20 files a repository.
+
+- **What you add.** The **github** plugin, and a GitHub token you create yourself (a fine-grained token with Contents:
+  read on the repositories is enough). The template's slot is the plugin's own `github.githubApi`, named **GitHub token**.
+  Nothing in it writes to GitHub.
+- **Who must save it.** An owner or admin saves and publishes it. Then Draft Practice is told the files this run read, and
+  a citation whose excerpt is in them is marked verified. A flow a member saved still drafts, but no citation is verified.
+- **Where drafts go.** Brain → Practices, as tainted drafts waiting for a person. The model's answer and the file text
+  are untrusted: the prompt calls the files data, a citation whose excerpt is not in a file the run read is dropped, and
+  nothing is approved by the flow.
+- **The local way.** `/brain learn` (the mod and the CLI) sends files to `POST /api/practices/learn`, whose drafts are never verified.
+
+### Built in: Cap raise
+
+"When someone asks for a higher AI cap, an admin other than them decides." The template `ai-cap-raise` (categories IT Ops
+and AI, `templates/builtin-ai.ts`): **Cap Raise Request** → **Ask a Person** (chat, the owners and admins other than the
+requester, no editing, 3 day timeout that rejects) → **Apply Cap Raise** on Approved and on Rejected (Decision
+"Approved" or "Rejected"), with a note: nothing changes until an admin other than the requester approves. It needs no
+credentials. An admin installs it from Insights → AI (`POST /api/ai/cap-requests/setup`); see
+[Asking for a higher cap](llm-gateway.md#asking-for-a-higher-cap).
+
 ## Using
 
 **Use template** on a team template asks for the team's name, the flow's name (when there is one), the project, and a

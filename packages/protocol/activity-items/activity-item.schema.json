@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://landflow.dev/schema/activity-item.schema.json",
+  "title": "Activity item",
+  "description": "One change in an outside tool (a message, an edited document, a moved ticket, a held meeting), the same shape whatever the tool. Integration triggers and their List Changed Since operations output it, so one flow can take items from any of them. The SDKs build it with activityItem / ActivityItem / activity_item.",
+  "type": "object",
+  "properties": {
+    "source": { "type": "string", "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …" },
+    "sourceId": { "type": "string", "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised" },
+    "url": { "type": ["string", "null"], "description": "Where a person opens it" },
+    "actorEmail": { "type": ["string", "null"], "description": "Email of the person who made the change, lowercase; null when the tool doesn't say" },
+    "occurredAt": { "type": "string", "format": "date-time", "description": "When it happened, ISO 8601 in UTC with milliseconds" },
+    "kind": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$", "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it" },
+    "title": { "type": "string", "maxLength": 200, "description": "One line: the document, ticket or meeting title, or the channel and first words" },
+    "summary": { "type": "string", "maxLength": 600, "description": "The text, whitespace collapsed, at most 600 characters" },
+    "teamHint": { "type": ["string", "null"], "description": "The team it seems to belong to, from the tool's own grouping, when there is one" },
+    "initiativeHint": { "type": ["string", "null"], "description": "The project or initiative it seems to belong to, when there is one" },
+    "customerHint": { "type": ["string", "null"], "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)" },
+    "raw": { "type": "object", "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped" },
+    "cursor": { "type": ["string", "null"], "description": "Pass it back as Since to continue after this item (List Changed Since operations)" }
+  },
+  "required": ["source", "sourceId", "url", "actorEmail", "occurredAt", "kind", "title", "summary", "teamHint", "initiativeHint", "customerHint", "raw"],
+  "additionalProperties": false
+}

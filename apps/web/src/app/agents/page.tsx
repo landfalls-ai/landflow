@@ -1,25 +1,28 @@
 'use client';
 /** Agents (Preview): a roster of personas, grouped by team, that use your tools, workflows and other agents. */
-import { useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { Bot, Copy, Download, ExternalLink, MoreHorizontal, Network, Plus, Search, Sparkles, Upload, Users } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Bot, Plus, Sparkles, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
+import { plural } from '@/lib/client/format';
 import { cn } from '@/lib/utils';
 import type { Agent, AgentSummary, AgentTemplate } from '@/lib/shared/agents';
+import { mergeHarnessSession, newestByAgent, type HarnessSessionView } from '@/lib/shared/harness';
+import { useLiveEvents } from '@/lib/client/live';
 import { AgentAvatar } from '@/components/agents/avatar';
-import { TeamsView } from '@/components/agents/teams-view';
+import { TeamsView, NewTeamButton } from '@/components/agents/teams-view';
 import type { TeamSummary } from '@/lib/shared/agent-teams';
 import { NewAgentDialog } from '@/components/agents/new-agent-dialog';
 import { SaveTemplateDialog } from '@/components/agents/save-template-dialog';
-import { configOf, downloadJson, parseAgentFile, slug } from '@/components/agents/util';
+import { configOf, downloadJson, slug } from '@/components/agents/util';
 import { useAgentData } from '@/components/agents/use-agent-data';
-import { PageBody, PageHeader } from '@/components/shell/page-header';
-import { Badge, Chip } from '@/components/ui/badge';
+import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
+import { PhoneFilters } from '@/components/ui/phone-filters';
+import { SearchInput } from '@/components/ui/inputs';
 import { Button } from '@/components/ui/button';
-import { MenuItem, Popover } from '@/components/ui/popover';
+import { AgentCard } from '@/components/agents/agent-card';
+import { showPersonaStrip, visibleFilters } from '@/components/agents/list-rules';
 
 type Filter = 'all' | 'published' | 'drafts' | 'kagent' | 'marketplace';
 type Group = 'team' | 'none';
@@ -32,13 +35,11 @@ const FILTERS: Array<[Filter, string, (a: AgentSummary) => boolean]> = [
   ['kagent', 'On kagent', (a) => Boolean(a.kagent)],
   ['marketplace', 'From marketplace', (a) => Boolean(a.marketplace)],
 ];
-const CHANNEL_LABELS: Record<string, string> = { slack: 'Slack', teams: 'Teams', telegram: 'Telegram' };
 
 const matches = (a: AgentSummary, q: string) =>
   [a.name, a.role, a.description, a.team, ...(a.tones ?? [])].some((s) => s?.toLowerCase().includes(q));
 
 export default function AgentsPage() {
-  const router = useRouter();
   const agents = useAgentData((s) => s.agents);
   const [loaded, setLoaded] = useState(false);
   const [templates, setTemplates] = useState<AgentTemplate[]>();
@@ -49,7 +50,12 @@ export default function AgentsPage() {
   const [group, setGroup] = useState<Group>('team');
   const [view, setViewState] = useState<View>('agents');
   const [agentTeams, setAgentTeams] = useState<TeamSummary[]>();
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [harnessSessions, setHarnessSessions] = useState<HarnessSessionView[]>([]);
+  const harnessByAgent = useMemo(() => newestByAgent(harnessSessions), [harnessSessions]);
+  // The cards' Claude Code status chips: the open sessions once, then each live `harness` event (C04).
+  useLiveEvents((event) => {
+    if (event.channel === 'harness' && event.session.agentId) setHarnessSessions((list) => mergeHarnessSession(list, event.session));
+  });
 
   const setView = (next: View) => {
     setViewState(next);
@@ -61,32 +67,14 @@ export default function AgentsPage() {
     api<{ teams: TeamSummary[] }>('/api/agent-teams')
       .then((r) => setAgentTeams(r.teams))
       .catch(() => setAgentTeams([]));
+    api<{ sessions: HarnessSessionView[] }>('/api/harness/sessions?open=1&kind=agent&limit=100', { background: true })
+      .then((r) => setHarnessSessions(r.sessions))
+      .catch(() => {});
     void useAgentData.getState().loadAgents().finally(() => setLoaded(true));
     api<{ templates: AgentTemplate[] }>('/api/agent-templates')
       .then((r) => setTemplates(r.templates))
       .catch(() => setTemplates([]));
   }, []);
-
-  const importFile = async (file?: File) => {
-    if (!file) return;
-    try {
-      const config = parseAgentFile(await file.text());
-      const { agent } = await api<{ agent: { id: string; name: string } }>('/api/agents/import', { method: 'POST', json: { config } });
-      toast.success(`Imported “${agent.name}”`);
-      router.push(`/agents/${agent.id}`);
-    } catch (e) {
-      toast.error(`Could not import ${file.name}: ${(e as Error).message}`);
-    } finally {
-      if (fileInput.current) fileInput.current.value = '';
-    }
-  };
-
-  // The teams each agent is a member of, for the chip on its card.
-  const teamsOf = useMemo(() => {
-    const out = new Map<string, TeamSummary[]>();
-    for (const team of agentTeams ?? []) for (const id of team.agentIds ?? []) out.set(id, [...(out.get(id) ?? []), team]);
-    return out;
-  }, [agentTeams]);
 
   const list = loaded ? agents : undefined;
   const teams = useMemo(() => [...new Set((agents ?? []).map((a) => a.team).filter((t): t is string => Boolean(t)))].sort((a, b) => a.localeCompare(b)), [agents]);
@@ -117,13 +105,14 @@ export default function AgentsPage() {
     }
   };
 
+  const filterKeys = list ? visibleFilters(FILTERS.map(([key, , test]) => [key, list.filter(test).length] as const), filter) : [];
   const openNew = (template?: string) => setDialog({ template });
   const openArchitect = () => setDialog({ mode: 'architect' });
-  const strip = templates && templates.length > 0 && (
+  const strip = templates && templates.length > 0 && showPersonaStrip(list) && (
     <section aria-label="Start from a persona" className="mb-6">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">Start from a persona</h2>
-        <div className="flex items-center gap-4">
+      <div className="mb-2 flex items-center justify-between max-md:flex-wrap max-md:gap-y-1">
+        <h2 className="whitespace-nowrap text-[12px] font-semibold uppercase tracking-[0.06em] text-t3">Start from a persona</h2>
+        <div className="flex items-center gap-4 whitespace-nowrap max-md:w-full max-md:justify-start">
           <button type="button" onClick={openArchitect} className="flex items-center gap-1 rounded text-[12px] font-semibold text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac">
             <Sparkles className="size-3" /> Ask the Agent architect
           </button>
@@ -153,20 +142,7 @@ export default function AgentsPage() {
 
   const actions = (
     <>
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-t3" />
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search agents"
-          placeholder="Search agents"
-          className="h-7 w-[104px] rounded-full border border-hair bg-wl pl-8 pr-3 text-[12px] text-t1 outline-none placeholder:text-t3 focus:border-ac sm:w-[200px]"
-        />
-      </div>
-      <Button size="sm" onClick={() => fileInput.current?.click()}>
-        <Upload className="size-3.5" /> <span className="hidden sm:inline">Import JSON</span>
-      </Button>
+      <SearchInput value={query} onChange={setQuery} placeholder="Search agents" className="w-[200px]" />
       <Button variant="primary" size="sm" onClick={() => openNew()}>
         <Plus className="size-3.5" strokeWidth={2} /> New agent
       </Button>
@@ -174,7 +150,7 @@ export default function AgentsPage() {
   );
 
   const seg = <T extends string>(label: string, value: T, set: (v: T) => void, options: Array<[T, string, number?]>) => (
-    <div role="group" aria-label={label} className="inline-flex max-w-full overflow-x-auto rounded-full border border-hair bg-wl p-0.5 [scrollbar-width:none]">
+    <div role="group" aria-label={label} className="inline-flex max-w-full overflow-x-auto rounded-full border border-hair bg-wl p-0.5 [scrollbar-width:none] max-md:flex-wrap max-md:overflow-visible max-md:rounded-2xl">
       {options.map(([key, text, n]) => (
         <button
           key={key}
@@ -200,15 +176,14 @@ export default function AgentsPage() {
         meta={
           <>
             <span className="hidden rounded-full border border-acbd bg-acdim px-1.5 text-[10px] font-semibold leading-4 text-ac sm:inline">Preview</span>
-            {list && list.length > 0 && <span className="hidden sm:inline">{list.length}</span>}
+            {list && list.length > 0 && <span className="hidden sm:inline">{plural(list.length, 'agent')}</span>}
           </>
         }
-        actions={view === 'agents' ? actions : undefined}
+        actions={view === 'agents' ? actions : <NewTeamButton />}
       />
-      <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void importFile(e.target.files?.[0])} />
       <PageBody>
         <div className="mb-5">{seg<View>('View', view, setView, [['agents', 'Agents', list?.length], ['teams', 'Teams', agentTeams?.length]])}</div>
-        {view === 'teams' && <TeamsView teams={agentTeams} agents={list ?? []} />}
+        {view === 'teams' && <TeamsView teams={agentTeams} />}
         {view === 'agents' && !visible && (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
             {[0, 1, 2].map((i) => (
@@ -219,39 +194,50 @@ export default function AgentsPage() {
         {view === 'agents' && list && list.length === 0 && (
           <>
             {strip}
-            <div className="mx-auto mt-6 flex max-w-[460px] animate-fade-up flex-col items-center text-center">
-              <span className="grid size-16 place-items-center rounded-[22px] border border-acbd bg-acdim text-ac">
-                <Bot className="size-8" strokeWidth={1.5} />
-              </span>
-              <h2 className="mt-5 text-[20px] font-semibold tracking-[-0.01em] text-t1">Create your first agent</h2>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-t2">Agents automate tasks and answer questions using your connected tools and data.</p>
-              <div className="mt-5 flex flex-wrap justify-center gap-2">
-                <Button variant="primary" onClick={() => openNew()}>
-                  <Plus className="size-3.5" strokeWidth={2} /> New agent
-                </Button>
-                <Button onClick={openArchitect}>
-                  <Sparkles className="size-3.5" /> Ask the Agent architect
-                </Button>
-                <Button onClick={() => fileInput.current?.click()}>
-                  <Upload className="size-3.5" /> Import JSON
-                </Button>
-              </div>
-            </div>
+            <Card className="py-6">
+              <EmptyState
+                icon={<Bot />}
+                title="No agents yet"
+                hint="Agents automate tasks and answer questions using your connected tools and data."
+                action={
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button onClick={() => openNew()}>
+                      <Plus className="size-3.5" strokeWidth={2} /> New agent
+                    </Button>
+                    <Button variant="ghost" onClick={openArchitect}>
+                      <Sparkles className="size-3.5" /> Ask the Agent architect
+                    </Button>
+                  </div>
+                }
+              />
+            </Card>
           </>
         )}
         {view === 'agents' && list && list.length > 0 && visible && (
           <>
-            {strip}
+            {(filterKeys.length > 0 || teams.length > 0) && (
             <div className="mb-5 flex flex-wrap items-center gap-3">
-              {seg('Show', filter, setFilter, FILTERS.map(([key, text, test]) => [key, text, list.filter(test).length]))}
-              <div className="ml-auto flex items-center gap-2 text-[12px] text-t3">
-                Group by
-                {seg<Group>('Group by', group, setGroup, [
-                  ['team', 'Team'],
-                  ['none', 'None'],
-                ])}
-              </div>
+              {/* A phone: which agents and how they're grouped, in a Filters sheet (desktop: in place). */}
+              <PhoneFilters
+                active={(filter !== 'all' ? 1 : 0) + (group !== 'team' ? 1 : 0)}
+                onClear={() => {
+                  setFilter('all');
+                  setGroup('team');
+                }}
+              >
+                {filterKeys.length > 0 && seg('Show', filter, setFilter, FILTERS.filter(([key]) => filterKeys.includes(key)).map(([key, text, test]) => [key, text, list.filter(test).length]))}
+                {teams.length > 0 && (
+                  <div className="ml-auto flex items-center gap-2 text-[12px] text-t3 max-md:ml-0">
+                    Group by
+                    {seg<Group>('Group by', group, setGroup, [
+                      ['team', 'Team'],
+                      ['none', 'None'],
+                    ])}
+                  </div>
+                )}
+              </PhoneFilters>
             </div>
+            )}
             {visible.length === 0 && <p className="py-10 text-center text-[13px] text-t3">No agents match.</p>}
             <div className="flex flex-col gap-7">
               {sections.map((s) => (
@@ -265,7 +251,7 @@ export default function AgentsPage() {
                   )}
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
                     {s.agents.map((agent, i) => (
-                      <AgentCard key={agent.id} agent={agent} teams={teamsOf.get(agent.id)} index={i} onSave={() => setSaving(agent)} onExport={() => void exportAgent(agent)} />
+                      <AgentCard key={agent.id} agent={agent} index={i} harnessStatus={harnessByAgent.get(agent.id)} onSave={() => setSaving(agent)} onExport={() => void exportAgent(agent)} />
                     ))}
                   </div>
                 </section>
@@ -283,103 +269,5 @@ export default function AgentsPage() {
         />
       )}
     </>
-  );
-}
-
-function AgentCard({ agent, teams, index, onSave, onExport }: { agent: AgentSummary; teams?: TeamSummary[]; index: number; onSave: () => void; onExport: () => void }) {
-  const runs = [
-    agent.publishedVersion ? 'Landflow' : undefined,
-    agent.kagent ? `kagent ${agent.kagent}` : undefined,
-    ...agent.channels.map((c) => CHANNEL_LABELS[c] ?? c),
-    agent.schedules > 0 ? `${agent.schedules} ${agent.schedules === 1 ? 'schedule' : 'schedules'}` : undefined,
-  ].filter(Boolean) as string[];
-  return (
-    <article
-      className="flex animate-fade-up flex-col gap-3 rounded-2xl border border-hair bg-sf p-4 transition-colors duration-[120ms] hover:border-bd"
-      style={{ animationDelay: `${Math.min(index, 8) * 30}ms` }}
-    >
-      <div className="flex items-start gap-3">
-        <AgentAvatar agent={agent} size={52} />
-        <div className="min-w-0 flex-1">
-          <Link href={`/agents/${agent.id}`} className="block truncate rounded text-[14px] font-semibold text-t1 hover:text-ac focus-visible:outline-2 focus-visible:outline-ac">
-            {agent.name}
-          </Link>
-          <div className="truncate text-[12px] text-t2">{agent.role || agent.description || 'No description'}</div>
-        </div>
-        <Popover
-          trigger={({ toggle }) => (
-            <Button size="icon-sm" variant="ghost" aria-label={`More actions for ${agent.name}`} aria-haspopup="menu" onClick={toggle}>
-              <MoreHorizontal className="size-4" />
-            </Button>
-          )}
-        >
-          {(close) => (
-            <>
-              <Link href={`/agents/${agent.id}`} role="menuitem" className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-t1 hover:bg-acdim [&_svg]:size-3.5">
-                <ExternalLink /> Open
-              </Link>
-              <MenuItem
-                onClick={() => {
-                  close();
-                  onSave();
-                }}
-              >
-                <Copy /> Save as template…
-              </MenuItem>
-              <MenuItem
-                onClick={() => {
-                  close();
-                  onExport();
-                }}
-              >
-                <Download /> Export JSON
-              </MenuItem>
-            </>
-          )}
-        </Popover>
-      </div>
-      {agent.role && agent.description && <p className="line-clamp-2 text-[12px] leading-snug text-t2">{agent.description}</p>}
-      {agent.tones && agent.tones.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {agent.tones.map((tone) => (
-            <Chip key={tone} className="px-2 text-[11px]">
-              {tone}
-            </Chip>
-          ))}
-        </div>
-      )}
-      <div className="mt-auto flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {agent.publishedVersion ? <Badge tone="success">Published v{agent.publishedVersion}</Badge> : <Badge tone="muted">Draft</Badge>}
-          {agent.publishedVersion && agent.draftChanged && <Badge tone="warning">Changes not published</Badge>}
-          {runs.length > 0 && <span className="text-[11px] text-t3">{runs.join(' · ')}</span>}
-          {teams?.map((team) => (
-            <Link key={team.id} href={`/agents/teams/${team.id}`} title={`In the team ${team.name}`} className="rounded-full focus-visible:outline-2 focus-visible:outline-ac">
-              <Chip className="px-2 text-[11px] hover:border-bd">
-                <Network className="size-3" /> {team.name}
-              </Chip>
-            </Link>
-          ))}
-          {agent.marketplace && (
-            <Link
-              href="/marketplace"
-              title={`${agent.marketplace.plugin}@${agent.marketplace.marketplace}`}
-              className="rounded text-[11px] text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac"
-            >
-              From {agent.marketplace.plugin}
-            </Link>
-          )}
-        </div>
-        <div className="flex items-center justify-between gap-2 border-t border-hair pt-2 text-[11px] text-t3">
-          <span className="min-w-0 truncate">
-            <span className="font-mono text-t2">{agent.model || 'No model'}</span> · {agent.tools} {agent.tools === 1 ? 'tool' : 'tools'} · {agent.skills}{' '}
-            {agent.skills === 1 ? 'skill' : 'skills'}
-          </span>
-          <span className="shrink-0 tabular-nums">
-            {agent.sessions} {agent.sessions === 1 ? 'session' : 'sessions'} · {timeAgo(agent.updatedAt)}
-          </span>
-        </div>
-      </div>
-    </article>
   );
 }

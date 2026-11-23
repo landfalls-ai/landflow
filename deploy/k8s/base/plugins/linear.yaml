@@ -1,0 +1,79 @@
+# Linear (TypeScript SDK). The Service's label makes the host discover it; the annotation names its gRPC port.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plugin-linear
+  labels: { app.kubernetes.io/name: plugin-linear, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: plugin }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: plugin-linear }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: plugin-linear, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: plugin }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # the image's `node` user
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: plugin
+          image: landflow/plugin-linear:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 7116 }
+            - { name: grpc, containerPort: 7216 }
+          # Brokers: none by default. components/broker-transports creates these (LANDFLOW_TRANSPORTS, LANDFLOW_<KIND>_URL,
+          # LANDFLOW_TRANSPORT_SECRET, LANDFLOW_MAX_CONCURRENCY); env below wins over them.
+          envFrom:
+            - configMapRef: { name: landflow-transport, optional: true }
+            - configMapRef: { name: landflow-transport-linear, optional: true }
+            - secretRef: { name: landflow-transport, optional: true }
+          env:
+            # Discovered, so no announcing (set LANDFLOW_REGISTRY_URL to announce as well).
+            - { name: LANDFLOW_REGISTRY_URL, value: "off" }
+            # The plugin's own MCP face is off here: agents reach plugins through the host's per-plugin endpoints and the gateway.
+            # To turn it on set value "on" and add LANDFLOW_MCP_TOKEN from a Secret (the pod listens on 0.0.0.0, so a token is required):
+            #   - name: LANDFLOW_MCP_TOKEN
+            #     valueFrom: { secretKeyRef: { name: landflow-plugin-mcp, key: token } }
+            - { name: LANDFLOW_MCP, value: "off" }
+            - name: LANDFLOW_REGISTRY_SECRET # answers the host's challenge on GetManifest (docs/protocol.md §13)
+              valueFrom: { secretKeyRef: { name: landflow-registry, key: secret, optional: true } }
+          # Ready only while the plugin answers its health endpoint: the host follows readiness through EndpointSlices.
+          readinessProbe:
+            httpGet: { path: /landflow/v1/health, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /landflow/v1/health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 20m, memory: 160Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plugin-linear
+  labels: { app.kubernetes.io/name: plugin-linear, app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: plugin, landflow.dev/plugin: "true" }
+  annotations:
+    landflow.dev/grpc-port: grpc
+    # landflow.dev/http-port: http   # also register the HTTP binding
+spec:
+  selector: { app.kubernetes.io/name: plugin-linear }
+  ports:
+    - { name: grpc, port: 7216, targetPort: grpc, appProtocol: grpc }
+    - { name: http, port: 7116, targetPort: http }

@@ -110,6 +110,65 @@ pane lists the steps as they come, auto-scrolling ([agents.md](agents.md#from-wo
 output `steps` show as the same list. The final output doesn't change. A card that doesn't stream still reports, on
 each poll.
 
+### Project context
+
+A remote agent, a kagent agent included, bakes its prompt at deploy, so what a run is for travels in the message. When a
+run is in a project with goals, the **first message of a new conversation** starts with the compact "Where this work fits"
+block (the goal titles and a brief cut to 200 characters), then a blank line, then the message. A follow-up with a
+`contextId`, an answer to a question and a resumed task go as they are, and so does a run where no project has goals. The
+message's metadata carries `landflow.project.id` and `landflow.goal.id` on that same first message only (not on follow-ups,
+answers or resumed tasks, and not when the block is off).
+
+- **The A2A Agent node:** the option **Project context** (Compact, the default, or Off). Used as an agent's tool it sends
+  that agent's block; in a workflow it builds the block for the workflow's project.
+- **An A2A capability:** the first message to it in a session carries the calling agent's compact block, unless that
+  agent's context mode is Off or the capability's own **Project context** option (in its Options, as on the node) is Off.
+- **A team's remote member:** see [agent-teams.md](agent-teams.md). Its **Project context: Off** option drops the compact
+  block and the project tags; the project line in the request's ancestry stays.
+
+### Practices
+
+A Landflow agent on kagent also gets an index of the approved practices that apply with the first message of a new
+conversation, after the project block ([practices.md](practices.md#kagent-agents-and-a2a)). It ends with the line `Call
+practices_for for a practice's full rules, and end your answer with "Practices followed: [handle@version]" for those you
+followed.` The node, the capability and a team's remote member each have a **Practices** option (On, the default, or Off).
+Any other A2A agent gets nothing new.
+
+On the agent's kagent MCP server (`/api/mcp/agents/<id>`) there are two more tools, listed whatever the run: `practices_for`
+(the full rules of what applies, or of one `handle`) and `practice_cite` (up to 20 `handle@version`). They are bound to
+the run that is asking the agent as the notebook tools are (the `run` key when several team runs ask at once, the agent's
+home project when none does). Their calls and the citations in the answer are recorded against the run's project.
+
+### When a provider blocks a call
+
+A remote task that ends `TASK_STATE_FAILED` because the provider's quota or credits ran out (a Codex Harness behind
+kagent, for one) is **Blocked**, not a generic failure. Landflow reads the task's status data parts and metadata first:
+`codex_error_info: usage_limit_exceeded` is a usage limit (a `rate_limit_reached_type` naming credits, also nested as
+Codex's `rate_limits.rate_limit_reached_type`, makes it credits depleted), any other `codex_error_info` is an ordinary
+error, and OpenAI's `insufficient_quota` is credits depleted. Only when no such field is there does it match the status
+words, provider phrasing only: "hit your usage limit", "usage limit reached", "out of credits", "exceeded your current
+quota", "credit balance is too low". "model not supported", "rate limited by the gateway", "Rate limit reached for ...",
+and "Container exceeded its memory usage limit" stay ordinary failures. The wording says "Codex ..." only when the
+verdict came from `codex_error_info`; a text verdict says "Usage limit reached" or "Credits depleted". The classifier is
+`lib/shared/quota-block.ts`, shared by every path.
+
+- **The node** fails with `<agent>: Codex usage limit reached`, the provider's message as the error description, and
+  records the check `blocked` (warn, "Blocked by a provider limit") once. The run still reads failed: a wait for the reset
+  is a later feature. The later items of the same execution do not call the blocked agent again: they fail the same way.
+- **Continue on fail**: the error item carries `blocked: true`, `blockedKind` (`usage_limit`, `credits_depleted` or
+  `unknown`) and `blockedMessage`, so a flow can route a Blocked item apart from other failures.
+- **An agent's A2A tool** throws the same Blocked error (the model reads "Codex usage limit reached: ...") and reports
+  the remote run as `state: 'blocked'`; **a team's remote member** adds a `blocked` warn check naming the member, puts
+  the badge on its call span, is not asked again in this run ("blocked by a provider limit for this run; don't ask it
+  again"), and the lead is told the member was blocked, not that its work failed.
+- The [Run Trace](run-trace.md#a-blocked-call) shows a Blocked badge with the kind and the message.
+- The counter `landflow.harness.blocked{kind, harness}` counts each entry (`harness` is `a2a` here).
+- **Retries**: the engine's retry on fail (`retryOnFail`) is not told a failure is Blocked, so a node with it set calls the
+  blocked provider again until its tries are used. Leave retries off on a node that calls a metered agent
+  ([limitations.md](limitations.md)).
+
+Only the A2A path is built. Watching a person's local Codex session is not ([limitations.md](limitations.md)).
+
 ## The protocol, as built
 
 `apps/web/src/lib/server/a2a/client.ts`: A2A 1.0 over JSON-RPC 2.0 with the `A2A-Version: 1.0` header; the methods
@@ -185,7 +244,8 @@ before Landflow deploys the new one) or to upgrade kagent. It leaves your kubect
    published on the Mac's loopback) and turns on proxy ARP on its node, which Substrate's per-actor networking needs;
 2. applies the bridges: `deploy/kind/bridge.yaml` (a `landflow-host` Service in kind's namespace `landflow` whose
    endpoint is the host's ClusterIP, which OrbStack routes to every container on its engine) and
-   `deploy/kind/bridge-otel.yaml` (the same for `landflow-lgtm`, when the observability overlay runs);
+   `deploy/kind/bridge-otel.yaml` (the same for the telemetry backend the host exports to: Clickland's
+   `clickland-collector` with the `orbstack-clickland` overlay, or `landflow-lgtm` with `orbstack-observability`);
 3. installs kagent 1.0.0-alpha17 and Agent Substrate 0.6.0-alpha3 with `deploy/kind/kagent-config.yaml` (Ollama on the
    Mac as the model provider, `qwen3-coder:30b`), or upgrades them with `deploy/kind/kagent-values.yaml` (telemetry to
    Landflow's backend). Substrate's own telemetry is set on its release (`otel.endpoint`, sampling 1.0);
@@ -213,8 +273,8 @@ removed).
 
 ## Landflow agents on kagent
 
-An agent built in Landflow can run on kagent with the persona built here. Deploying it (the **kagent** card at the
-bottom of the agent's Build tab, or `PUT /api/agents/<id>/kagent`) writes the published version to kagent as five
+An agent built in Landflow can run on kagent with the persona built here. Deploying it (the **kagent** card under the
+agent's Abilities → Deploy, or `PUT /api/agents/<id>/kagent`) writes the published version to kagent as five
 resources, all named after the deployment (default: the agent's name as a DNS label) and labelled
 `landflow.dev/agent-id`:
 
@@ -258,7 +318,44 @@ on the tools whose binding needs approval, so a call that arrives was approved; 
 span with the agent's id and name.
 
 What stays in Landflow: cross-session memory (the `remember` tool and the notes need the person the agent talks to, so
-kagent doesn't get them), the run's date and time in the prompt, guardrails, usage limits, schedules and channels.
+kagent doesn't get them), the run's date and time in the prompt, guardrails, schedules and channels. Usage limits stay in
+Landflow too, with one exception: when the instance has an LLM gateway with a cluster URL and the server has its admin
+key, a deployed agent gets a virtual key of its own, kagent's ModelConfig (and the Claude Code harness) call the gateway
+with it, and the spend import copies the agent's calls into `ai_usage`, so they count toward its limits. The key's budget
+is the agent's dollar limit and stops the agent at the gateway; the key is blocked when the agent is removed from kagent
+or moves to the other runtime. The model, key, egress and import are in
+[llm-gateway.md](llm-gateway.md#agents-outside-landflow). The Run Trace's reported tokens stay for reading; the import
+counts the agent's calls from LiteLLM's log, never from the trace, so nothing is counted twice.
+
+### Memory on kagent
+
+An agent deployed with **Cross-session memory** on gets three more tools on its MCP endpoint, `recall_memory { query }`,
+`remember { fact, static?, replaces? }` and `forget_memory { id, reason }`, and its persona ends with "At the start of a task,
+call recall_memory with the memory key from the conversation and the task…". Each takes a **memory key** (`memoryKey`), because
+an agent on kagent cannot tell Landflow whom it is working for.
+
+- **The key.** When Landflow sends the first message of a conversation to a Landflow agent on kagent whose deployed version has
+  memory on (the A2A Agent node, or an agent's A2A tool), it adds the line "Memory key for this person: `mk_…`" after the
+  practices index. The key is `base64url(agent id, user id, expiry)` and an HMAC-SHA256 under the vault's derived key
+  `agent-memory-key`: it names one agent and one person (`workflow:<id>` from a workflow, the session's user from an agent's
+  tool), expires 24 hours after it was written (a key whose expiry is further out than that is refused), and is checked against
+  every key of the ring, so a key rotation does not void a conversation in flight. It is signed, not remembered, so it works in
+  queue mode when the A2A call and the MCP call land on different processes. It opens only that person's memories for that agent.
+- **What a call does.** `recall_memory` answers the same fenced block a Landflow run would get for that person and query
+  ([agents.md](agents.md#agent-capabilities)); `remember` and `forget_memory` act as the Landflow tools do. Without a valid key
+  for this agent (none, forged, expired, another agent's) a call answers "Memory needs the key Landflow gave you in this
+  conversation" and reads or writes nothing. Each call is an `execute_tool` span (`memory` kind) with no key and no memory text.
+- **Where a key is minted.** Only for the address Landflow stored when it deployed the agent (`kagent.a2aUrl`), compared exactly. An address that merely ends in the same `/agents/<namespace>/<name>` on another host gets no key, and a deployment made before the address was stored gets none until it is redeployed. The key's shape is a rule of the central redactor (in every process, nothing is remembered per key), so node outputs and errors, executions, the journal, logs, the approvals inbox and alerts never show it.
+- **The key stays out of what Landflow keeps.** The key is for the agent, not for people reading the run. Landflow takes it out of
+  everything it stores or shows of the remote run: step arguments and outputs, the words the agent said, its data parts, its
+  reply and status text, progress reports and the trace (each key becomes `[memory key]`), and the three memory tools' steps keep nothing of the words: a `recall_memory` step shows "recalled N memories", `remember` "remembered a memory" and `forget_memory` "forgot a memory" (also under Claude Code's `mcp__<server>__<tool>` names). Errors, questions, approval hints and the mod's guard and ask events are scrubbed too, and so is every message Landflow sends (answers, rejection reasons, metadata) except its own key line. Scrubbing by the key's shape is best effort: a key altered beyond that shape is not recognised, which is why the redactor also holds the exact key. A key a caller wrote in the message text is taken out too, and a copy of
+  Landflow's line does not stop the real one from being added, so another member of a project cannot paste a key they read
+  somewhere and act as that person.
+- **Not covered.** A caller that is not Landflow (kagent's own UI, another A2A client) gets no key and so no memory; follow-up
+  messages in a conversation carry no new key (the first message's lasts 24 hours). The key is in the first message the remote
+  agent received, so what kagent itself keeps of the conversation (its own session store and logs) holds it: treat those as
+  you treat the memories. A memory tool on kagent does not ask first: `forget_memory` acts at once and a project's rules that
+  make a tool "ask first" (Ask rules) are not applied to the three memory tools there, as they are for a Landflow run.
 
 ### On Claude Code
 
@@ -398,6 +495,51 @@ The token's scope is what limits the agents: a fine-grained token on one reposit
 read and write lets them push any branch, `main` included, so protect `main` with a branch rule if agents must never
 land on it (the flows here only push `agents/*` branches and open draft pull requests).
 
+### Secret routes
+
+`landflow-github` is made by hand. **Secret routes** give a Claude Code agent the same thing for any API, from a Landflow
+credential: on the agent's kagent card (Claude Code runtime only) add a route, pick a **Bearer Auth** or **Header Auth**
+credential, list the hosts it may be sent to (`https://` DNS origins, no wildcard, path, user or IP address) and, if the
+default is not right, the header and prefix (Bearer Auth: `Authorization` and `Bearer `; Header Auth: the credential's own
+header and no prefix). A deploy then writes two objects named after the agent, beside the ones in [Landflow agents on
+kagent](#landflow-agents-on-kagent):
+
+- the Secret `<name>-routes`, one key per route (`r0`, `r1`…) holding the credential's bare value, written as `data` so a
+  removed route drops its key;
+- the EgressPolicy `<name>-routes`, a destination per host with `authentication { header, prefix, secretKeyRef }` (the
+  shape of `egress-github.yaml`), which the Agent references after its other policies.
+
+The sandbox sends the header with any value (`curl -H 'Authorization: x' https://api.linear.app/…`) and the gateway puts
+the real one in. The value is in Landflow's vault and that Secret only: not in the AgentTemplate, the persona, the
+EgressPolicy, the agent's record, any API answer, the audit log or a log line. The policy carries the annotation
+`landflow.dev/routes-hmac`, an HMAC-SHA-256 of the routes and their values under a key derived from the vault's, so a
+change shows without reading the Secret and the hash can't be turned back into a value; the status reports drift `routes`
+when the policy's hosts or annotation differ from what was deployed, or when a routed credential has changed and the
+Secret is not yet rewritten.
+
+- **Rotation.** A leader timer (`kagent route refresh`, every minute, 50 agents a tick) compares the vault's values with
+  the stored hash and, when one changed, rewrites **only the Secret** and records the new hash, audited as
+  `kagent.route.refreshed` with the credential names. A credential deleted, changed to another type or no longer shared
+  with the agent's project empties its key and shows the route as broken; fix it and the next tick (or a deploy) writes it.
+- **Rules.** Up to 20 routes per agent and 10 hosts per route; a host belongs to one route; only credentials the agent's
+  home project may use; in the production profile internal hosts (`localhost`, single-label names, `.local`,
+  `.internal`, `.svc`, `.cluster.local`) are refused. A bad route fails the deploy naming it ("Route 2: https://\*.example.com:
+  no wildcards").
+- **Refused at deploy.** A listed EgressPolicy that Landflow wrote for an agent (`<name>-routes`, `<name>-landflow`), and a route host that a listed hand-made policy already gives a credential (`api.github.com` with `landflow-github`).
+- **Rotation details.** The refresh keeps a hash per route, so the audit names only the credentials that changed; it drops its write if a deploy landed meanwhile (clearing the hash, or deleting the Secret when that deploy has no routes). A route that no longer passes the rules is marked broken and its key emptied.
+- **Removing.** Emptying the list and redeploying (if a delete fails the deploy fails and the record keeps the routes, so the next deploy retries), or removing the agent from kagent, deletes both objects. Each route
+  added, changed or removed is audited (`kagent.route.added`, `.changed`, `.removed`) with the credential's name and hosts.
+- **Unchanged.** Hand-made policies such as `landflow-github` and their Secrets keep working and are never written by
+  Landflow; an object named `<name>-routes` that Landflow did not write for this agent stops the deploy.
+- **Not covered.** Credentials that refresh (OAuth2) or sign each request, body or query substitution, tools that go
+  through Landflow's MCP endpoint (agents on kagent's own runtime), and a proxy in Landflow's request path.
+
+Checked live on 2026-11-23 on `kind-landflow-kagent` (Claude Code harness `landflow-claude`, a dummy Bearer token): the Secret `<name>-routes` held one key, `r0`, with the credential's value; the EgressPolicy was admitted by kagent ("All requested egress grants are admitted") with `authentication { header, prefix, secretKeyRef }`; the token was in no Agent, AgentTemplate, EgressPolicy or ModelConfig. A sandbox `wget --header='Authorization: x'` to a recording upstream reached it as `Authorization: Bearer <token>`, and after the credential was changed the Secret held the new value within 61 s (audit `kagent.route.refreshed`, no drift) and the next call carried it. Emptying the routes and redeploying deleted both objects; removing the agent left nothing of it. The gateway reads the Secret from the policy's own namespace (`kagent`), as the code writes it. Two limits of the check: the gateway verifies the upstream's TLS certificate (a local fake with a self-made CA failed with `UnknownIssuer`), and a route host must be `https://`, so the swap was proven through a hand-made policy of the same shape with an `http://` origin that read Landflow's Secret (the policy Landflow writes for an `https://` host differs only in the scheme). The `landflow-claude` image has `wget` but no `curl`.
+
+Unit tests run against a fake Kubernetes API and assert the objects; the gateway's swap itself is checked on the kind
+cluster (`apps/web/test/kagent-routes-deploy.test.ts` for the objects, `packages/test-fakes/src/upstream.ts` for the
+header-recording upstream the live check uses).
+
 ### GitHub's MCP tools for agents
 
 Agents can read and review pull requests through GitHub's own MCP server, with a GitHub token Landflow holds. It is an
@@ -503,7 +645,7 @@ every Claude Code agent Landflow deploys gets Landflow's own mod, **landflow-har
   | `upload` | `nc`, `socat`, `telnet`; `curl`/`wget` sending a file (`-T`, `-d @file`, `-F x=@file`) |
   | `write-outside-workspace` | Write, Edit, MultiEdit and NotebookEdit outside the working directory, `/tmp` and `~/.claude` (the same idea as Claude Code 2.1.314's `permissions.blockWritesOutsideWorkingDirectories`) |
 
-  **The guard per agent.** The Deploy tab's kagent card picks one of three for a Claude Code agent (`guard` on
+  **The guard per agent.** The kagent card (Abilities → Deploy) picks one of three for a Claude Code agent (`guard` on
   `PUT /api/agents/:id/kagent`, kept across redeploys and publishes):
 
   | Guard | What it does |
@@ -566,7 +708,7 @@ stops posting there), and uses what it reported:
   → AI prices; Ollama's are free unless priced there). A team member's usage counts against its budget as real usage,
   not an estimate;
 - the Team tab's card and the actor sheet show each member's model calls, tokens in (and cached), out, cost and model;
-  the Report tab has **What each agent used** and the run's cost next to its tokens;
+  the report in the Story tab has **What each agent used** and the run's cost next to its tokens;
 - each model request is a `model` span under the member's request in Run Trace ([run-trace.md](run-trace.md#who-writes-it)),
   with its tokens, cost, model and time; the request keeps the totals;
 - each tool call the guardrails stopped is a **Guardrail** check on the request (warn: "Stopped Bash: git push origin
@@ -634,8 +776,8 @@ gone, a push to main asked of a person and run or refused by the answer, read-on
 - GitHub MCP tools hold no per-repository scope of their own (the token's is the limit), cannot be narrowed to single tools
   beyond the read / review levels, and a review comment is written when it is called: there is no draft of it for a person to
   read first except the tool's approval switch. The bundled server is not deployed by the compose files.
-- Remote agents' tokens are recorded (timeline, span, `landflow.a2a.tokens`) but don't count toward an agent's daily or
-  monthly AI limits, which count Landflow's own model calls.
+- Remote agents' tokens are recorded (timeline, span, `landflow.a2a.tokens`) but count toward an agent's daily or
+  monthly AI limits only when the agent runs on kagent through the LLM gateway ([llm-gateway.md](llm-gateway.md#agents-outside-landflow)).
 - The landflow-harness mod's trace lives in the memory of the host that made the call. In queue mode its id starts with
   that process (`<instance>.<random>`, base64url), and the main the mod posts to passes a batch it doesn't hold on to
   that process's inbox over Valkey (`202`), so a worker's call gets its real usage; a batch for a worker that has gone is
@@ -647,7 +789,8 @@ gone, a push to main asked of a person and run or refused by the answer, read-on
 - Landflow doesn't serve A2A itself: other agents can't call a Landflow agent over A2A yet (they can call its tools over
   MCP).
 - Push notifications (A2A webhooks) and the gRPC and REST bindings aren't used; long tasks are streamed or polled.
-- An agent on kagent doesn't get cross-session memory, guardrails or usage limits, and its skills are in its system
+- The spend of a kagent agent's calls is imported from the gateway's spend log, and with the gateway's callback on, so is the split of each prompt into parts ([llm-gateway.md](llm-gateway.md#the-gateways-split)).
+- An agent on kagent gets cross-session memory only through the memory key Landflow puts in a conversation's first message ([above](#memory-on-kagent)); it doesn't get guardrails or usage limits, and its skills are in its system
   prompt and `load_skill` rather than kagent skills. Its Claude Code plugins come from GitHub marketplaces only (a
   marketplace on the host or behind a URL has no commit to pin). Landflow
   doesn't watch kagent: drift shows when the status is read, and a redeploy is a click, not automatic.
@@ -662,4 +805,4 @@ gone, a push to main asked of a person and run or refused by the answer, read-on
 - Watching a Tech Lead that calls remote agents: a Run an Agent node's session shows live in the execution view's Agent
   session panel, with each A2A tool entry's `remote.steps` ([agents.md](agents.md#from-workflows)).
 - Sessions on kagent aren't Landflow sessions: their tool calls are traced (`execute_tool`) but don't show in the
-  agent's Sessions tab.
+  agent's Activity → Sessions.

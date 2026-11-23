@@ -3,21 +3,30 @@
  * The Agent architect (docs/agents.md#agent-architect): a chat with a specialist that designs an agent from the plugins
  * this instance has. The chat is on the left; the draft it proposes stays on the right, whole, until the user creates it.
  */
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowUp, BookOpen, Bot, Check, ChevronLeft, Loader2, Plug, RadioTower, Square, TriangleAlert, Workflow, X } from 'lucide-react';
+import { BookOpen, Bot, Check, ChevronLeft, Plug, RadioTower, ShieldCheck, SquarePen, TriangleAlert, Workflow, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, streamEvents } from '@/lib/client/api';
+import { useConversation } from '@/lib/client/conversations';
+import type { ActivityStep } from '@/lib/shared/activity';
+import type { ConversationItem, ConversationItemInput, ConversationPart, ConversationRecord } from '@/lib/shared/conversations';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { cn } from '@/lib/utils';
 import type { AgentConfig, AgentToolConfig } from '@/lib/shared/agents';
+import { followsPractices, guardrailWords, isNodeKnowledge } from '@/lib/shared/agents'; // SB17: one wording for the guardrails and practices
+import type { AgentCaseDraft } from '@/lib/shared/agent-card'; // SB17:
 import { ARCHITECT, type ArchitectMissing, type ArchitectNeed, type ArchitectRequest, type ArchitectTurn } from '@/lib/shared/agent-architect';
 import { randomFace } from '@/lib/shared/faces';
 import type { NodeTypeInfo } from '@/lib/shared/types';
 import { Chip } from '../ui/badge';
 import { Button } from '../ui/button';
-import { NodeIcon } from '../ui/icon';
-import { Input, Textarea } from '../ui/inputs';
+import { ActivityTrace } from '../ui/activity-trace';
+import { AssistantRow, CHAT_ICON_BUTTON, ChatComposer, ChatEmpty, ChatError, ChatMarkdown, ModelChip, ReplyMeta, UserBubble, Working, type ReplyInfo } from '../ui/chat';
+import { ChatList } from '../ui/chat-motion';
+import { ConversationHistory } from '../ui/conversation-history';
+import { NodeIcon, isImageIcon } from '../ui/icon';
+import { Input } from '../ui/inputs';
 import { AgentAvatar } from './avatar';
 import { AGENT_COLORS, AvatarDialog, type AvatarChoice } from './avatar-dialog';
 import { Dialog, Field } from './dialog';
@@ -30,23 +39,44 @@ const STARTERS = [
   'Review new pull requests and leave a first round of comments',
 ];
 
-interface Draft {
+export interface Draft {
   id: string;
   summary: string;
   config: Partial<AgentConfig>;
   needs: ArchitectNeed[];
   dropped: string[];
   missing: ArchitectMissing[];
+  /** SB17: the test cases the brief proposes: edited or removed here, then posted to the eval gate by Create. */
+  cases: AgentCaseDraft[];
 }
 
-interface Message {
+/** What the stream says when a reply fails: the kind of failure, and (after some steps) the checkpoint that continues it. */
+interface FailedReply {
+  message: string;
+  kind?: string;
+  checkpoint?: string;
+  /** The step that failed: "Continue from step N". */
+  step?: number;
+}
+
+export interface Message {
   role: 'user' | 'assistant';
   text: string;
-  tools: Array<{ name: string; label: string; ok: boolean }>;
+  /** What the architect did: the tools it used, in order. */
+  steps: ActivityStep[];
   /** The summary of the draft this reply proposed. */
   proposed?: string;
-  error?: string;
+  /** The model, time, steps, tokens and cost of the finished reply. */
+  info?: ReplyInfo;
+  error?: FailedReply;
+  /** What the architect is doing now (the step that began), for the live line. */
+  stepLabel?: string;
+  /** From a conversation kept earlier: shown under the "Earlier" divider. */
+  earlier?: boolean;
 }
+
+/** The architect's conversation is kept under this scope (a design is about an agent that does not exist yet). */
+const SCOPE = { surface: 'architect', subjectType: 'agent', subjectId: 'new' } as const;
 
 const architectAvatar = { name: ARCHITECT.name, color: ARCHITECT.color, avatar: { kind: 'face', face: ARCHITECT.face } } as const;
 
@@ -60,8 +90,98 @@ function history(messages: Message[]): ArchitectTurn[] {
   return turns;
 }
 
+/** The body of POST /api/assistant/agent: the conversation, the draft so far, and `resume` to continue a failed reply from its checkpoint. */
+export type ArchitectBody = ArchitectRequest & { resume?: { checkpoint: string } };
+export function architectBody(messages: Message[], draft?: Partial<AgentConfig>, resume?: { checkpoint: string }): ArchitectBody {
+  return { messages: history(messages), ...(draft && { draft }), ...(resume && { resume }) };
+}
+
+/** The conversation item a finished reply is kept as: its words, steps, the draft it proposed, a failure, and what it cost. */
+export function replyItem(m: Message, draft?: Draft): ConversationItemInput {
+  const parts: ConversationPart[] = [];
+  if (m.text.trim()) parts.push({ type: 'text', text: m.text });
+  if (m.steps.length) parts.push({ type: 'steps', steps: m.steps.map((s) => ({ id: s.id, label: s.label, kind: s.kind, status: s.status, ...(s.durationMs !== undefined && { durationMs: s.durationMs }) })) });
+  if (m.proposed && draft) parts.push({ type: 'proposal', id: draft.id, summary: m.proposed, ops: [draft], state: 'pending' });
+  if (m.error) parts.push({ type: 'error', message: m.error.message, ...(m.error.kind && { kind: m.error.kind }) });
+  if (!parts.length) parts.push({ type: 'text', text: '' });
+  const i = m.info;
+  return {
+    role: 'assistant',
+    parts,
+    ...(i && { meta: { ...(i.model && { model: i.model }), ...(i.durationMs !== undefined && { durationMs: i.durationMs }), ...(i.steps !== undefined && { steps: i.steps }), ...(i.inputTokens !== undefined && { inputTokens: i.inputTokens }), ...(i.outputTokens !== undefined && { outputTokens: i.outputTokens }), ...(i.costUsd !== undefined && { costUsd: i.costUsd }), ...(i.local && { local: true }) } }),
+  };
+}
+
+/** A kept conversation as chat messages (under "Earlier"), and the last draft it proposed. */
+export function restore(items: ConversationItem[]): { messages: Message[]; draft?: Draft } {
+  let draft: Draft | undefined;
+  const messages = items.map((item): Message => {
+    const text = item.parts.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('\n\n');
+    if (item.role === 'user') return { role: 'user', text, steps: [], earlier: true };
+    const steps = item.parts.flatMap((p) => (p.type === 'steps' ? p.steps : [])).map((s): ActivityStep => ({ id: s.id, label: s.label, kind: (s.kind as ActivityStep['kind']) || 'tool', status: s.status === 'failed' ? 'failed' : 'ok', ...(s.durationMs !== undefined && { durationMs: s.durationMs }) }));
+    const proposal = item.parts.find((p) => p.type === 'proposal');
+    if (proposal?.type === 'proposal') {
+      const kept = proposal.ops[0] as Partial<Draft> | undefined;
+      if (kept && typeof kept === 'object' && kept.config) draft = { id: proposal.id, summary: proposal.summary, config: kept.config, needs: kept.needs ?? [], dropped: kept.dropped ?? [], missing: kept.missing ?? [], cases: kept.cases ?? [] /* SB17: */ };
+    }
+    const failure = item.parts.find((p) => p.type === 'error');
+    const meta = item.meta;
+    return {
+      role: 'assistant',
+      text,
+      steps,
+      earlier: true,
+      ...(proposal?.type === 'proposal' && { proposed: proposal.summary }),
+      // A kept failure cannot be continued (its checkpoint was in memory): Try again is all it offers.
+      ...(failure?.type === 'error' && { error: { message: failure.message, ...(failure.kind && { kind: failure.kind }) } }),
+      ...(meta && { info: { model: meta.model, durationMs: meta.durationMs, steps: meta.steps, inputTokens: meta.inputTokens, outputTokens: meta.outputTokens, costUsd: meta.costUsd, local: meta.local } }),
+    };
+  });
+  return { messages, ...(draft && { draft }) };
+}
+
+/** SB17: whether the "Earlier: … · Continue" line shows: only on a fresh dialog, before anything is said. */
+export const showEarlier = (latest: { id: string; title: string } | undefined, messageCount: number, streaming: boolean) => Boolean(latest) && messageCount === 0 && !streaming;
+
+/** SB17: Continue reopens the kept conversation. */
+export const continueLatest = (latest: { id: string }, open: (id: string) => Promise<unknown>) => open(latest.id);
+
+/** SB17: the line under the fresh dialog that offers the last conversation. */
+export function EarlierLine({ latest, onContinue }: { latest: { id: string; title: string }; onContinue: () => void }) {
+  return (
+    <p className="mt-2 flex min-w-0 items-center gap-1.5 px-1 pb-2 text-[12px] text-t3">
+      <span className="shrink-0">Earlier:</span>
+      <span className="min-w-0 truncate text-t2">{latest.title || 'Untitled design'}</span>
+      <span aria-hidden="true">·</span>
+      <button type="button" onClick={onContinue} className="shrink-0 rounded font-semibold text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac max-md:min-h-11">
+        Continue
+      </button>
+    </p>
+  );
+}
+
+/**
+ * SB17: Create posts each test case to the agent's eval gate after the import. A case that fails does not undo the agent:
+ * what failed comes back as lines for a toast.
+ */
+export async function postCases(agentId: string, cases: AgentCaseDraft[], post: (url: string, json: AgentCaseDraft) => Promise<unknown>): Promise<string[]> {
+  const failed: string[] = [];
+  for (const c of cases) {
+    const input = c.input.trim();
+    if (!input) continue;
+    try {
+      await post(`/api/agents/${agentId}/eval-gate`, { input, ...(c.expected?.trim() && { expected: c.expected.trim() }) });
+    } catch (e) {
+      failed.push(`“${input.slice(0, 40)}${input.length > 40 ? '…' : ''}”: ${(e as Error).message}`);
+    }
+  }
+  return failed;
+}
+
 function ToolTile({ info, size = 32 }: { info?: NodeTypeInfo; size?: number }) {
   const color = nodeColor(info);
+  // An app's own icon (its real mark) brings its tile: shown whole, not inside a tinted one.
+  if (isImageIcon(info?.descriptor.icon)) return <NodeIcon icon={info?.descriptor.icon} size={size} className="shrink-0" />;
   return (
     <span className="grid shrink-0 place-items-center rounded-[10px] border border-hair" style={{ width: size, height: size, background: tint(color, 12) }}>
       <NodeIcon icon={info?.descriptor.icon ?? 'wrench'} size={Math.round(size * 0.45)} style={{ color }} />
@@ -110,7 +230,7 @@ function ToolRow({ tool }: { tool: AgentToolConfig }) {
     subtitle = `A2A agent · ${tool.useWhen || String(tool.parameters.agentUrl ?? '') || 'No URL'}`;
   } else if (tool.type === 'knowledge') {
     icon = <KindTile icon={<BookOpen className="size-3.5" />} />;
-    subtitle = `Knowledge base · “${tool.collection}”`;
+    subtitle = isNodeKnowledge(tool) ? `Knowledge base · ${tool.nodeType}` : `Knowledge base · “${tool.collection}”`;
   } else {
     const agent = agents?.find((a) => a.id === tool.agentId);
     icon = <AgentAvatar agent={agent ?? {}} size={32} />;
@@ -124,11 +244,13 @@ function ToolRow({ tool }: { tool: AgentToolConfig }) {
         <span className="block truncate text-[13px] font-semibold text-t1">{title}</span>
         <span className="block truncate text-[12px] text-t3">{subtitle}</span>
       </span>
+      {/* SB17: */}
+      {tool.requireApproval && <span className="ml-auto shrink-0 rounded-full border border-warnbd bg-warndim px-2 py-0.5 text-[11px] font-semibold text-t1">asks first</span>}
     </li>
   );
 }
 
-function DraftPreview({ draft, seed, fresh, onPick }: { draft: Draft; seed: string; fresh: boolean; onPick: () => void }) {
+function DraftPreview({ draft, seed, fresh, onPick, onCases }: { draft: Draft; seed: string; fresh: boolean; onPick: () => void; onCases: (cases: AgentCaseDraft[]) => void }) {
   const c = draft.config;
   const p = c.persona;
   const [open, setOpen] = useState(false);
@@ -172,7 +294,7 @@ function DraftPreview({ draft, seed, fresh, onPick }: { draft: Draft; seed: stri
           <p className={cn('whitespace-pre-wrap text-[12px] leading-relaxed text-t2', !open && 'line-clamp-4')}>{instructions}</p>
           {instructions.length > 240 && (
             <button type="button" onClick={() => setOpen(!open)} className="mt-0.5 rounded text-[12px] font-semibold text-ac hover:underline focus-visible:outline-2 focus-visible:outline-ac">
-              {open ? 'Show less' : 'Show all'}
+              {open ? 'Show less' : 'Show more'}
             </button>
           )}
         </div>
@@ -189,6 +311,47 @@ function DraftPreview({ draft, seed, fresh, onPick }: { draft: Draft; seed: stri
           <p className="text-[12px] text-t3">No tools in this draft.</p>
         )}
       </div>
+      {/* SB17: the brief's guardrails, practices and test cases */}
+      {(guardrailWords(c.guardrails).length > 0 || followsPractices(c.practices)) && (
+        <div>
+          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Guardrails</h4>
+          <ul className="space-y-1">
+            {followsPractices(c.practices) && (
+              <li className="flex gap-1.5 text-[12px] leading-snug text-t2">
+                <ShieldCheck className="mt-0.5 size-3 shrink-0 text-gn" /> Follows your approved practices
+              </li>
+            )}
+            {guardrailWords(c.guardrails).map((w) => (
+              <li key={w} className="flex gap-1.5 text-[12px] leading-snug text-t2">
+                <ShieldCheck className="mt-0.5 size-3 shrink-0 text-gn" /> {w}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {draft.cases.length > 0 && (
+        <div>
+          <h4 className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Test cases · {draft.cases.length}</h4>
+          <ul className="space-y-1.5" aria-label="Test cases">
+            {draft.cases.map((tc, i) => (
+              <li key={i} className="flex items-start gap-1.5 rounded-xl border border-hair bg-wl p-2">
+                <span className="grid min-w-0 flex-1 gap-1">
+                  <Input aria-label={`Test case ${i + 1}: what a person sends`} value={tc.input} maxLength={4000} onChange={(e) => onCases(draft.cases.map((x, j) => (j === i ? { ...x, input: e.target.value } : x)))} className="h-8 text-[12px]" />
+                  <Input aria-label={`Test case ${i + 1}: what a right answer says`} value={tc.expected ?? ''} placeholder="A right answer says…" maxLength={1000} onChange={(e) => onCases(draft.cases.map((x, j) => (j === i ? { ...x, expected: e.target.value } : x)))} className="h-8 text-[12px]" />
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove test case ${i + 1}`}
+                  onClick={() => onCases(draft.cases.filter((_, j) => j !== i))}
+                  className="grid size-8 shrink-0 place-items-center rounded-lg text-t3 hover:bg-sf2 hover:text-t1 focus-visible:outline-2 focus-visible:outline-ac max-md:size-11"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {draft.needs.length > 0 && (
         <ul className="space-y-1.5" aria-label="Still to do">
           {draft.needs.map((n, i) => (
@@ -222,14 +385,19 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
   const [team, setTeam] = useState('');
   const [picking, setPicking] = useState(false);
   const [creating, setCreating] = useState(false);
+  // A phone shows one pane at a time: the chat, or the draft (it switches to the draft when one arrives).
+  const [pane, setPane] = useState<'chat' | 'draft'>('chat');
+  const box = useRef<HTMLTextAreaElement>(null);
   const abort = useRef<AbortController>(null);
-  const bottom = useRef<HTMLDivElement>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  // The conversation is kept (when the person keeps conversations). SB17: the dialog starts a new one every time; the last
+  // kept one is offered as one line under the input ("Earlier: <title> · Continue").
+  const kept = useConversation(SCOPE);
+  const [latest, setLatest] = useState<{ id: string; title: string }>();
 
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ block: 'end' });
-  }, [messages, streaming]);
   useEffect(() => () => abort.current?.abort(), []);
   useEffect(() => {
     if (!fresh) return;
@@ -237,43 +405,144 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
     return () => clearTimeout(t);
   }, [fresh, draft?.id]);
 
+  /** Show a kept conversation: its messages under "Earlier", and the draft it ended with. */
+  const show = (items: ConversationItem[]) => {
+    const back = restore(items);
+    shown.current = true;
+    setMessages(back.messages);
+    setDraft(back.draft);
+    setPane('chat');
+  };
+  // Opening a kept conversation puts its items in the hook; this shows them once they arrive (a new items array: not the
+  // one there was when it was asked for). Resuming the latest never replaces what the person has already started.
+  const itemsNow = useRef(kept.items);
+  itemsNow.current = kept.items;
+  // The person has sent a message in this chat (a late resume must not mix an earlier conversation into it).
+  const started = useRef(false);
+  const shown = useRef(false);
+  const asked = useRef<{ before: ConversationItem[]; force: boolean }>(null);
+  const ask = (force: boolean) => {
+    asked.current = { before: itemsNow.current, force };
+  };
+  useEffect(() => {
+    const want = asked.current;
+    if (!want || kept.items === want.before) return;
+    asked.current = null;
+    if (want.force || !started.current) show(kept.items);
+  }, [kept.items]); // eslint-disable-line react-hooks/exhaustive-deps
+  // SB17: the newest kept conversation, read only for its title; nothing of it is shown until the person continues it.
+  useEffect(() => {
+    let live = true;
+    const params = new URLSearchParams({ surface: SCOPE.surface, subjectType: SCOPE.subjectType, subjectId: SCOPE.subjectId, limit: '1' });
+    void api<{ conversations: ConversationRecord[] }>(`/api/conversations?${params}`, { background: true })
+      .then(({ conversations }) => {
+        if (live && conversations[0]) setLatest({ id: conversations[0].id, title: conversations[0].title });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
   /** Change the last (streaming) message. */
   const patch = (fn: (m: Message) => Message) => setMessages((list) => list.map((m, i) => (i === list.length - 1 ? fn(m) : m)));
 
-  const send = async (text: string) => {
+  /**
+   * Ask the architect. `base` is the conversation before the new message; `resume` continues the failed reply `base` ends
+   * with from its checkpoint (the same message goes on: its steps stay and the new ones follow).
+   */
+  const send = async (text: string, base = messages, resume?: { checkpoint: string }) => {
     const content = text.trim();
     if (!content || streaming) return;
-    const sent = [...messages, { role: 'user' as const, text: content, tools: [] }];
-    setMessages([...sent, { role: 'assistant', text: '', tools: [] }]);
+    started.current = true;
+    setLatest(undefined); // SB17: what the person starts now is the newest
+    const sent = resume ? base : [...base, { role: 'user' as const, text: content, steps: [] }];
+    // A continued reply is the failed one, its error cleared.
+    const failed = resume ? sent.at(-1) : undefined;
+    const asked = resume ? sent.slice(0, -1) : sent;
+    const reply: Message = failed && failed.role === 'assistant' ? { ...failed, error: undefined, info: undefined } : { role: 'assistant', text: '', steps: [] };
+    const draftBefore = draftRef.current;
+    setMessages([...asked, reply]);
     setInput('');
     setStreaming(true);
     const controller = new AbortController();
     abort.current = controller;
-    const body: ArchitectRequest = { messages: history(sent), ...(draftRef.current && { draft: draftRef.current.config }) };
+    // The reply as it is built, so it can be kept when the stream ends.
+    let built = reply;
+    let proposal: Draft | undefined;
+    const update = (fn: (m: Message) => Message) => {
+      built = fn(built);
+      patch(fn);
+    };
+    if (!resume) void kept.append([{ role: 'user', parts: [{ type: 'text', text: content }] }]).catch(() => {});
     try {
       await streamEvents(
         '/api/assistant/agent',
-        body,
+        architectBody(asked, draftBefore?.config, resume),
         (event, data) => {
           const d = data as Record<string, unknown>;
-          if (event === 'text') patch((m) => ({ ...m, text: m.text + String(d.text ?? '') }));
-          else if (event === 'tool') patch((m) => ({ ...m, tools: [...m.tools, { name: String(d.name), label: String(d.label ?? d.name), ok: d.ok !== false }] }));
+          if (event === 'step.start') update((m) => ({ ...m, stepLabel: String(d.label ?? '') || undefined }));
+          else if (event === 'text') update((m) => ({ ...m, text: m.text + String(d.text ?? '') }));
+          else if (event === 'tool')
+            update((m) => ({
+              ...m,
+              steps: [
+                ...m.steps,
+                {
+                  id: String(d.id ?? `${d.name}-${m.steps.length}`),
+                  label: String(d.label ?? d.name),
+                  kind: 'tool',
+                  status: d.ok === false ? 'failed' : 'ok',
+                  ...(typeof d.durationMs === 'number' && { durationMs: d.durationMs }),
+                  ...(typeof d.detail === 'string' && d.detail && { detail: d.detail }),
+                },
+              ],
+            }));
           else if (event === 'draft') {
             const next = d as unknown as Draft;
-            setDraft({ id: next.id, summary: next.summary, config: next.config ?? {}, needs: next.needs ?? [], dropped: next.dropped ?? [], missing: next.missing ?? [] });
+            proposal = { id: next.id, summary: next.summary, config: next.config ?? {}, needs: next.needs ?? [], dropped: next.dropped ?? [], missing: next.missing ?? [], cases: next.cases ?? [] /* SB17: */ };
+            setDraft(proposal);
             setFresh(true);
-            patch((m) => ({ ...m, proposed: next.summary }));
-          } else if (event === 'error') patch((m) => ({ ...m, error: String(d.message ?? 'Something went wrong') }));
+            setPane('draft');
+            update((m) => ({ ...m, proposed: next.summary }));
+          } else if (event === 'done') {
+            const usage = (d.usage ?? {}) as { inputTokens?: number; outputTokens?: number };
+            update((m) => ({
+              ...m,
+              info: {
+                model: typeof d.model === 'string' ? d.model : undefined,
+                durationMs: typeof d.durationMs === 'number' ? d.durationMs : undefined,
+                // The tools it used, as the activity line counts them (the model's own step count is a different number).
+                steps: m.steps.length || undefined,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                costUsd: typeof d.costUsd === 'number' ? d.costUsd : undefined,
+                local: d.local === true,
+              },
+            }));
+          } else if (event === 'error')
+            update((m) => ({
+              ...m,
+              error: {
+                message: String(d.message ?? 'Something went wrong'),
+                ...(typeof d.kind === 'string' && { kind: d.kind }),
+                ...(typeof d.checkpoint === 'string' && { checkpoint: d.checkpoint }),
+                ...(typeof d.step === 'number' && { step: d.step }),
+              },
+            }));
         },
         controller.signal,
       );
     } catch (e) {
-      if (!controller.signal.aborted) patch((m) => ({ ...m, error: (e as Error).message }));
+      if (!controller.signal.aborted) update((m) => ({ ...m, error: { message: (e as Error).message } }));
     } finally {
       setStreaming(false);
       abort.current = null;
+      if (built.text || built.steps.length || built.error) void kept.append([replyItem(built, proposal)]).catch(() => {});
     }
   };
+
+  const lastInfo = messages.findLast((m) => m.info?.model)?.info;
 
   const choice: AvatarChoice | undefined = draft && {
     avatar: draft.config.avatar ?? { kind: 'face', face: randomFace(seed) },
@@ -289,6 +558,9 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
         method: 'POST',
         json: { config: { ...draft.config, avatar: draft.config.avatar ?? { kind: 'face', face: randomFace(seed) }, ...(team.trim() && { team: team.trim() }) } },
       });
+      // SB17: the test cases go to the eval gate; one that fails leaves a line, the agent stays created.
+      const failed = await postCases(agent.id, draft.cases, (url, json) => api(url, { method: 'POST', json }));
+      if (failed.length) toast.error(`Created “${agent.name}”, but ${failed.length === 1 ? 'a test case' : `${failed.length} test cases`} did not save: ${failed.join('; ')}. Add ${failed.length === 1 ? 'it' : 'them'} on the Evaluations tab.`);
       toast.success(draft.needs.length ? `Created “${agent.name}”. Finish ${draft.needs.length === 1 ? 'its open item' : `its ${draft.needs.length} open items`} on the Abilities tab.` : `Created “${agent.name}”`);
       router.push(`/agents/${agent.id}`);
       onClose();
@@ -331,99 +603,155 @@ export function AgentArchitect({ teams, onBack, onClose }: { teams: string[]; on
         }
       >
         <div className="flex h-[min(620px,70vh)] min-h-0 flex-col md:flex-row">
-          <section aria-label="Chat with the Agent architect" className="flex min-h-0 flex-1 flex-col border-b border-hair md:w-[400px] md:flex-none md:border-b-0 md:border-r">
-            <div aria-live="polite" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-              {messages.length === 0 && (
-                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                  <AgentAvatar agent={architectAvatar} size={64} />
-                  <p className="max-w-[300px] text-[13px] leading-relaxed text-t2">
-                    Tell me what the agent should do, who it helps and where it works. I’ll pick the persona and the tools from your plugins.
-                  </p>
-                  <div className="flex w-full flex-col gap-1.5">
-                    {STARTERS.map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => void send(s)}
-                        className="rounded-xl border border-hair bg-wl px-3 py-2 text-left text-[12px] leading-snug text-t2 transition-colors hover:border-ac hover:text-t1 focus-visible:outline-2 focus-visible:outline-ac"
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {messages.map((m, i) => {
-                const last = i === messages.length - 1;
-                if (m.role === 'user')
-                  return (
-                    <div key={i} className="flex justify-end">
-                      <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-acdim px-3 py-2 text-[13px] leading-relaxed text-t1">{m.text}</div>
-                    </div>
-                  );
-                return (
-                  <div key={i} className="flex gap-2">
-                    <AgentAvatar agent={architectAvatar} size={28} />
-                    <div className="min-w-0 flex-1 space-y-1.5">
-                      {m.tools.map((t, j) => (
-                        <div key={j} className="flex items-center gap-1.5 text-[11px] text-t3">
-                          {t.ok ? <Check className="size-3 text-gn" /> : <X className="size-3 text-rd" />}
-                          <span className="truncate">{t.label}</span>
-                        </div>
-                      ))}
-                      {m.text && <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-t1">{m.text}</div>}
-                      {m.proposed && <div className="text-[11px] text-t3">Draft updated: {m.proposed}</div>}
-                      {streaming && last && !m.error && (
-                        <div className="flex items-center gap-1.5 text-[12px] text-t3">
-                          <Loader2 className="size-3 animate-spin" /> Thinking…
-                        </div>
-                      )}
-                      {m.error && (
-                        <div role="alert" className="flex gap-1.5 text-[12px] text-rd">
-                          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" /> {m.error}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-              <div ref={bottom} />
-            </div>
-            <form
-              className="flex shrink-0 items-end gap-2 border-t border-hair p-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void send(input);
-              }}
-            >
-              <Textarea
-                aria-label="Message the Agent architect"
-                value={input}
-                rows={2}
-                placeholder={draft ? 'Ask for changes…' : 'Describe the agent…'}
-                className="min-h-0 flex-1 resize-none"
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                    e.preventDefault();
-                    void send(input);
-                  }
+          <div role="group" aria-label="Pane" className="flex shrink-0 gap-1 border-b border-hair p-2 md:hidden">
+            {(['chat', 'draft'] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                aria-pressed={pane === p}
+                onClick={() => setPane(p)}
+                className={cn('h-11 flex-1 rounded-full text-[13px] font-semibold transition-colors', pane === p ? 'bg-sf2 text-t1 shadow-sm' : 'text-t3')}
+              >
+                {p === 'chat' ? 'Chat' : draft ? 'Draft' : 'Draft (none yet)'}
+              </button>
+            ))}
+          </div>
+          <section aria-label="Chat with the Agent architect" className={cn('flex min-h-0 flex-1 flex-col border-b border-hair md:w-[400px] md:flex-none md:border-b-0 md:border-r', pane !== 'chat' && 'max-md:hidden')}>
+            <div className="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b border-hair px-2">
+              <ConversationHistory
+                {...SCOPE}
+                ownSurfaceOnly
+                subjectLabel="Agent designs"
+                onOpen={(id) => {
+                  if (streaming) return;
+                  ask(true);
+                  void kept.open(id).catch(() => {
+                    asked.current = null;
+                  });
+                }}
+                onNew={() => {
+                  if (streaming) return;
+                  kept.startNew();
+                  setMessages([]);
+                  setDraft(undefined);
                 }}
               />
-              {streaming ? (
-                <Button type="button" size="icon-sm" aria-label="Stop" onClick={() => abort.current?.abort()}>
-                  <Square className="size-3.5" />
-                </Button>
+              <button
+                type="button"
+                aria-label="New design"
+                title="New design"
+                disabled={streaming}
+                onClick={() => {
+                  kept.startNew();
+                  setMessages([]);
+                  setDraft(undefined);
+                }}
+                className={cn(CHAT_ICON_BUTTON, 'disabled:opacity-40')}
+              >
+                <SquarePen className="size-3.5" />
+              </button>
+            </div>
+            <div aria-live="polite" className="flex min-h-0 flex-1 flex-col p-4">
+              {messages.length === 0 ? (
+                <ChatEmpty
+                  className="flex h-full flex-col justify-center"
+                  mark={<AgentAvatar agent={architectAvatar} size={48} />}
+                  title="The Agent architect"
+                  help="Tell me what the agent should do, who it helps and where it works. I’ll pick the persona and the tools from your plugins."
+                  starters={STARTERS}
+                  onStarter={(text) => {
+                    setInput(text);
+                    box.current?.focus();
+                  }}
+                />
               ) : (
-                <Button type="submit" variant="primary" size="icon-sm" aria-label="Send" disabled={!input.trim()}>
-                  <ArrowUp className="size-3.5" />
-                </Button>
+                <ChatList>
+                  {messages.map((m, i) => {
+                    const last = i === messages.length - 1;
+                    const firstEarlier = m.earlier && !messages[i - 1]?.earlier;
+                    const divider = firstEarlier && (
+                      <div role="separator" className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">
+                        <span className="h-px flex-1 bg-hair" />
+                        Earlier
+                        <span className="h-px flex-1 bg-hair" />
+                      </div>
+                    );
+                    if (m.role === 'user')
+                      return (
+                        <Fragment key={i}>
+                          {divider}
+                          <UserBubble>{m.text}</UserBubble>
+                        </Fragment>
+                      );
+                    const working = streaming && last && !m.error;
+                    const resumeAt = m.error?.checkpoint && m.error.step && m.error.step > 1 ? m.error.step : undefined;
+                    const asked = messages[i - 1];
+                    return (
+                      <Fragment key={i}>
+                        {divider}
+                        <AssistantRow mark={<AgentAvatar agent={architectAvatar} size={20} />}>
+                          {working ? (m.steps.length ? <ActivityTrace steps={m.steps} live /> : <Working label={m.stepLabel} />) : <ActivityTrace steps={m.steps} live={false} durationMs={m.info?.durationMs} />}
+                          {m.text && <ChatMarkdown text={m.text} />}
+                          {m.proposed && (
+                            <button type="button" onClick={() => setPane('draft')} className="text-left text-[11px] text-t3 max-md:min-h-11 max-md:text-ac">
+                              Draft updated: {m.proposed}
+                            </button>
+                          )}
+                          {m.error && (
+                            <ChatError
+                              message={m.error.message}
+                              onRetry={
+                                streaming || !last
+                                  ? undefined
+                                  : () => {
+                                      if (asked?.role === 'user') void send(asked.text, messages.slice(0, i - 1));
+                                    }
+                              }
+                              actions={
+                                resumeAt && !streaming && last && asked?.role === 'user'
+                                  ? [{ label: `Continue from step ${resumeAt}`, primary: true, onClick: () => void send(asked.text, messages.slice(0, i + 1), { checkpoint: m.error!.checkpoint! }) }]
+                                  : undefined
+                              }
+                            />
+                          )}
+                          {!working && !m.error && (m.info || m.text) && <ReplyMeta info={m.info} copy={m.text || undefined} />}
+                        </AssistantRow>
+                      </Fragment>
+                    );
+                  })}
+                </ChatList>
               )}
-            </form>
+            </div>
+            <div className="shrink-0 border-t border-hair p-2.5">
+              <ChatComposer
+                inputRef={box}
+                value={input}
+                onChange={setInput}
+                onSend={(text) => void send(text)}
+                onStop={() => abort.current?.abort()}
+                busy={streaming}
+                placeholder={draft ? 'Ask for changes' : 'Describe the agent'}
+                label="Message the Agent architect"
+                chip={lastInfo?.model ? <ModelChip model={lastInfo.model} local={lastInfo.local} /> : undefined}
+              />
+              {/* SB17: */}
+              {showEarlier(latest, messages.length, streaming) && (
+                <EarlierLine
+                  latest={latest!}
+                  onContinue={() => {
+                    ask(true);
+                    void continueLatest(latest!, kept.open).catch(() => {
+                      asked.current = null;
+                    });
+                    setLatest(undefined);
+                  }}
+                />
+              )}
+            </div>
           </section>
-          <section aria-label="Draft agent" className="min-h-[260px] min-w-0 flex-1 overflow-y-auto bg-wl p-4">
+          <section aria-label="Draft agent" className={cn('min-h-[260px] min-w-0 flex-1 overflow-y-auto bg-wl p-4', pane !== 'draft' && 'max-md:hidden')}>
             {draft ? (
-              <DraftPreview draft={draft} seed={seed} fresh={fresh} onPick={() => setPicking(true)} />
+              <DraftPreview draft={draft} seed={seed} fresh={fresh} onPick={() => setPicking(true)} onCases={(cases) => setDraft((d) => d && { ...d, cases })} />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
                 <span className="grid size-12 place-items-center rounded-2xl border border-hair bg-sf text-t3">

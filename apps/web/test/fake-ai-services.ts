@@ -20,6 +20,10 @@ export interface FakeReply {
   toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
   /** `cacheRead` / `cacheWrite`: OpenAI reports cached input inside `input`; Anthropic reports both next to `input`. */
   usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
+  /** Ollama /api/chat without streaming: wait this long before answering (a slow model). */
+  delayMs?: number;
+  /** Answer with this status and body instead (a model server's error, e.g. Ollama's 500 for a tool call it can't parse). */
+  error?: { status: number; body: string };
 }
 
 type Provider = 'openai' | 'ollama' | 'anthropic';
@@ -70,6 +74,11 @@ export async function startFakeModels(options: { reply?: (provider: Provider, bo
     requests.push({ method: req.method ?? 'GET', path, headers: req.headers, body });
     const provider: Provider = path === '/api/chat' ? 'ollama' : path === '/v1/messages' ? 'anthropic' : 'openai';
     const reply = options.reply?.(provider, body) ?? defaultReply(provider, body);
+    if (reply.error) {
+      res.writeHead(reply.error.status, { 'content-type': 'application/json' });
+      res.end(reply.error.body);
+      return;
+    }
     const text = reply.text ?? '';
     const usage = reply.usage ?? { input: 12, output: 8 };
 
@@ -107,6 +116,7 @@ export async function startFakeModels(options: { reply?: (provider: Provider, bo
     if (path === '/api/chat') {
       const toolCalls = (reply.toolCalls ?? []).map((call) => ({ function: { name: call.name, arguments: call.arguments } }));
       if (!body.stream) {
+        if (reply.delayMs) await sleep(reply.delayMs);
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ model: body.model, message: { role: 'assistant', content: text, ...(toolCalls.length && { tool_calls: toolCalls }) }, done: true, done_reason: 'stop', prompt_eval_count: usage.input, eval_count: usage.output }));
         return;

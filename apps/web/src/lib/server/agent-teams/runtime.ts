@@ -17,12 +17,14 @@ import { agentModel } from '../agents/models';
 import type { Agent, AgentModel } from '../../shared/agents';
 import { estimateCost, findPrice, priceOverrides } from '../ai-usage/prices';
 import { newSession, runAgent, type TeamRole } from '../agents/runtime';
+import { ProviderBlockedError } from '../a2a/blocked';
 import { a2aAgentTool, type BuiltTool, type ToolContext, type ToolOutcome } from '../agents/tools';
+import { runContextProvider, withRunContext } from '../project-context/seam';
 import { liveJournal } from '../journal/writer';
 import { nanoid } from 'nanoid';
 import { contentOf } from '../journal/content';
 import { agentAtEndpoint, openNotebookCall } from '../notebook/binding';
-import { notebookBlock, projectOf, type NotebookBinding } from '../notebook/service';
+import { notebookBlockFor, projectOf, type NotebookBinding } from '../notebook/service';
 import { notebookTools } from '../notebook/tools';
 import { store } from '../store';
 import { holdMember } from './pause';
@@ -96,6 +98,8 @@ export interface TeamRunRequest {
   onEvent?: (event: AgentStreamEvent) => void;
   /** The stream of a member that is a Landflow agent (its own loop: whom it asks, its own tools), by title. */
   onMemberEvent?: (title: string, event: AgentStreamEvent) => void;
+  /** AG21: the version each agent runs at, by agent id: a pinned number (production) or `draft` (the editor's test). An agent not named runs its published version. */
+  agentVersions?: Record<string, number | 'draft'>;
   /** Whether the run can wait for a person (a flow's): a member's question for a person pauses it instead of ending it. */
   canWait?: boolean;
   /**
@@ -148,6 +152,8 @@ export interface TeamState {
   tasks: Record<string, string>;
   warned: string[];
   overBudget: string[];
+  /** Remote members a provider limit blocked in this run, by member id: the kind. They are not asked again. Absent in runs saved before it was kept. */
+  blocked?: Record<string, string>;
   /** When a member last delivered work, and when a reviewer was last asked: a counter of finished asks. */
   delivered: Record<string, number>;
   reviewed: Record<string, number>;
@@ -175,6 +181,7 @@ const emptyState = (): TeamState => ({
   tasks: {},
   warned: [],
   overBudget: [],
+  blocked: {},
   delivered: {},
   reviewed: {},
   verdicts: {},
@@ -274,6 +281,12 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const leadAgent = agentStore.get(root.agentId);
   if (!leadAgent) throw new Error(`${root.title}'s agent no longer exists`);
 
+  // The project and goal this team's work serves: its line leads every request, and a remote member's first request carries the compact block.
+  const teamCtx = runContextProvider()?.build(
+    { caller: 'team', teamId: request.team.id, ...(request.execution && { workflowId: request.execution.workflowId, executionId: request.execution.executionId, nodeName: request.execution.nodeName }) },
+    'compact',
+  );
+
   const journal = request.execution ? liveJournal(request.execution.executionId) : undefined;
   const nodeSpan = () => (request.execution ? journal?.spanOfNode(request.execution.nodeId) : undefined);
   const check = (name: string, status: 'pass' | 'warn' | 'fail', message: string, subject: string) =>
@@ -329,6 +342,8 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
       type: 'span.updated',
       spanId: nodeSpan() ?? 'run',
       attrs: {
+        ...(teamCtx?.projectId && { project: { id: teamCtx.projectId, name: teamCtx.projectName ?? teamCtx.projectId } }),
+        ...(teamCtx?.goalId && { goal: { id: teamCtx.goalId, title: teamCtx.goalTitle ?? teamCtx.goalId } }),
         team: {
           id: request.team.id,
           name: request.team.name,
@@ -420,14 +435,19 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     return usage.costUsd !== undefined ? { ...usage, costUsd: Math.round(usage.costUsd * 1e6) / 1e6 } : usage;
   };
 
-  /** The goal and the manager's own task, in front of every request. */
-  const withAncestry = (manager: TeamMember, message: string) => {
-    const notebook = notebookBlock(notebookFor(manager));
-    return [config.goal ? `Team goal: ${config.goal}` : '', state.tasks[manager.id] ? `${manager.title}'s current task: ${cut(state.tasks[manager.id], TASK_CHARS)}` : '', ...(notebook ? [notebook] : []), '', message]
+  /**
+   * The goal and the manager's own task, in front of every request, and what What it saw records of the notebook block in it
+   * (C11): the block's text and its source. The notebook is the team's, not a person's memory, so no `memoryFor` goes with it.
+   */
+  const ancestry = (manager: TeamMember, message: string) => {
+    const { text: notebook, saw } = notebookBlockFor(notebookFor(manager));
+    const text = [teamCtx?.line ?? '', config.goal ? `Team goal: ${config.goal}` : '', state.tasks[manager.id] ? `${manager.title}'s current task: ${cut(state.tasks[manager.id], TASK_CHARS)}` : '', ...(notebook ? [notebook] : []), '', message]
       .filter((line, i) => line || i > 0)
       .join('\n')
       .trim();
+    return { text, ...(saw && { sawMemory: [saw], sawMemoryText: notebook }) };
   };
+  const withAncestry = (manager: TeamMember, message: string) => ancestry(manager, message).text;
 
   const byId = new Map(config.members.map((m) => [m.id, m]));
   /** A member's managers, nearest first. */
@@ -592,6 +612,9 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         output: `${report.title} is over its budget of ${report.budgetTokens?.toLocaleString()} tokens for this run and can't take more work. Work with what it delivered, or say what is missing.`,
       };
     }
+    if (state.blocked?.[report.id]) {
+      return { output: `${report.title} is blocked by a provider limit for this run; don't ask it again. Work with what it delivered, or say what is missing.` };
+    }
     state.asked[report.id] = (state.asked[report.id] ?? 0) + 1;
     const started = Date.now();
     try {
@@ -694,7 +717,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         session = newSession(agent, {
           source: 'agent',
           userId: `team:${request.team.id}`,
-          version: agent.published?.version ?? 'draft',
+          version: request.agentVersions?.[agent.id] ?? agent.published?.version ?? 'draft', // AG21: version
           title: cut(text ?? report.title, 80),
           parentSessionId: ctx.session.id,
           parentAgentId: ctx.agent.id,
@@ -710,12 +733,14 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         ...(held && { pause: held }),
       };
       running.add(report.id);
+      const framed = text !== undefined ? ancestry(manager, text) : undefined;
       const result = await runAgent({
         agent,
         session,
         // The team's model for this member, in place of its agent's.
         ...(report.model && { flow: { model: await agentModel(report.model) } }),
-        ...(text !== undefined && { message: manages ? `${withAncestry(manager, text)}\n\n${REPORT_RULE}` : withAncestry(manager, text) }),
+        ...(framed && { message: manages ? `${framed.text}\n\n${REPORT_RULE}` : framed.text }),
+        ...(framed?.sawMemory && { sawMemory: framed.sawMemory, sawMemoryText: framed.sawMemoryText }),
         depth: ctx.depth + 1,
         maxDepth: ctx.maxDepth,
         approvals,
@@ -823,6 +848,22 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           ctx.progress!({ ...remote, agent: report.title });
         }),
     });
+    /**
+     * C05: a provider limit is Blocked, not the member's failed work. A `blocked` check and the member's call span say so
+     * (the Run Trace badge), the member is not asked again in this run, and the lead is told the same.
+     */
+    const whenBlocked = async <T>(c: ToolContext, work: () => Promise<T>): Promise<T> => {
+      try {
+        return await work();
+      } catch (error) {
+        if (!(error instanceof ProviderBlockedError)) throw error;
+        (state.blocked ??= {})[report.id] = error.kind;
+        check('blocked', 'warn', `${report.title}: ${error.label}`, report.title);
+        if (c.callSpan) journal?.record({ type: 'span.updated', spanId: c.callSpan, attrs: { blocked: { kind: error.kind, message: error.providerMessage, label: error.label } } });
+        const why = 'the member was blocked by a provider limit, not a failure of its work';
+        throw new ProviderBlockedError(report.title, error.kind, error.providerMessage && error.providerMessage !== error.label ? `${error.providerMessage} (${why})` : why, error.label);
+      }
+    };
     /** The member's answer as the team names it (by title), its usage counted (or estimated). */
     const account = (outcome: ToolOutcome, message: string): ToolOutcome => {
       if (outcome.remote?.usage) spend(report, outcome.remote.usage);
@@ -841,7 +882,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
      */
     const redirectable = async (ctx: ToolContext, input: Record<string, unknown>, first: string, open?: { used(names: string[]): void }): Promise<ToolOutcome> => {
       if ('error' in built) throw new Error(built.error);
-      const send = (message: string, c: ToolContext) => built.invoke({ ...input, message }, c);
+      const send = (message: string, c: ToolContext) => whenBlocked(c, () => built.invoke({ ...input, message }, c));
       if (!request.execution) return account(await send(first, renamed(ctx, open)), first);
       const attempt = { taskId: undefined as string | undefined, contextId: undefined as string | undefined, stopped: false, abort: new AbortController() };
       const held = holdMember(request.execution.executionId, report.title, 'remote', {
@@ -898,8 +939,11 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
           // two runs ask it at once.
           const open = openNotebookFor(report, ctx);
           try {
-            const message = known?.question ? text : [withAncestry(manager, text), open && NOTEBOOK_KEY(open.key)].filter(Boolean).join('\n\n');
-            return await redirectable(ctx, input, message, open);
+            const first = !known?.contextId && !known?.taskId;
+            const projectOff = (report.parameters as { options?: { projectContext?: string } }).options?.projectContext === 'off';
+            const message = known?.question ? text : [first && !projectOff && teamCtx?.compact, withAncestry(manager, text), open && NOTEBOOK_KEY(open.key)].filter(Boolean).join('\n\n');
+            // The team's context is the run's for this call, so the remote request carries the project and goal tags.
+            return await (teamCtx ? withRunContext(projectOff ? { ...teamCtx, mode: 'off' } : teamCtx, () => redirectable(ctx, input, message, open)) : redirectable(ctx, input, message, open));
           } finally {
             open?.close();
           }
@@ -909,7 +953,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
         if ('error' in built || !built.resume) throw new Error(`${report.title} can't be reached to take the answer`);
         const open = openNotebookFor(report, ctx);
         try {
-          const outcome = account(await built.resume(saved, approved, renamed(ctx, open), answer), answer ?? '');
+          const outcome = account(await whenBlocked(ctx, () => built.resume!(saved, approved, renamed(ctx, open), answer)), answer ?? '');
           return outcome.pause ? outcome : settle(manager, report, answer ?? '', outcome, mode);
         } finally {
           open?.close();
@@ -988,7 +1032,7 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
     session = newSession(leadAgent, {
       source: 'workflow',
       userId,
-      version: leadAgent.published?.version ?? 'draft',
+      version: request.agentVersions?.[leadAgent.id] ?? leadAgent.published?.version ?? 'draft', // AG21: version
     });
     if (request.memory) session.messages = await request.memory.load(request.memoryKey || 'default');
     if (request.execution) session.execution = request.execution;
@@ -997,11 +1041,15 @@ export async function runTeam(request: TeamRunRequest): Promise<TeamRunResult> {
   const heldLead = request.execution && holdMember(request.execution.executionId, root.title, 'agent', { under: nodeSpan(), actor: { id: `agent:${leadAgent.id}`, name: root.title, type: 'agent' } });
   const role: TeamRole = { ...roleFor(root), tools: await toolsFor(root), ...(heldLead && { pause: heldLead }) };
   const leadStarted = Date.now();
+  const leadNotebook = request.resume ? undefined : notebookBlockFor(notebookFor(root));
   const result = await runAgent({
     agent: leadAgent,
     session,
+    // The lead's session is a workflow's, so say it is the team's run: the team's project and goal, and the run line.
+    context: { caller: 'team', teamId: request.team.id, agentId: leadAgent.id, ...(request.execution && { workflowId: request.execution.workflowId, executionId: request.execution.executionId, nodeName: request.execution.nodeName }) },
     ...(request.toolImages && { toolImages: request.toolImages }),
-    ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', notebookBlock(notebookFor(root)), request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
+    ...(!request.resume && { message: [config.goal ? `Team goal: ${config.goal}` : '', leadNotebook?.text ?? '', request.message, reportsOf(config, root.id).length ? REPORT_RULE : ''].filter(Boolean).join('\n\n') }),
+    ...(leadNotebook?.saw && { sawMemory: [leadNotebook.saw], sawMemoryText: leadNotebook.text }),
     approvals,
     signal: request.signal,
     // A model connected to the node wins; else the team's model for the lead, else its agent's.

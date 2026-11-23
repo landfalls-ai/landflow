@@ -1,0 +1,31 @@
+# LiteLLM as the LLM gateway in the cluster (docs/llm-gateway.md): http://llm-gateway:4000 for kagent's agents and anything
+# else in landflow-dev. Apply it next to the orbstack overlay, which also provides the `postgres` service
+# (components/postgres) that this database lives in:
+#   kubectl --context orbstack apply -k deploy/k8s/examples/llm-gateway
+# The UI: kubectl --context orbstack -n landflow-dev port-forward svc/llm-gateway 54100:4000, then http://127.0.0.1:54100/ui.
+# Development credentials only; replace the generated Secret for anything real. Never a new namespace.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: landflow-dev
+resources:
+  - litellm.yaml
+configMapGenerator:
+  - name: llm-gateway-config
+    files:
+      - config.yaml
+      # A copy of deploy/llm-gateway/custom_callbacks.py (kustomize reads only below this folder; apps/web/test/gateway-parts.test.ts
+      # keeps the two equal).
+      - custom_callbacks.py
+secretGenerator:
+  - name: llm-gateway-keys
+    literals:
+      - LITELLM_MASTER_KEY=sk-landflow-dev-master-only
+      - LITELLM_SALT_KEY=sk-landflow-dev-salt-only
+      - UI_USERNAME=admin
+      - UI_PASSWORD=landflow-dev-only
+      - DATABASE_URL=postgresql://landflow:landflow-dev-only@postgres:5432/litellm
+      - POSTGRES_PASSWORD=landflow-dev-only
+      # To turn the gateway's split on, add LANDFLOW_PARTS_SECRET=landflow-dev-parts-only here and set the host's
+      # LANDFLOW_LLM_GATEWAY_PARTS_SECRET to the same value.
+generatorOptions:
+  disableNameSuffixHash: false

@@ -15,19 +15,29 @@
  * model's cache prices (./prices.ts).
  *
  * A call is refused once a cap is reached, and a call that goes over one stops the run with a
- * UsageCapError. Rows are kept for AI_USAGE_RETENTION_DAYS (default 400).
+ * UsageCapError. Rows are kept for LANDFLOW_AI_USAGE_RETENTION_DAYS (default 400).
  */
+import { trace } from '@opentelemetry/api';
 import { nanoid } from 'nanoid';
 import type { WorkflowSettings } from '@landflow/engine';
 import type { AgentSettings } from '../../shared/agents';
 import { EMPTY_USAGE, type AiCaps, type AiModelUsage, type AiUsageReport, type AiUsageTotals, type ExecutionAiUsage, type UsageCapSet } from '../../shared/ai-usage';
+import { envWithAliases } from '../config';
 import { database, type Database, type SqlValue } from '../db';
 import { logger } from '../telemetry/logger';
 import { recordUsage } from '../usage/ledger';
 import { instanceTimezone } from '../settings';
+import { singleton } from '../singleton';
+import { scopeProjectId } from '../llm-gateway/call';
+import { homeProjectId } from '../projects/store';
+import { currentRunContext } from '../project-context/seam';
+import { budgetEntry, hardStopLimit, stopReached, type BudgetEntry } from '../budgets/limit';
 import { aiCaps, capSetActive } from './caps';
+import { activeNode } from './node-context'; // SP01:
+import { currentCallNote, notifyRecorded, takeCallDraft } from './call-context'; // SP01:
 import { getUser } from '../auth/users';
 import { noteUsage } from './notify';
+import { pruneParts } from './parts'; // SP03:
 import { estimateCost, findPrice, priceOverrides } from './prices';
 import { currentUsageScope, runInUsageScope, UsageScope, type MeteredCall, type ModelCall, type UsageLimit, type UsageMeter } from './scope';
 
@@ -71,21 +81,29 @@ const totalsOf = (row: SumRow | undefined): AiUsageTotals => ({
 const SUMS =
   'COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output, COALESCE(SUM(cache_read_tokens), 0) AS cache_read, COALESCE(SUM(cache_write_tokens), 0) AS cache_write, COALESCE(SUM(cost), 0) AS cost, COUNT(*) AS calls';
 
+/** Days per-call AI usage rows are kept: LANDFLOW_AI_USAGE_RETENTION_DAYS (the old AI_USAGE_RETENTION_DAYS still works), default 400. */
+export const aiUsageRetentionDays = (): number => Number(envWithAliases('LANDFLOW_AI_USAGE_RETENTION_DAYS')) || 400;
+
 /** Prices calls and writes them to `ai_usage`. One per process; tests can make their own over another database. */
 export class AiUsageMeter implements UsageMeter {
   private prices?: { at: number; overrides: ReturnType<typeof priceOverrides> };
   private capsCache?: { at: number; caps: AiCaps };
+  // PC14: each project's hard-stop budget, cached like the caps (undefined entry: no budget that stops).
+  private budgetCache = new Map<string, { at: number; month: string; entry?: BudgetEntry }>();
   private pruned = 0;
 
   constructor(
     private readonly db: () => Database = database,
     private readonly timezone: () => string = instanceTimezone,
-    private readonly retentionDays = Number(process.env.AI_USAGE_RETENTION_DAYS) || 400,
+    private readonly retentionDays = aiUsageRetentionDays(),
   ) {}
 
-  cost(call: { provider: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }): number {
+  /** The price table's price when the model is priced; else what the configured gateway reported; else 0. */
+  cost(call: { provider: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; gatewayCost?: number; gatewayCostTrusted?: boolean }): number {
     if (!this.prices || Date.now() - this.prices.at > PRICE_CACHE_MS) this.prices = { at: Date.now(), overrides: priceOverrides(this.db()) };
-    return estimateCost(findPrice(call.provider, call.model, this.prices.overrides), call.inputTokens, call.outputTokens, call.cacheReadTokens, call.cacheWriteTokens);
+    const price = findPrice(call.provider, call.model, this.prices.overrides);
+    if (!price && call.gatewayCostTrusted && call.gatewayCost !== undefined) return call.gatewayCost;
+    return estimateCost(price, call.inputTokens, call.outputTokens, call.cacheReadTokens, call.cacheWriteTokens);
   }
 
   /** The price of a call for display (Run Trace): the same pricing as `cost`, and whether the model has a price at all (an unknown one is $0). */
@@ -111,11 +129,26 @@ export class AiUsageMeter implements UsageMeter {
     this.capsCache = undefined;
   }
 
-  /** The caps of Settings → AI usage caps that apply to `call`: its credential's, and its user's (or everyone's default). */
+  /** Forget the cached project budgets (after one is saved, raised, resumed or removed). */
+  invalidateBudgets() {
+    this.budgetCache.clear();
+  }
+
+  /** The project's hard-stop budget (cached for a few seconds); undefined when it has none that stops. */
+  private projectBudget(projectId: string): BudgetEntry | undefined {
+    const month = this.today().slice(0, 7);
+    const cached = this.budgetCache.get(projectId);
+    if (cached && cached.month === month && Date.now() - cached.at <= PRICE_CACHE_MS) return cached.entry;
+    const entry = budgetEntry(this.db(), projectId, month);
+    this.budgetCache.set(projectId, { at: Date.now(), month, entry });
+    return entry;
+  }
+
+  /** The caps of Settings → AI caps that apply to `call`: its credential's, and its user's (or everyone's default). */
   callLimits(call: ModelCall, scope: UsageScope): UsageLimit[] {
     const caps = this.caps();
     const limits: UsageLimit[] = [];
-    const where = 'Settings → AI prices → AI usage caps';
+    const where = 'Settings → AI caps';
     const credentialSet = call.credentialId ? caps.credentials[call.credentialId] : undefined;
     if (call.credentialId && capSetActive(credentialSet)) {
       const id = call.credentialId;
@@ -127,6 +160,13 @@ export class AiUsageMeter implements UsageMeter {
       const set = capSetActive(own) ? own : caps.allUsers;
       if (capSetActive(set)) limits.push(...setLimits(set, own === set ? `user “${set.name || userName(userId)}”` : `user “${own?.name || userName(userId)}” (the cap for every user)`, where, (period) => this.sinceTotals('user_id', userId, period)));
     }
+    // PC14: a project with a hard-stop budget refuses its priced calls at the budget (a local model, or one only the gateway prices, is never stopped).
+    const projectId = scopeProjectId(scope);
+    const entry = projectId ? this.projectBudget(projectId) : undefined;
+    if (projectId && entry && !entry.resumed && this.price({ provider: call.provider, model: call.model, inputTokens: 0, outputTokens: 0 }).priced) {
+      const db = this.db();
+      limits.push(hardStopLimit(entry, () => this.sinceTotals('project_id', projectId, 'month').cost, (used) => stopReached(this, db, entry.budget, used)));
+    }
     return limits;
   }
 
@@ -137,24 +177,52 @@ export class AiUsageMeter implements UsageMeter {
       .map((row) => row.user_id);
   }
 
-  /** What a credential or user used today or this month (`column` is `credential_id` or `user_id`). */
-  sinceTotals(column: 'credential_id' | 'user_id', id: string, period: 'day' | 'month', day = this.today()): AiUsageTotals {
+  /** What a credential, user or project used today or this month (`column` is `credential_id`, `user_id` or `project_id`). */
+  sinceTotals(column: 'credential_id' | 'user_id' | 'project_id', id: string, period: 'day' | 'month', day = this.today()): AiUsageTotals {
     return period === 'day' ? this.sum(`${column} = ? AND day = ?`, id, day) : this.sum(`${column} = ? AND day >= ?`, id, `${day.slice(0, 7)}-01`);
   }
 
   record(call: MeteredCall, scope: UsageScope) {
     const now = Date.now();
     try {
-      this.db().insertNew('ai_usage', {
-        id: `au_${nanoid(14)}`,
-        at: new Date(now).toISOString(),
-        day: this.today(now),
+      const db = this.db();
+      const projectId = scopeProjectId(scope);
+      // A goal is the scope's own, else the run context's; never paired with another project's row.
+      const run = currentRunContext();
+      // The goal comes from the same scope level that named the project, so it is that project's.
+      const named = [...scope.chain()].find((s) => s.info.projectId);
+      const scopeGoal = named ? named.info.goalId : scope.lookup('goalId');
+      const goalId = scopeGoal ?? (run?.goalId && run.projectId === projectId ? run.goalId : undefined);
+      // SP01: the agent that asked: the nearest scope up the chain whose agent is not the row's own.
+      const rowAgent = scope.lookup('agentId');
+      const callerAgentId = [...scope.chain()].find((s) => s.info.agentId && s.info.agentId !== rowAgent)?.info.agentId ?? (call.callerAgentId !== rowAgent ? call.callerAgentId : undefined);
+      // A plugin node's model record has no telemetry note: the active node still names it. Once, for the row and the event.
+      const nodeId = call.nodeId ?? activeNode()?.id;
+      // SP01: the gen_ai span names its row, never a plugin node's span (the active span is the call's own only when its id is the call's span id).
+      const nameSpan = (usageId: string) => {
+        const span = call.spanId ? trace.getActiveSpan() : undefined;
+        if (span && span.spanContext().spanId === call.spanId) span.setAttribute('landflow.ai.usage_id', usageId);
+      };
+      const counted = {
+        node_id: nodeId,
+        span_id: call.spanId,
+        purpose: call.purpose,
+        iteration: call.iteration,
+        caller_agent_id: callerAgentId,
+        duration_ms: call.durationMs,
+        stop_reason: call.stopReason,
         execution_id: scope.lookup('executionId'),
         workflow_id: scope.lookup('workflowId'),
         agent_id: scope.lookup('agentId'),
         session_id: scope.lookup('sessionId'),
         user_id: scope.lookup('userId'),
+        surface: scope.lookup('surface'),
         credential_id: call.credentialId,
+        source: call.source ?? 'landflow',
+        runtime: call.runtime ?? 'landflow',
+        project_id: projectId,
+        goal_id: goalId,
+        gateway_cost: call.gatewayCost,
         cache_read_tokens: call.cacheReadTokens,
         cache_write_tokens: call.cacheWriteTokens,
         provider: call.provider,
@@ -163,25 +231,111 @@ export class AiUsageMeter implements UsageMeter {
         input_tokens: call.inputTokens,
         output_tokens: call.outputTokens,
         cost: call.cost,
+      };
+      // The spend import may have read this call's spend row first (it lags a minute, a long call can end later): then
+      // this call takes that row over, so it is one row with Landflow's attribution. The row is found by the id the
+      // server's gateway gave the response, or for a call on the server's own key without one, by its call id.
+      const imported = call.gatewayRequestId
+        ? db.get<Record<string, SqlValue>>("SELECT * FROM ai_usage WHERE gateway_request_id = ? AND source = 'litellm'", call.gatewayRequestId)
+        : call.callId && call.gatewayKeyHash
+          ? db.get<Record<string, SqlValue>>("SELECT * FROM ai_usage WHERE call_id = ? AND source = 'litellm' AND gateway_key_hash = ?", call.callId, call.gatewayKeyHash)
+          : undefined;
+      if (imported) {
+        // Its usage event is already in the ledger (from the import); the row now says who and what ran the call.
+        // Never cheaper than what the import counted: a takeover may add who ran the call, not take spend away.
+        const importedCost = typeof imported.cost === 'number' ? imported.cost : 0;
+        db.upsert('ai_usage', { ...imported, ...counted, cost: Math.max(importedCost, counted.cost ?? 0) });
+        noteUsage();
+        nameSpan(String(imported.id));
+        this.notify(String(imported.id), typeof imported.gateway_request_id === 'string' ? imported.gateway_request_id : undefined, call, scope, now);
+        return;
+      }
+      // call_id and gateway_request_id are unique: a repeated one must not lose the row or its event.
+      const callId = call.callId && !db.get('SELECT 1 AS found FROM ai_usage WHERE call_id = ?', call.callId) ? call.callId : undefined;
+      const requestId = call.gatewayRequestId && !db.get('SELECT 1 AS found FROM ai_usage WHERE gateway_request_id = ?', call.gatewayRequestId) ? call.gatewayRequestId : undefined;
+      const usageId = `au_${nanoid(14)}`;
+      db.insertNew('ai_usage', {
+        id: usageId,
+        at: new Date(now).toISOString(),
+        day: this.today(now),
+        ...counted,
+        call_id: callId,
+        gateway_request_id: requestId,
+        ...(callId && call.gatewayKeyHash && { gateway_key_hash: call.gatewayKeyHash }),
       });
       noteUsage();
       recordUsage({
         kind: 'ai.call',
+        projectId,
+        goalId,
         workflowId: scope.lookup('workflowId'),
         agentId: scope.lookup('agentId'),
         executionId: scope.lookup('executionId'),
         actorId: scope.lookup('userId'),
         tokens: (call.inputTokens ?? 0) + (call.outputTokens ?? 0),
         cost: call.cost,
-        attrs: { provider: call.provider, model: call.model, operation: call.operation, input: call.inputTokens, output: call.outputTokens },
+        // `input` is the whole prompt, cached tokens included; `cacheRead` and `cacheWrite` are the parts of it the
+        // provider read from or wrote to its prompt cache (0 when it reports none), so a ledger can price them apart.
+        attrs: {
+          provider: call.provider,
+          model: call.model,
+          operation: call.operation,
+          input: call.inputTokens,
+          output: call.outputTokens,
+          cacheRead: call.cacheReadTokens ?? 0,
+          cacheWrite: call.cacheWriteTokens ?? 0,
+          ...(call.callId && { callId: call.callId }),
+          ...(call.gatewayRequestId && { requestId: call.gatewayRequestId }),
+          ...(call.callId && { source: call.source ?? 'landflow' }),
+          ...(call.gatewayCost !== undefined && { gatewayCost: call.gatewayCost }),
+          // SP01: AiCallEventAttribution, each only when set.
+          ...(call.purpose && { purpose: call.purpose }),
+          ...(nodeId && { nodeId }),
+          ...(scope.lookup('sessionId') && { sessionId: scope.lookup('sessionId') }),
+          ...(call.iteration !== undefined && { iteration: call.iteration }),
+          usageId,
+        },
       });
+      nameSpan(usageId);
+      this.notify(usageId, requestId, call, scope, now);
       if (now - this.pruned > DAY_MS / 24) {
         this.pruned = now;
         this.db().deleteBefore('ai_usage', 'at', new Date(now - this.retentionDays * DAY_MS).toISOString());
+        pruneParts(now, this.db()); // SP03:
       }
     } catch (error) {
       // Accounting must never fail the call itself.
       logger.warn('could not record AI usage', { error });
+    }
+  }
+
+  /**
+   * SP01: tell the recorded-call listener (wave 11's prompt parts) about a written row; it never fails the call.
+   * `requestId` is the gateway request id the row keeps (a repeated one is not stored, so the split must not claim it).
+   */
+  private notify(usageId: string, requestId: string | undefined, call: MeteredCall, scope: UsageScope, now: number) {
+    try {
+      notifyRecorded(
+        {
+          usageId,
+          at: new Date(now).toISOString(),
+          provider: call.provider,
+          model: call.model,
+          operation: call.operation,
+          inputTokens: call.inputTokens,
+          outputTokens: call.outputTokens,
+          cacheReadTokens: call.cacheReadTokens,
+          cacheWriteTokens: call.cacheWriteTokens,
+          ...(requestId && { gatewayRequestId: requestId }),
+          ...(scope.lookup('executionId') && { executionId: scope.lookup('executionId') }),
+          ...(scope.lookup('agentId') && { agentId: scope.lookup('agentId') }),
+          ...(scope.lookup('sessionId') && { sessionId: scope.lookup('sessionId') }),
+          note: { ...currentCallNote(), draft: call.operation === 'chat' ? takeCallDraft() : undefined },
+        },
+        (message, error) => logger.warn(message, { error }),
+      );
+    } catch (error) {
+      logger.warn('could not notify the recorded-call listener', { error });
     }
   }
 
@@ -194,8 +348,9 @@ export class AiUsageMeter implements UsageMeter {
     return totalsOf(this.db().get<SumRow>(`SELECT ${SUMS} FROM ai_usage WHERE ${where}`, ...params));
   }
 
+  /** A workflow's runs today: Spotlight rows (they carry a surface) do not count against its own per-day caps. */
   workflowDay(workflowId: string, day = this.today()): AiUsageTotals {
-    return this.sum('workflow_id = ? AND day = ?', workflowId, day);
+    return this.sum('workflow_id = ? AND day = ? AND surface IS NULL', workflowId, day);
   }
 
   agentDay(agentId: string, day = this.today()): AiUsageTotals {
@@ -207,7 +362,16 @@ export class AiUsageMeter implements UsageMeter {
   }
 
   /** Totals, per model and per day, for one execution, workflow or agent (or everything) since `from` (a day key). */
-  report(filter: { executionId?: string; workflowId?: string; agentId?: string; from?: string; to?: string; group?: 'workflow' | 'agent' }): AiUsageReport {
+  report(filter: {
+    executionId?: string;
+    workflowId?: string;
+    agentId?: string;
+    from?: string;
+    to?: string;
+    group?: 'workflow' | 'agent';
+    /** Only usage of these workflows or agents (a member's view: the rows of neither are left out). */
+    within?: { workflows: ReadonlySet<string>; agents: ReadonlySet<string> };
+  }): AiUsageReport {
     const clauses: string[] = [];
     const params: SqlValue[] = [];
     const add = (sql: string, value: SqlValue | undefined) => {
@@ -220,6 +384,15 @@ export class AiUsageMeter implements UsageMeter {
     add('agent_id = ?', filter.agentId);
     add('day >= ?', filter.from);
     add('day <= ?', filter.to);
+    if (filter.within) {
+      const ors: string[] = [];
+      for (const [column, ids] of [['workflow_id', filter.within.workflows], ['agent_id', filter.within.agents]] as const) {
+        if (!ids.size) continue;
+        ors.push(`${column} IN (${[...ids].map(() => '?').join(', ')})`);
+        params.push(...ids);
+      }
+      clauses.push(ors.length ? `(${ors.join(' OR ')})` : '1 = 0');
+    }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const db = this.db();
     const totals = totalsOf(db.get<SumRow>(`SELECT ${SUMS} FROM ai_usage ${where}`, ...params));
@@ -232,12 +405,15 @@ export class AiUsageMeter implements UsageMeter {
       const grouped = clauses.length ? `${where} AND workflow_id IS NOT NULL` : 'WHERE workflow_id IS NOT NULL';
       report.workflows = db
         .all<SumRow & { workflow_id: string }>(`SELECT workflow_id, ${SUMS} FROM ai_usage ${grouped} GROUP BY workflow_id ORDER BY cost DESC`, ...params)
+        // A row counts for a visible agent may carry a workflow the member can't open (the agent ran in it): no group for that one.
+        .filter((row) => !filter.within || filter.within.workflows.has(row.workflow_id))
         .map((row) => ({ workflowId: row.workflow_id, ...totalsOf(row) }));
     }
     if (filter.group === 'agent') {
       const grouped = clauses.length ? `${where} AND agent_id IS NOT NULL` : 'WHERE agent_id IS NOT NULL';
       report.agents = db
         .all<SumRow & { agent_id: string }>(`SELECT agent_id, ${SUMS} FROM ai_usage ${grouped} GROUP BY agent_id ORDER BY cost DESC`, ...params)
+        .filter((row) => !filter.within || filter.within.agents.has(row.agent_id))
         .map((row) => ({ agentId: row.agent_id, ...totalsOf(row) }));
     }
     if (filter.workflowId) report.today = this.workflowDay(filter.workflowId);
@@ -249,11 +425,9 @@ export class AiUsageMeter implements UsageMeter {
   }
 }
 
-const holder = globalThis as { __landflowAiUsageMeter?: AiUsageMeter };
-
 /** The process's meter, over the instance database. */
 export function aiUsageMeter(): AiUsageMeter {
-  return (holder.__landflowAiUsageMeter ??= new AiUsageMeter());
+  return singleton('ai-usage-meter', () => new AiUsageMeter());
 }
 
 const tokensOf = (totals: AiUsageTotals) => totals.inputTokens + totals.outputTokens;
@@ -286,9 +460,9 @@ export function workflowLimits(scope: () => UsageScope, workflowId: string, sett
   return limits;
 }
 
-/** The caps of Agent → Settings → Usage limits. */
+/** The caps of Agent → Abilities → Guardrails (usage limits). */
 export function agentLimits(agentId: string, name: string, settings: Partial<AgentSettings>, meter: AiUsageMeter = aiUsageMeter()): UsageLimit[] {
-  const where = `Agent “${name}” → Settings → Usage limits`;
+  const where = `Agent “${name}” → Abilities → Guardrails`;
   const limits: UsageLimit[] = [];
   const dayTokens = positive(settings.dailyTokenLimit);
   const dayCost = positive(settings.dailyCostLimit);
@@ -301,7 +475,7 @@ export function agentLimits(agentId: string, name: string, settings: Partial<Age
 
 /** Open a scope for one execution segment (runner). `previous` is what earlier segments used. */
 export function executionScope(
-  info: { executionId: string; workflowId: string; settings?: WorkflowSettings; previous?: ExecutionAiUsage; userId?: string },
+  info: { executionId: string; workflowId: string; settings?: WorkflowSettings; previous?: ExecutionAiUsage; userId?: string; projectId?: string; goalId?: string },
   meter: AiUsageMeter = aiUsageMeter(),
 ): UsageScope {
   let scope: UsageScope;
@@ -309,14 +483,28 @@ export function executionScope(
   const parent = currentUsageScope();
   const { models, ...previousTotals } = info.previous ?? ({} as ExecutionAiUsage);
   const base = info.previous ? { totals: { ...EMPTY_USAGE, ...previousTotals }, models } : undefined;
-  scope = new UsageScope({ executionId: info.executionId, workflowId: info.workflowId, ...(info.userId && { userId: info.userId }) }, limits, parent, parent ? undefined : meter, base);
+  scope = new UsageScope({ executionId: info.executionId, workflowId: info.workflowId, ...(info.userId && { userId: info.userId }), ...(info.projectId && { projectId: info.projectId }), ...(info.goalId && { goalId: info.goalId }) }, limits, parent, parent ? undefined : meter, base);
   return scope;
 }
 
 /** Open a scope for one agent run (agents runtime). */
-export function agentScope(info: { agentId: string; agentName: string; sessionId: string; settings: Partial<AgentSettings>; userId?: string }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
+export function agentScope(info: { agentId: string; agentName: string; sessionId: string; settings: Partial<AgentSettings>; userId?: string; projectId?: string; goalId?: string }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
   const parent = currentUsageScope();
-  return new UsageScope({ agentId: info.agentId, sessionId: info.sessionId, ...(info.userId && { userId: info.userId }) }, agentLimits(info.agentId, info.agentName, info.settings, meter), parent, parent ? undefined : meter);
+  // The run's project and goal (PC03 enters withRunContext first) unless the opener names them.
+  const run = currentRunContext();
+  const projectId = info.projectId ?? run?.projectId;
+  const goalId = info.goalId ?? (info.projectId ? undefined : run?.goalId);
+  return new UsageScope({ agentId: info.agentId, sessionId: info.sessionId, ...(info.userId && { userId: info.userId }), ...(projectId && { projectId }), ...(goalId && { goalId }) }, agentLimits(info.agentId, info.agentName, info.settings, meter), parent, parent ? undefined : meter);
+}
+
+/**
+ * Open a scope for the assistant's own model calls (Spotlight, the Agent architect, the brain): the calls write
+ * `ai_usage` rows with the `surface`, and the caller's per-user caps apply. Run the work with `runInUsageScope`.
+ */
+export function assistantScope(info: { userId?: string; surface: 'spotlight' | 'architect' | 'brain' | 'agent-test' /* AG15: */; workflowId?: string; projectId?: string; agentId?: string /* AG15: */ }, meter: AiUsageMeter = aiUsageMeter()): UsageScope {
+  const parent = currentUsageScope();
+  const projectId = info.projectId ?? (info.workflowId ? homeProjectId('workflow', info.workflowId) : undefined);
+  return new UsageScope({ surface: info.surface, ...(info.agentId && { agentId: info.agentId }) /* AG15: */, ...(projectId && { projectId }), ...(info.workflowId && { workflowId: info.workflowId }), ...(info.userId && { userId: info.userId }) }, [], parent, parent ? undefined : meter);
 }
 
 export { runInUsageScope };

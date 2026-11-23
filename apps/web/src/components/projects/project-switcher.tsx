@@ -7,11 +7,12 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronsUpDown, FolderKanban, LayoutGrid, Plus, UserRound, Users } from 'lucide-react';
+import { ChevronsUpDown, FolderCog, FolderKanban, LayoutGrid, Plus, UserRound, Users } from 'lucide-react';
 import { can } from '@/lib/shared/auth';
 import { cn } from '@/lib/utils';
 import { useViewer } from '../auth/viewer';
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from '../ui/popover';
+import { rememberProject } from './current-project';
 import { NewProjectDialog } from './project-dialogs';
 import { projectLabel, useProjects } from './use-projects';
 
@@ -50,6 +51,8 @@ export function ProjectSwitcher() {
             <MenuItem
               onClick={() => {
                 close();
+                // The rail decides: Templates (and anything else that starts on the remembered project) shows all again.
+                rememberProject(undefined);
                 router.push('/projects');
               }}
             >
@@ -69,6 +72,16 @@ export function ProjectSwitcher() {
                 {project.name}
               </ProjectLink>
             ))}
+            {/* Always: Manage projects is never run on from the last project row. */}
+            <MenuSeparator />
+            <MenuItem
+              onClick={() => {
+                close();
+                router.push('/projects');
+              }}
+            >
+              <FolderCog /> Manage projects
+            </MenuItem>
             {mayCreate && (
               <MenuItem
                 onClick={() => {

@@ -25,6 +25,14 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   loading?: boolean;
 }
 
+const base =
+  'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap rounded-full border border-transparent font-semibold transition-colors duration-[120ms] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ac disabled:cursor-not-allowed disabled:opacity-45';
+
+/** A button's look for something that isn't a <button> (a Link to another page). */
+export function buttonClass(variant: Variant = 'outline', size: Size = 'md', className?: string) {
+  return cn(base, variants[variant], sizes[size], className);
+}
+
 /** Pill button (Landfall `.ds-btn`). */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   { variant = 'outline', size = 'md', loading, className, children, disabled, ...props },
@@ -35,12 +43,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ref={ref}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
-      className={cn(
-        'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap rounded-full border border-transparent font-semibold transition-colors duration-[120ms] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ac disabled:cursor-not-allowed disabled:opacity-45',
-        variants[variant],
-        sizes[size],
-        className,
-      )}
+      className={buttonClass(variant, size, className)}
       {...props}
     >
       {loading && <Loader2 className="size-3.5 animate-spin" />}

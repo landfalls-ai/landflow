@@ -1,16 +1,19 @@
 'use client';
 /**
  * Settings → General: the instance's default time zone and execution
- * retention (keep at most N, delete older than D days), with "Prune now".
+ * retention (keep at most N, delete older than D days), with "Prune now" in the ⋯ menu; the experimental switch is under Advanced.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Blocks, Eraser, Globe, History, Save } from 'lucide-react';
+import { Blocks, ChevronDown, ChevronRight, Eraser, Globe, History, MoreHorizontal, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import type { InstanceSettings } from '@/lib/shared/platform';
 import { Card } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
+import { HelpTip } from '@/components/ui/help-tip';
+import { MenuItem, Popover } from '@/components/ui/popover';
 import { FieldLabel, Input, SectionLabel, Select } from '@/components/ui/inputs';
+import { plural } from '@/lib/client/format';
 
 interface SettingsView {
   settings: InstanceSettings;
@@ -39,7 +42,6 @@ function offsetOf(zone: string): string {
   }
 }
 
-const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
 
 export function GeneralSettings() {
   const [view, setView] = useState<SettingsView>();
@@ -47,6 +49,7 @@ export function GeneralSettings() {
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [pruning, setPruning] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
 
   const load = () =>
     api<SettingsView>('/api/settings')
@@ -144,7 +147,10 @@ export function GeneralSettings() {
             </Select>
           </div>
           <p className="pb-2 text-[12px] leading-relaxed text-t3">
-            {offsetOf(draft.timezone)} · Used when a workflow doesn’t set its own: schedules, Date &amp; Time nodes and the days in Insights.
+            {offsetOf(draft.timezone)} · Used when a workflow doesn’t set its own time zone.
+            <HelpTip label="Where the time zone applies" className="ml-1 align-middle">
+              Schedules, Date &amp; Time nodes and the days in Insights.
+            </HelpTip>
           </p>
         </div>
       </Card>
@@ -173,35 +179,68 @@ export function GeneralSettings() {
           </div>
         </div>
         <p className="mt-4 text-[12px] leading-relaxed text-t3">
-          0 turns a limit off. Running and waiting executions are never deleted. Retention applies after every run and hourly; Insights keeps its counts after runs are deleted.
+          0 turns a limit off.
+          <HelpTip label="About execution retention" className="ml-1 align-middle">
+            Running and waiting executions are never deleted. Retention applies after every run and hourly; Insights keeps its counts after runs are deleted.
+          </HelpTip>
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-hair pt-3.5">
           <span className="text-[12px] text-t2">
             {plural(view.executions.stored, 'execution')} stored
             {view.executions.prunable > 0 && <span className="text-warn"> · {view.executions.prunable.toLocaleString('en-US')} past the saved limits</span>}
           </span>
-          <Button size="sm" className="ml-auto" onClick={prune} loading={pruning} title="Apply the saved retention settings now">
-            <Eraser className="size-3.5" /> Prune now
-          </Button>
+          <span className="ml-auto">
+            <Popover
+              title="Executions"
+              trigger={({ open, toggle }) => (
+                <Button variant="ghost" size="icon-sm" onClick={toggle} loading={pruning} aria-label="More retention actions" aria-expanded={open} aria-haspopup="menu">
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              )}
+            >
+              {(close) => (
+                <MenuItem
+                  onClick={() => {
+                    close();
+                    void prune();
+                  }}
+                  hint="Apply the saved limits now"
+                >
+                  <Eraser /> Prune now
+                </MenuItem>
+              )}
+            </Popover>
+          </span>
         </div>
       </Card>
 
-      <Card className="px-5 py-4">
-        <div className="mb-3 flex items-center gap-2">
-          <Blocks className="size-4 text-t3" strokeWidth={1.8} />
-          <SectionLabel>Experimental</SectionLabel>
-        </div>
-        <label className="flex items-start gap-3 text-[13px] text-t1">
-          <input type="checkbox" className="mt-0.5 size-4" checked={view.jsonRender} disabled={switching} onChange={(e) => void switchJsonRender(e.target.checked)} aria-label="json-render spec cards" />
-          <span>
-            json-render spec cards
-            <span className="mt-1 block text-[12px] leading-relaxed text-t3">
-              A prototype for model-written cards in Run Trace; nothing produces specs yet. On: the dev page at /runs/json-render-gallery appears, without a rebuild. Only the owner can switch it.
-              {view.settings.jsonRender === undefined ? ' Following the LANDFLOW_JSON_RENDER default.' : ''}
-            </span>
-          </span>
-        </label>
-      </Card>
+      <div id="general-advanced">
+        <button type="button" aria-expanded={advanced} onClick={() => setAdvanced((v) => !v)} className="flex min-h-8 items-center gap-1.5 text-[13px] font-semibold text-t2 max-md:min-h-11">
+          {advanced ? <ChevronDown className="size-4 text-t3" /> : <ChevronRight className="size-4 text-t3" />}
+          Advanced
+        </button>
+        {advanced && (
+          <Card className="mt-2 px-5 py-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Blocks className="size-4 text-t3" strokeWidth={1.8} />
+              <SectionLabel>Experimental</SectionLabel>
+            </div>
+            <label className="flex items-start gap-3 text-[13px] text-t1">
+              <input type="checkbox" className="mt-0.5 size-4" checked={view.jsonRender} disabled={switching} onChange={(e) => void switchJsonRender(e.target.checked)} aria-label="json-render spec cards" />
+              <span>
+                json-render spec cards
+                <span className="mt-1 block text-[12px] leading-relaxed text-t3">
+                  A prototype for model-written cards in the Run trace; only the owner can switch it.
+                  <HelpTip label="About json-render" className="ml-1 align-middle">
+                    Nothing produces specs yet. On: the dev page at /runs/json-render-gallery appears, without a rebuild.
+                    {view.settings.jsonRender === undefined ? ' Following the LANDFLOW_JSON_RENDER default.' : ''}
+                  </HelpTip>
+                </span>
+              </span>
+            </label>
+          </Card>
+        )}
+      </div>
 
       {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd animate-fade-up">{error}</div>}
       <div className="flex items-center justify-end gap-2">

@@ -272,7 +272,7 @@ export function MoveToProjectDialog({ kind, id, name, currentProjectId, onClose,
         </div>
         {(kind === 'workflow' || kind === 'credential') && (
           <label className="flex items-start gap-2.5 text-[12px] text-t1">
-            <input type="checkbox" checked={carry} onChange={(e) => setCarry(e.target.checked)} className="mt-0.5 accent-[var(--ac)]" />
+            <input type="checkbox" checked={carry} onChange={(e) => setCarry(e.target.checked)} className="mt-0.5" />
             <span>
               {kind === 'workflow' ? 'Share the credentials it uses with the new project, so its runs keep working' : `Keep it usable by ${current ? projectLabel(current, viewer?.id) : 'its current project'}, so their workflows keep running`}
               <span className="block text-t3">{kind === 'workflow' ? 'Only credentials you may share go along.' : 'It is shared back to that project as “can use”.'}</span>

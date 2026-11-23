@@ -1,0 +1,1297 @@
+{
+ "protocol": "landflow.plugin/v1",
+ "plugin": {
+  "language": "typescript",
+  "sdk": {
+   "name": "landflow-sdk-typescript",
+   "version": "0.2.0"
+  },
+  "id": "attio",
+  "name": "Attio",
+  "version": "0.1.0",
+  "description": "Attio CRM: a webhook trigger and changed-since operations that output activity items, records with notes, workspace members, and note, task and list-entry creation over the REST API",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIE9yaWdpbmFsIExhbmRmbG93IGdseXBoIGZvciB0aGUgQXR0aW8gcGx1Z2luOiB0aHJlZSBsaW5rZWQgcmVjb3Jkcy4gTm90IEF0dGlvJ3MgbG9nby4gLS0+CiAgPHJlY3QgeD0iMC43NSIgeT0iMC43NSIgd2lkdGg9IjQ2LjUiIGhlaWdodD0iNDYuNSIgcng9IjExLjI1IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNlNGU0ZTciIHN0cm9rZS13aWR0aD0iMS41Ii8+CiAgPHBhdGggZD0iTTE2IDMxIDI0IDE1IDMyIDMxIiBmaWxsPSJub25lIiBzdHJva2U9IiM0ZjViZDUiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjE0IiByPSI0IiBmaWxsPSIjNGY1YmQ1Ii8+CiAgPGNpcmNsZSBjeD0iMTUiIGN5PSIzMiIgcj0iNCIgZmlsbD0iIzRmNWJkNSIvPgogIDxjaXJjbGUgY3g9IjMzIiBjeT0iMzIiIHI9IjQiIGZpbGw9IiM0ZjViZDUiLz4KPC9zdmc+Cg==",
+  "color": "#4f5bd5",
+  "author": "Landflow"
+ },
+ "nodes": [
+  {
+   "name": "attioTrigger",
+   "displayName": "Attio Trigger",
+   "description": "Starts the workflow when a record, list entry (pipeline stage), note or task changes in Attio, with the change as an activity item (actor email, link, company and team hints)",
+   "version": 1,
+   "kind": "trigger",
+   "triggerSource": "appWebhook",
+   "categories": [
+    "Sales"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIE9yaWdpbmFsIExhbmRmbG93IGdseXBoIGZvciB0aGUgQXR0aW8gcGx1Z2luOiB0aHJlZSBsaW5rZWQgcmVjb3Jkcy4gTm90IEF0dGlvJ3MgbG9nby4gLS0+CiAgPHJlY3QgeD0iMC43NSIgeT0iMC43NSIgd2lkdGg9IjQ2LjUiIGhlaWdodD0iNDYuNSIgcng9IjExLjI1IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNlNGU0ZTciIHN0cm9rZS13aWR0aD0iMS41Ii8+CiAgPHBhdGggZD0iTTE2IDMxIDI0IDE1IDMyIDMxIiBmaWxsPSJub25lIiBzdHJva2U9IiM0ZjViZDUiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjE0IiByPSI0IiBmaWxsPSIjNGY1YmQ1Ii8+CiAgPGNpcmNsZSBjeD0iMTUiIGN5PSIzMiIgcj0iNCIgZmlsbD0iIzRmNWJkNSIvPgogIDxjaXJjbGUgY3g9IjMzIiBjeT0iMzIiIHI9IjQiIGZpbGw9IiM0ZjViZDUiLz4KPC9zdmc+Cg==",
+   "color": "#4f5bd5",
+   "subtitle": "{{events}}",
+   "documentationUrl": "https://docs.attio.com/rest-api/guides/webhooks",
+   "keywords": [
+    "attio",
+    "crm",
+    "trigger",
+    "webhook",
+    "deal",
+    "pipeline",
+    "activity",
+    "record",
+    "note",
+    "task"
+   ],
+   "inputs": [],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputSchema": {
+    "type": "object",
+    "properties": {
+     "source": {
+      "type": "string",
+      "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+     },
+     "sourceId": {
+      "type": "string",
+      "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+     },
+     "url": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Where a person opens it"
+     },
+     "actorEmail": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+     },
+     "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When it happened, ISO 8601 in UTC with milliseconds"
+     },
+     "kind": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+      "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+     },
+     "title": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "One line: the document, ticket or meeting title, or the channel and first words"
+     },
+     "summary": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "The text, whitespace collapsed, at most 600 characters"
+     },
+     "teamHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+     },
+     "initiativeHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The project or initiative it seems to belong to, when there is one"
+     },
+     "customerHint": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+     },
+     "raw": {
+      "type": "object",
+      "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+     },
+     "cursor": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+     }
+    },
+    "required": [
+     "source",
+     "sourceId",
+     "url",
+     "actorEmail",
+     "occurredAt",
+     "kind",
+     "title",
+     "summary",
+     "teamHint",
+     "initiativeHint",
+     "customerHint",
+     "raw"
+    ],
+    "additionalProperties": false
+   },
+   "credentials": [
+    {
+     "name": "attioApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "accessToken"
+       ]
+      }
+     }
+    },
+    {
+     "name": "attioOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "accessToken",
+     "options": [
+      {
+       "name": "Access Token",
+       "value": "accessToken",
+       "description": "A workspace access token (API key) pasted from Attio"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Connect with Attio"
+      }
+     ]
+    },
+    {
+     "name": "notice",
+     "displayName": "Publishing registers a webhook in Attio for this node (the token needs webhook:read-write and a workspace-level token). Attio only accepts an HTTPS public URL. Attio shows the webhook secret once, so Landflow keeps it for the signature check; unpublishing removes the webhook.",
+     "type": "notice",
+     "default": ""
+    },
+    {
+     "name": "events",
+     "displayName": "Events",
+     "type": "multiOptions",
+     "required": true,
+     "default": [
+      "record.created",
+      "record.updated",
+      "list-entry.created",
+      "list-entry.updated",
+      "note.created",
+      "task.created"
+     ],
+     "options": [
+      {
+       "name": "Record Created",
+       "value": "record.created"
+      },
+      {
+       "name": "Record Updated",
+       "value": "record.updated",
+       "description": "A value of the record changed (a deal moved stage)"
+      },
+      {
+       "name": "List Entry Created",
+       "value": "list-entry.created",
+       "description": "A record was added to a list (a deal to a pipeline)"
+      },
+      {
+       "name": "List Entry Updated",
+       "value": "list-entry.updated",
+       "description": "A value of a list entry changed (a pipeline stage moved)"
+      },
+      {
+       "name": "Note Created",
+       "value": "note.created"
+      },
+      {
+       "name": "Task Created",
+       "value": "task.created"
+      }
+     ],
+     "description": "The Attio events that start a run"
+    },
+    {
+     "name": "objects",
+     "displayName": "Objects",
+     "type": "string",
+     "default": "companies,people,deals",
+     "placeholder": "companies,people,deals",
+     "description": "Records, list entries and notes of these objects (API slugs, comma-separated) start a run. Empty: every object. Tasks are not tied to an object and always pass."
+    },
+    {
+     "name": "options",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "values": [
+      {
+       "name": "wonStages",
+       "displayName": "Won Stages",
+       "type": "string",
+       "default": "Won",
+       "description": "Comma-separated stage names that count as won (compared ignoring case, emoji and punctuation, so \"Won 🎉\" matches Won): the kind becomes work.deal_won"
+      },
+      {
+       "name": "stageAttribute",
+       "displayName": "Stage Attribute",
+       "type": "string",
+       "default": "stage",
+       "description": "The API slug of the status attribute that holds the stage (deals: stage; a list: the list's own status attribute)"
+      },
+      {
+       "name": "teamHint",
+       "displayName": "Team Hint",
+       "type": "string",
+       "default": "",
+       "placeholder": "Sales",
+       "description": "A constant for teamHint on every item. Empty: no team hint."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "attio",
+   "displayName": "Attio",
+   "description": "Read Attio records and pipeline entries as activity items (get one, or list what changed since a time), list workspace members, and create notes, tasks and list entries",
+   "version": 1,
+   "kind": "action",
+   "categories": [
+    "Sales"
+   ],
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIE9yaWdpbmFsIExhbmRmbG93IGdseXBoIGZvciB0aGUgQXR0aW8gcGx1Z2luOiB0aHJlZSBsaW5rZWQgcmVjb3Jkcy4gTm90IEF0dGlvJ3MgbG9nby4gLS0+CiAgPHJlY3QgeD0iMC43NSIgeT0iMC43NSIgd2lkdGg9IjQ2LjUiIGhlaWdodD0iNDYuNSIgcng9IjExLjI1IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNlNGU0ZTciIHN0cm9rZS13aWR0aD0iMS41Ii8+CiAgPHBhdGggZD0iTTE2IDMxIDI0IDE1IDMyIDMxIiBmaWxsPSJub25lIiBzdHJva2U9IiM0ZjViZDUiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjE0IiByPSI0IiBmaWxsPSIjNGY1YmQ1Ii8+CiAgPGNpcmNsZSBjeD0iMTUiIGN5PSIzMiIgcj0iNCIgZmlsbD0iIzRmNWJkNSIvPgogIDxjaXJjbGUgY3g9IjMzIiBjeT0iMzIiIHI9IjQiIGZpbGw9IiM0ZjViZDUiLz4KPC9zdmc+Cg==",
+   "color": "#4f5bd5",
+   "subtitle": "{{operation}}: {{resource}}",
+   "documentationUrl": "https://docs.attio.com/rest-api/overview",
+   "keywords": [
+    "attio",
+    "crm",
+    "deal",
+    "pipeline",
+    "company",
+    "person",
+    "note",
+    "task",
+    "activity",
+    "sales"
+   ],
+   "usableAsTool": true,
+   "idempotent": false,
+   "toolDescription": "Read an Attio CRM record with its values and recent notes, list the records or pipeline entries that changed since a time, list workspace members with email, add a note to a record, create a task, or add a record to a list. It cannot delete or merge anything.",
+   "inputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "outputs": [
+    {
+     "type": "main"
+    }
+   ],
+   "credentials": [
+    {
+     "name": "attioApi",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "accessToken"
+       ]
+      }
+     }
+    },
+    {
+     "name": "attioOAuth2Api",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "authentication": [
+        "oAuth2"
+       ]
+      }
+     }
+    }
+   ],
+   "properties": [
+    {
+     "name": "authentication",
+     "displayName": "Authentication",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "accessToken",
+     "options": [
+      {
+       "name": "Access Token",
+       "value": "accessToken",
+       "description": "A workspace access token (API key) pasted from Attio"
+      },
+      {
+       "name": "OAuth2",
+       "value": "oAuth2",
+       "description": "Connect with Attio"
+      }
+     ]
+    },
+    {
+     "name": "resource",
+     "displayName": "Resource",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "record",
+     "options": [
+      {
+       "name": "List Entry",
+       "value": "listEntry"
+      },
+      {
+       "name": "Note",
+       "value": "note"
+      },
+      {
+       "name": "Record",
+       "value": "record"
+      },
+      {
+       "name": "Task",
+       "value": "task"
+      },
+      {
+       "name": "Workspace Member",
+       "value": "workspaceMember"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "get",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Add to List",
+       "value": "addToList",
+       "action": "Add a record to a list",
+       "description": "Add a record to a list (a deal to a pipeline) as a new entry"
+      },
+      {
+       "name": "Get",
+       "value": "get",
+       "action": "Get a record",
+       "description": "A record as an activity item, plus text with its values and recent notes",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "Get Many Changed Since",
+       "value": "getManyChangedSince",
+       "action": "Get records changed since a time",
+       "description": "Records of an object that were created or changed since a time, as activity items (oldest first)",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getManyChangedSince",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "listEntry"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Many Changed Since",
+       "value": "getManyChangedSince",
+       "action": "Get list entries changed since a time",
+       "description": "Entries of a list (a sales pipeline) that were created or changed since a time, as activity items (oldest first)",
+       "idempotent": true,
+       "outputSchema": {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string",
+          "description": "The tool, lowercase: slack, google-drive, google-calendar, notion, …"
+         },
+         "sourceId": {
+          "type": "string",
+          "description": "Stable id of the change, '<source>:<tool ids>': the same change always has the same id, so a replay is recognised"
+         },
+         "url": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Where a person opens it"
+         },
+         "actorEmail": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Email of the person who made the change, lowercase; null when the tool doesn't say"
+         },
+         "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, ISO 8601 in UTC with milliseconds"
+         },
+         "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "description": "Suggested event kind, such as work.discussion or work.doc_edited; a flow may change it"
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "One line: the document, ticket or meeting title, or the channel and first words"
+         },
+         "summary": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The text, whitespace collapsed, at most 600 characters"
+         },
+         "teamHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The team it seems to belong to, from the tool's own grouping, when there is one"
+         },
+         "initiativeHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The project or initiative it seems to belong to, when there is one"
+         },
+         "customerHint": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "The customer it is about, when there is one (a #customer-<name> channel, a CRM company…)"
+         },
+         "raw": {
+          "type": "object",
+          "description": "The tool's own object, trimmed: long strings clipped, long lists cut, deep nesting dropped"
+         },
+         "cursor": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "Pass it back as Since to continue after this item (List Changed Since operations)"
+         }
+        },
+        "required": [
+         "source",
+         "sourceId",
+         "url",
+         "actorEmail",
+         "occurredAt",
+         "kind",
+         "title",
+         "summary",
+         "teamHint",
+         "initiativeHint",
+         "customerHint",
+         "raw"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "note"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "action": "Create a note",
+       "description": "Add a note to a record"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "create",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "task"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Create",
+       "value": "create",
+       "action": "Create a task",
+       "description": "Create a task, optionally linked to a record"
+      }
+     ]
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "noDataExpression": true,
+     "default": "getAll",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "workspaceMember"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "action": "Get workspace members",
+       "description": "The members of the workspace, with email",
+       "idempotent": true
+      }
+     ]
+    },
+    {
+     "name": "object",
+     "displayName": "Object",
+     "type": "string",
+     "default": "companies",
+     "required": true,
+     "placeholder": "companies, people or deals",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record",
+        "note"
+       ],
+       "operation": [
+        "get",
+        "getManyChangedSince",
+        "addToList",
+        "create"
+       ]
+      }
+     },
+     "description": "The object's API slug (companies, people, deals or a custom object) or ID"
+    },
+    {
+     "name": "recordId",
+     "displayName": "Record ID",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record",
+        "note"
+       ],
+       "operation": [
+        "get",
+        "addToList",
+        "create"
+       ]
+      }
+     },
+     "description": "The record's UUID"
+    },
+    {
+     "name": "list",
+     "displayName": "List",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "placeholder": "sales_pipeline",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "listEntry"
+       ],
+       "operation": [
+        "getManyChangedSince"
+       ]
+      }
+     },
+     "description": "The list's API slug or ID, such as a sales pipeline"
+    },
+    {
+     "name": "list",
+     "displayName": "List",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "placeholder": "sales_pipeline",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "addToList"
+       ]
+      }
+     },
+     "description": "The list's API slug or ID to add the record to"
+    },
+    {
+     "name": "since",
+     "displayName": "Since",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-11-12T08:00:00Z",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "getManyChangedSince"
+       ]
+      }
+     },
+     "description": "Rows changed after this ISO time or the cursor of an earlier item. Empty: the last 24 hours."
+    },
+    {
+     "name": "since",
+     "displayName": "Since",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-11-12T08:00:00Z",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "listEntry"
+       ],
+       "operation": [
+        "getManyChangedSince"
+       ]
+      }
+     },
+     "description": "Rows changed after this ISO time or the cursor of an earlier item. Empty: the last 24 hours."
+    },
+    {
+     "name": "detect",
+     "displayName": "Changes To Look For",
+     "type": "options",
+     "default": "any",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record",
+        "listEntry"
+       ],
+       "operation": [
+        "getManyChangedSince"
+       ]
+      }
+     },
+     "description": "Attio has no updated-at timestamp on records and entries, so this picks how a change is found",
+     "options": [
+      {
+       "name": "Any Value Changed (Reads Every Row)",
+       "value": "any",
+       "description": "Reads all rows and takes the newest time any value was set. Complete, but one call per 200 rows."
+      },
+      {
+       "name": "Stage Changed (Server Filter)",
+       "value": "stage",
+       "description": "Only rows whose stage (the Stage Attribute) changed since: a deal moved. One filtered query."
+      },
+      {
+       "name": "Created (Server Filter)",
+       "value": "created",
+       "description": "Only rows created since. Cheapest; misses edits of older rows."
+      }
+     ]
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record",
+        "listEntry"
+       ],
+       "operation": [
+        "getManyChangedSince"
+       ]
+      }
+     },
+     "description": "Whether to return all results or only up to a limit"
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 50,
+     "typeOptions": {
+      "minValue": 1,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record",
+        "listEntry"
+       ],
+       "operation": [
+        "getManyChangedSince"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     },
+     "description": "Max number of results to return (the oldest first; pass the last cursor back as Since for the next batch)"
+    },
+    {
+     "name": "activityOptions",
+     "displayName": "Options",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add option",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record",
+        "listEntry"
+       ],
+       "operation": [
+        "get",
+        "getManyChangedSince"
+       ]
+      }
+     },
+     "values": [
+      {
+       "name": "wonStages",
+       "displayName": "Won Stages",
+       "type": "string",
+       "default": "Won",
+       "description": "Comma-separated stage names that count as won (compared ignoring case, emoji and punctuation, so \"Won 🎉\" matches Won): the kind becomes work.deal_won"
+      },
+      {
+       "name": "stageAttribute",
+       "displayName": "Stage Attribute",
+       "type": "string",
+       "default": "stage",
+       "description": "The API slug of the status attribute that holds the stage (deals: stage; a list: the list's own status attribute)"
+      },
+      {
+       "name": "teamHint",
+       "displayName": "Team Hint",
+       "type": "string",
+       "default": "",
+       "placeholder": "Sales",
+       "description": "A constant for teamHint on every item. Empty: no team hint."
+      }
+     ]
+    },
+    {
+     "name": "title",
+     "displayName": "Title",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "note"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "The note's title (plain text)"
+    },
+    {
+     "name": "content",
+     "displayName": "Content",
+     "type": "string",
+     "default": "",
+     "typeOptions": {
+      "rows": 4
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "note"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "The note's text"
+    },
+    {
+     "name": "format",
+     "displayName": "Format",
+     "type": "options",
+     "default": "plaintext",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "note"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "options": [
+      {
+       "name": "Plain Text",
+       "value": "plaintext"
+      },
+      {
+       "name": "Markdown",
+       "value": "markdown"
+      }
+     ]
+    },
+    {
+     "name": "taskContent",
+     "displayName": "Task",
+     "type": "string",
+     "default": "",
+     "required": true,
+     "typeOptions": {
+      "rows": 2
+     },
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "task"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "What to do (plain text, up to 2000 characters)"
+    },
+    {
+     "name": "deadline",
+     "displayName": "Deadline",
+     "type": "string",
+     "default": "",
+     "placeholder": "2026-11-20T09:00:00Z",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "task"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "ISO time the task is due. Empty: no deadline."
+    },
+    {
+     "name": "linkedObject",
+     "displayName": "Linked Object",
+     "type": "string",
+     "default": "",
+     "placeholder": "companies",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "task"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "The object of the record to link (with Linked Record ID). Empty: no link."
+    },
+    {
+     "name": "linkedRecordId",
+     "displayName": "Linked Record ID",
+     "type": "string",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "task"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     }
+    },
+    {
+     "name": "assignees",
+     "displayName": "Assignee Emails",
+     "type": "string",
+     "default": "",
+     "placeholder": "ana@example.com, ben@example.com",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "task"
+       ],
+       "operation": [
+        "create"
+       ]
+      }
+     },
+     "description": "Workspace members to assign, by email (comma-separated)"
+    },
+    {
+     "name": "entryValues",
+     "displayName": "Entry Values (JSON)",
+     "type": "json",
+     "default": "",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "record"
+       ],
+       "operation": [
+        "addToList"
+       ]
+      }
+     },
+     "description": "Attribute values of the new entry, keyed by API slug, e.g. {\"stage\": \"Lead\"}. Empty: none."
+    }
+   ]
+  }
+ ],
+ "credentialTypes": [
+  {
+   "name": "attioApi",
+   "displayName": "Attio API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIE9yaWdpbmFsIExhbmRmbG93IGdseXBoIGZvciB0aGUgQXR0aW8gcGx1Z2luOiB0aHJlZSBsaW5rZWQgcmVjb3Jkcy4gTm90IEF0dGlvJ3MgbG9nby4gLS0+CiAgPHJlY3QgeD0iMC43NSIgeT0iMC43NSIgd2lkdGg9IjQ2LjUiIGhlaWdodD0iNDYuNSIgcng9IjExLjI1IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNlNGU0ZTciIHN0cm9rZS13aWR0aD0iMS41Ii8+CiAgPHBhdGggZD0iTTE2IDMxIDI0IDE1IDMyIDMxIiBmaWxsPSJub25lIiBzdHJva2U9IiM0ZjViZDUiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjE0IiByPSI0IiBmaWxsPSIjNGY1YmQ1Ii8+CiAgPGNpcmNsZSBjeD0iMTUiIGN5PSIzMiIgcj0iNCIgZmlsbD0iIzRmNWJkNSIvPgogIDxjaXJjbGUgY3g9IjMzIiBjeT0iMzIiIHI9IjQiIGZpbGw9IiM0ZjViZDUiLz4KPC9zdmc+Cg==",
+   "documentationUrl": "https://docs.attio.com/rest-api/guides/authentication",
+   "description": "A workspace access token (API key) made under Settings, Developers in Attio, with the scopes the nodes need (see the plugin README).",
+   "properties": [
+    {
+     "name": "accessToken",
+     "displayName": "Access Token",
+     "type": "string",
+     "required": true,
+     "typeOptions": {
+      "password": true
+     },
+     "description": "The workspace access token, sent as a Bearer token"
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "default": "https://api.attio.com",
+     "description": "Change it only for a proxy or a test double"
+    }
+   ],
+   "testable": true
+  },
+  {
+   "name": "attioOAuth2Api",
+   "displayName": "Attio OAuth2 API",
+   "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8IS0tIE9yaWdpbmFsIExhbmRmbG93IGdseXBoIGZvciB0aGUgQXR0aW8gcGx1Z2luOiB0aHJlZSBsaW5rZWQgcmVjb3Jkcy4gTm90IEF0dGlvJ3MgbG9nby4gLS0+CiAgPHJlY3QgeD0iMC43NSIgeT0iMC43NSIgd2lkdGg9IjQ2LjUiIGhlaWdodD0iNDYuNSIgcng9IjExLjI1IiBmaWxsPSIjZmZmIiBzdHJva2U9IiNlNGU0ZTciIHN0cm9rZS13aWR0aD0iMS41Ii8+CiAgPHBhdGggZD0iTTE2IDMxIDI0IDE1IDMyIDMxIiBmaWxsPSJub25lIiBzdHJva2U9IiM0ZjViZDUiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjE0IiByPSI0IiBmaWxsPSIjNGY1YmQ1Ii8+CiAgPGNpcmNsZSBjeD0iMTUiIGN5PSIzMiIgcj0iNCIgZmlsbD0iIzRmNWJkNSIvPgogIDxjaXJjbGUgY3g9IjMzIiBjeT0iMzIiIHI9IjQiIGZpbGw9IiM0ZjViZDUiLz4KPC9zdmc+Cg==",
+   "documentationUrl": "https://docs.attio.com/rest-api/tutorials/connect-an-app-through-oauth",
+   "description": "Sign in with Attio: create an app at build.attio.com, add the redirect URL shown below on its OAuth tab, enable the scopes on its Scopes tab (read for records, lists, notes, tasks and members; write for the Note, Task and Add to List actions; webhook:read-write for the trigger), then Connect. Attio sends no refresh token, the access token does not expire.",
+   "extends": [
+    "oAuth2Api"
+   ],
+   "properties": [
+    {
+     "name": "grantType",
+     "displayName": "Grant Type",
+     "type": "hidden",
+     "default": "authorizationCode"
+    },
+    {
+     "name": "authUrl",
+     "displayName": "Authorization URL",
+     "type": "hidden",
+     "default": "https://app.attio.com/authorize"
+    },
+    {
+     "name": "accessTokenUrl",
+     "displayName": "Access Token URL",
+     "type": "hidden",
+     "default": "https://app.attio.com/oauth/token"
+    },
+    {
+     "name": "authentication",
+     "displayName": "Client Authentication",
+     "type": "hidden",
+     "default": "body"
+    },
+    {
+     "name": "scope",
+     "displayName": "Scope",
+     "type": "hidden",
+     "default": ""
+    },
+    {
+     "name": "baseUrl",
+     "displayName": "Base URL",
+     "type": "string",
+     "default": "https://api.attio.com",
+     "description": "Change it only for a proxy or a test double"
+    }
+   ],
+   "testable": true
+  }
+ ],
+ "transports": [
+  "http",
+  "grpc",
+  "mcp"
+ ],
+ "maxConcurrency": 8
+}

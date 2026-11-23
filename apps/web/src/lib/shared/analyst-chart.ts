@@ -1,5 +1,5 @@
 /**
- * The Platform analyst's chat in the new look (docs/second-brain.md#the-analyst-agent): which sources it can read, how many
+ * The Platform analyst's chat (docs/second-brain.md#the-analyst-agent): which sources it can read, how many
  * it has looked across in a turn, and the chart of its answer. The numbers come from the results of the tools the analyst
  * really called (lib/server/brain/analyst.ts: `usage_report`, `search_facts`, `workflow_knowledge`, `open_suggestions`),
  * never from the model's prose; the prose only supplies the answer sentence and its drivers.
@@ -23,7 +23,7 @@ export function sourcesOfTool(tool: string): AnalystSource[] {
   const name = tool.toLowerCase();
   if (name.startsWith('usage_report')) return ['runs', 'usage'];
   if (name.startsWith('workflow_knowledge')) return ['runs', 'facts'];
-  if (name.startsWith('search_facts')) return ['facts'];
+  if (name.startsWith('search_facts') || name.startsWith('entity_knowledge') || name === 'entities' || name.startsWith('note_entity')) return ['facts'];
   if (name.startsWith('open_suggestions') || name.startsWith('suggest_improvement')) return ['suggestions'];
   if (name.includes('notebook')) return ['notebook'];
   return [];
@@ -167,10 +167,10 @@ export function chartHeading(chart: AnalystChart): string {
   return [chart.period, chart.scope?.name ?? (chart.groupBy ? `by ${chart.groupBy}` : undefined)].filter(Boolean).join(' · ');
 }
 
-/** The link for "Open the runs": the executions list, filtered to the workflow when a result names one. */
+/** The link for "Open the runs": the Runs list, filtered to the workflow when a result names one. */
 export function runsHref(chart?: Pick<AnalystChart, 'scope'>): string {
   const id = chart?.scope?.workflowId;
-  return id ? `/executions?workflowId=${encodeURIComponent(id)}` : '/executions';
+  return id ? `/runs?workflowId=${encodeURIComponent(id)}` : '/runs';
 }
 
 const BULLET = /^\s*(?:[-*•]|\d+[.)])\s+(.*\S)\s*$/;

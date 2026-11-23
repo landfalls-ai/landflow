@@ -32,18 +32,25 @@ const mcpRoute = await import('@/app/mcp/[...path]/route');
 const workflowRoute = await import('@/app/api/workflows/[id]/route');
 const projects = await import('@/lib/server/projects');
 const { logger } = await import('@/lib/server/telemetry/logger');
+const { queryEvents } = await import('@/lib/server/audit/store');
+const { database } = await import('@/lib/server/db');
+const { useTokenOnce } = await import('@/lib/server/token-replay');
+const tokenReplay = await import('@/lib/server/token-replay');
+const { checkWebhookAuth } = await import('@/lib/server/webhook-auth');
 
 registry.registerBuiltin(corePlugin);
 
 const ISSUER = 'https://issuer.auth.test';
 let jwksServer: Server;
 let jwksUrl: string;
+let jwksHits = 0;
 let rsa: Awaited<ReturnType<typeof generateKeyPair>>;
 
 beforeAll(async () => {
   rsa = await generateKeyPair('RS256', { extractable: true });
   const jwk = { ...(await exportJWK(rsa.publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' };
   jwksServer = createServer((_req, res) => {
+    jwksHits++;
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ keys: [jwk] }));
   });
@@ -110,10 +117,18 @@ describe('IP allow-list matching', () => {
     expect(parseIpList(' 10.0.0.1, 10.0.0.2\n10.0.0.0/24 ')).toEqual(['10.0.0.1', '10.0.0.2', '10.0.0.0/24']);
   });
 
-  it('reads the caller from X-Forwarded-For, then X-Real-IP, else 127.0.0.1', () => {
+  it('reads the caller from X-Forwarded-For (hops from LANDFLOW_TRUSTED_PROXIES), else 127.0.0.1', () => {
     const request = (headers: Record<string, string>) => new Request('http://auth.test/', { headers });
-    expect(callerIp(request({ 'x-forwarded-for': '198.51.100.4, 10.0.0.1', 'x-real-ip': '10.9.9.9' }))).toBe('198.51.100.4');
-    expect(callerIp(request({ 'x-real-ip': '10.9.9.9' }))).toBe('10.9.9.9');
+    // No trusted proxy: the last entry, and X-Real-IP is ignored.
+    expect(callerIp(request({ 'x-forwarded-for': '198.51.100.4, 10.0.0.1', 'x-real-ip': '10.9.9.9' }))).toBe('10.0.0.1');
+    expect(callerIp(request({ 'x-real-ip': '10.9.9.9' }))).toBe('127.0.0.1');
+    process.env.LANDFLOW_TRUSTED_PROXIES = '1';
+    try {
+      expect(callerIp(request({ 'x-forwarded-for': '198.51.100.4', 'x-real-ip': '10.9.9.9' }))).toBe('198.51.100.4');
+      expect(callerIp(request({ 'x-real-ip': '10.9.9.9' }))).toBe('10.9.9.9');
+    } finally {
+      delete process.env.LANDFLOW_TRUSTED_PROXIES;
+    }
     expect(callerIp(request({ 'x-forwarded-for': '::ffff:10.0.0.5' }))).toBe('10.0.0.5');
     expect(callerIp(request({}))).toBe('127.0.0.1');
   });
@@ -381,5 +396,348 @@ describe('trigger credentials outside the workflow’s project', () => {
     projects.addShare('credential', mcp.credential.id, mcp.team, 'user');
     expect((await initialize('Bearer wrong')).status).toBe(401);
     expect((await initialize('Bearer team-token')).status).toBe(200);
+  });
+});
+
+describe('JWT Auth bound claims and the JWKS fetch (C18)', () => {
+  const GITHUB = 'https://token.actions.githubusercontent.com';
+  const github = (repository: string, claims: Record<string, unknown> = {}) =>
+    new SignJWT({ repository, sub: `repo:${repository}:ref:refs/heads/main`, ref: 'refs/heads/main', ...claims })
+      .setProtectedHeader({ alg: 'RS256', kid: 'k1' })
+      .setIssuer(GITHUB)
+      .setAudience('landflow')
+      .setExpirationTime('5m')
+      .sign(rsa.privateKey);
+  const denied = () => queryEvents({ action: ['api.denied'] }, { limit: 100 }).events.filter((event) => event.summary === 'JWT claims refused');
+
+  it('refuses a token from another repository, starts no run and audits the claim, never the token', async () => {
+    const credential = credentials.create({
+      name: 'CI bound',
+      type: 'core.jwtAuth',
+      data: { keyType: 'jwks', jwksUrl, algorithm: 'RS256', issuer: GITHUB, audience: 'landflow', boundClaims: '# only this repo\nrepository: my-org/app' },
+    });
+    await hook('ci-bound', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const runs = () => store.listExecutions({ workflowId: 'wf_auth_ci_bound' }).length;
+    const ok = await call('ci-bound', { authorization: `Bearer ${await github('my-org/app')}` });
+    expect(ok.status).toBe(200);
+    const before = runs();
+    const info = vi.spyOn(logger, 'info');
+    const warn = vi.spyOn(logger, 'warn');
+    const token = await github('other/app');
+    const refused = await call('ci-bound', { authorization: `Bearer ${token}` });
+    expect(refused.status).toBe(403);
+    expect(runs()).toBe(before);
+    const rows = denied().filter((event) => event.details?.reason === 'claim_mismatch');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ outcome: 'denied', details: { reason: 'claim_mismatch', claim: 'repository' }, target: { type: 'workflow', id: 'wf_auth_ci_bound' } });
+    // Neither the token nor the claim value reaches the log or the audit table.
+    const everything = JSON.stringify([database().all('SELECT * FROM audit_events'), info.mock.calls, warn.mock.calls]);
+    expect(everything).not.toContain(token);
+    expect(everything).not.toContain(token.split('.')[1]);
+    expect(everything).not.toContain('other/app');
+    info.mockRestore();
+    warn.mockRestore();
+    // A throttle: fifty more refusals in the minute add no rows.
+    for (let i = 0; i < 50; i++) expect((await call('ci-bound', { authorization: `Bearer ${token}` })).status).toBe(403);
+    expect(denied().filter((event) => event.details?.reason === 'claim_mismatch')).toHaveLength(1);
+  });
+
+  it('refuses a public CI issuer with no bound claim before any JWKS request, saying what to add', async () => {
+    const credential = credentials.create({ name: 'CI open', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl, algorithm: 'RS256', issuer: GITHUB, audience: 'landflow' } });
+    await hook('ci-open', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const hits = jwksHits;
+    const response = await call('ci-open', { authorization: `Bearer ${await github('anyone/anything')}` });
+    expect(response.status).toBe(403);
+    const message = (await response.json()).error as string;
+    expect(message).toMatch(/Bound Claims/);
+    expect(message).toMatch(/repository: my-org\/my-repo/);
+    expect(jwksHits).toBe(hits);
+    expect(denied().some((event) => event.details?.reason === 'claims_required')).toBe(true);
+  });
+
+  it('still records the refusal when other denied reads have used the instance-wide cap, and logs once a minute', async () => {
+    const { deniedReadUnderCap } = await import('@/lib/server/audit/http');
+    for (let i = 0; i < 80; i++) deniedReadUnderCap();
+    const credential = credentials.create({ name: 'CI capped', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl, algorithm: 'RS256', issuer: GITHUB, audience: 'landflow' } });
+    await hook('ci-capped', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const warn = vi.spyOn(logger, 'warn');
+    for (let i = 0; i < 20; i++) expect((await call('ci-capped')).status).toBe(401);
+    const token = await github('anyone/anything');
+    for (let i = 0; i < 20; i++) expect((await call('ci-capped', { authorization: `Bearer ${token}` })).status).toBe(403);
+    expect(denied().filter((event) => event.target?.id === 'wf_auth_ci_capped')).toHaveLength(1);
+    expect(warn.mock.calls.filter(([message]) => /binds no repository/.test(String(message)))).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it('treats GitHub’s JWKS host with no issuer the same way', async () => {
+    const credential = credentials.create({ name: 'CI host', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl: `${GITHUB}/.well-known/jwks`, algorithm: 'RS256' } });
+    await hook('ci-host', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const response = await call('ci-host', { authorization: `Bearer ${await github('anyone/anything')}` });
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toMatch(/Bound Claims/);
+  });
+
+  it('refuses by the verified iss when the credential names no CI issuer', async () => {
+    const credential = credentials.create({ name: 'CI iss', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl, algorithm: 'RS256' } });
+    await hook('ci-iss', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const response = await call('ci-iss', { authorization: `Bearer ${await github('anyone/anything')}` });
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toMatch(/Bound Claims/);
+  });
+
+  it('keeps an HS256 credential made before the change working', async () => {
+    const credential = credentials.create({ name: 'Old HS', type: 'core.jwtAuth', data: { keyType: 'passphrase', secret: 'old-secret', algorithm: 'HS256' } });
+    await hook('ci-old', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    expect((await call('ci-old', { authorization: `Bearer ${await hs256('old-secret')}` })).status).toBe(200);
+  });
+
+  it('answers 500 for a credential whose bound claims do not parse', async () => {
+    const credential = credentials.create({ name: 'Bad lines', type: 'core.jwtAuth', data: { keyType: 'passphrase', secret: 'x-secret', algorithm: 'HS256', boundClaims: 'nonsense' } });
+    await hook('ci-bad', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential) });
+    const response = await call('ci-bad', { authorization: `Bearer ${await hs256('x-secret')}` });
+    expect(response.status).toBe(500);
+    expect((await response.json()).error).toMatch(/line 1/);
+  });
+
+  it('fetches the JWKS through safeFetch: the outbound policy applies', async () => {
+    const hits = jwksHits;
+    const previous = process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
+    process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = 'true';
+    try {
+      const metadata = credentials.create({ name: 'Metadata JWKS', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl: 'http://169.254.169.254/latest/jwks', algorithm: 'RS256' } });
+      await hook('ci-meta', { authentication: 'jwtAuth' }, { jwtAuth: ref(metadata) });
+      const response = await call('ci-meta', { authorization: `Bearer ${await github('my-org/app')}` });
+      expect(response.status).toBe(500);
+      expect((await response.json()).error).toMatch(/outbound policy/);
+      // The local JWKS server is refused as well, and never contacted.
+      const local = credentials.create({ name: 'Local JWKS', type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl: `${jwksUrl}?blocked`, algorithm: 'RS256' } });
+      await hook('ci-local', { authentication: 'jwtAuth' }, { jwtAuth: ref(local) });
+      expect((await call('ci-local', { authorization: `Bearer ${await github('my-org/app')}` })).status).toBe(500);
+      expect(jwksHits).toBe(hits);
+    } finally {
+      if (previous === undefined) delete process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE;
+      else process.env.LANDFLOW_OUTBOUND_BLOCK_PRIVATE = previous;
+    }
+  });
+});
+
+describe('JWT Auth single use and run data (C18 W4a)', () => {
+  const GITHUB = 'https://token.actions.githubusercontent.com';
+  const github = (repository: string, claims: Record<string, unknown> = {}, issuer = GITHUB, expires: string | null = '5m') => {
+    const jwt = new SignJWT({ repository, sub: `repo:${repository}:ref:refs/heads/main`, ...claims }).setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(issuer).setAudience('landflow').setJti(`jti-${Math.random()}`);
+    if (expires) jwt.setExpirationTime(expires);
+    return jwt.sign(rsa.privateKey);
+  };
+  const credential = (name: string, extra: Record<string, unknown> = {}) =>
+    credentials.create({ name, type: 'core.jwtAuth', data: { keyType: 'jwks', jwksUrl, algorithm: 'RS256', issuer: GITHUB, audience: 'landflow', boundClaims: 'repository: my-org/app', ...extra } });
+  const runs = (id: string) => store.listExecutions({ workflowId: id }).length;
+  const replayRows = () => queryEvents({ action: ['api.denied'] }, { limit: 200 }).events.filter((event) => event.summary === 'JWT token replayed');
+  const settle = async (id: string, count: number) => {
+    for (let i = 0; i < 200 && runs(id) < count; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  };
+
+  it('Single use: a token works once, the second time is 409 and starts no run; the audit holds no token', async () => {
+    await hook('su-on', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single', { singleUse: true })) });
+    const token = await github('my-org/app');
+    expect((await call('su-on', { authorization: `Bearer ${token}` })).status).toBe(200);
+    await settle('wf_auth_su_on', 1);
+    const before = runs('wf_auth_su_on');
+    const warn = vi.spyOn(logger, 'warn');
+    const again = await call('su-on', { authorization: `Bearer ${token}` });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ code: 'token_replayed' });
+    expect(runs('wf_auth_su_on')).toBe(before);
+    const rows = replayRows().filter((event) => event.target?.id === 'wf_auth_su_on');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ outcome: 'denied', status: 409, details: { reason: 'token_replayed', iss: GITHUB } });
+    const everything = JSON.stringify([database().all('SELECT * FROM audit_events'), warn.mock.calls]);
+    expect(everything).not.toContain(token);
+    expect(everything).not.toContain(token.split('.')[1]);
+    warn.mockRestore();
+    // A throttle: ten more replays in the minute add no rows.
+    for (let i = 0; i < 10; i++) expect((await call('su-on', { authorization: `Bearer ${token}` })).status).toBe(409);
+    expect(replayRows().filter((event) => event.target?.id === 'wf_auth_su_on')).toHaveLength(1);
+  });
+
+  it('Single use: a token with no exp is refused 401, naming why', async () => {
+    await hook('su-noexp', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single no exp', { singleUse: true })) });
+    const response = await call('su-noexp', { authorization: `Bearer ${await github('my-org/app', {}, GITHUB, null)}` });
+    expect(response.status).toBe(401);
+    expect((await response.json()).error).toMatch(/Single use needs tokens with an expiry/);
+  });
+
+  it('Single use off: the same token starts two runs', async () => {
+    await hook('su-off', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Multi')) });
+    const token = await github('my-org/app');
+    expect((await call('su-off', { authorization: `Bearer ${token}` })).status).toBe(200);
+    expect((await call('su-off', { authorization: `Bearer ${token}` })).status).toBe(200);
+    await settle('wf_auth_su_off', 2);
+    expect(runs('wf_auth_su_off')).toBe(2);
+  });
+
+  it('Single use also guards a Form Trigger with the same credential', async () => {
+    const workflow: Workflow = {
+      id: 'wf_auth_su_form',
+      name: 'Single use form',
+      nodes: [
+        {
+          id: 'Form',
+          name: 'Form',
+          type: 'core.formTrigger',
+          typeVersion: 1,
+          position: [0, 0],
+          parameters: { path: 'su-form', formTitle: 'CI', authentication: 'jwtAuth', formFields: { values: [{ fieldLabel: 'Name', fieldType: 'text' }] } },
+          credentials: { jwtAuth: ref(credential('Single form', { singleUse: true })) },
+        },
+      ],
+      connections: [],
+    };
+    store.saveWorkflow(workflow);
+    await publishDraft(workflow.id);
+    const token = await github('my-org/app');
+    const submit = () =>
+      formRoute.POST(new Request('http://auth.test/form/su-form', { method: 'POST', body: new URLSearchParams({ f0: 'Ada' }), headers: { authorization: `Bearer ${token}` } }), { params: Promise.resolve({ path: ['su-form'] }) });
+    expect((await submit()).status).toBe(200);
+    expect((await submit()).status).toBe(409);
+  });
+
+  it('keeps the token out of the saved run and keeps jwtPayload (C18-D2)', async () => {
+    await hook('su-data', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Data')) });
+    const token = await github('my-org/app');
+    expect((await call('su-data', { authorization: `Bearer ${token}` })).status).toBe(200);
+    await settle('wf_auth_su_data', 1);
+    const summary = store.listExecutions({ workflowId: 'wf_auth_su_data' })[0];
+    const saved = JSON.stringify(store.getExecution(summary.id));
+    expect(saved).not.toContain(token);
+    expect(saved).not.toContain(token.split('.')[2]);
+    expect(saved).not.toMatch(/authorization/i);
+    expect(saved).toContain('my-org/app');
+    expect(saved).toContain('jwtPayload');
+  });
+
+  it('a changed last signature character (a malleable signature) is the same token: 409', async () => {
+    await hook('su-mall', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single mall', { singleUse: true })) });
+    // No jti, so the key comes from the signed part; RS256 leaves 4 spare bits in the last base64url character.
+    const token = await new SignJWT({ repository: 'my-org/app' }).setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(GITHUB).setAudience('landflow').setExpirationTime('5m').sign(rsa.privateKey);
+    expect((await call('su-mall', { authorization: `Bearer ${token}` })).status).toBe(200);
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const last = token.slice(-1);
+    const edited = token.slice(0, -1) + alphabet[alphabet.indexOf(last) ^ 1];
+    expect(edited).not.toBe(token);
+    expect((await call('su-mall', { authorization: `Bearer ${edited}` })).status).toBe(409);
+  });
+
+  it('refuses a token that expires more than 24 hours away, naming the limit', async () => {
+    await hook('su-far', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single far', { singleUse: true })) });
+    const response = await call('su-far', { authorization: `Bearer ${await github('my-org/app', {}, GITHUB, '25h')}` });
+    expect(response.status).toBe(401);
+    expect((await response.json()).error).toMatch(/24 hours/);
+    expect((await call('su-far', { authorization: `Bearer ${await github('my-org/app', {}, GITHUB, '23h')}` })).status).toBe(200);
+  });
+
+  it('a Form Trigger page view does not spend the token; the submission does, and a replay gets its own page', async () => {
+    const workflow: Workflow = {
+      id: 'wf_auth_su_view',
+      name: 'Single use view',
+      nodes: [
+        {
+          id: 'Form',
+          name: 'Form',
+          type: 'core.formTrigger',
+          typeVersion: 1,
+          position: [0, 0],
+          parameters: { path: 'su-view', formTitle: 'CI', authentication: 'jwtAuth', formFields: { values: [{ fieldLabel: 'Name', fieldType: 'text' }] } },
+          credentials: { jwtAuth: ref(credential('Single view', { singleUse: true })) },
+        },
+      ],
+      connections: [],
+    };
+    store.saveWorkflow(workflow);
+    await publishDraft(workflow.id);
+    const token = await github('my-org/app');
+    const params = { params: Promise.resolve({ path: ['su-view'] }) };
+    const headers = { authorization: `Bearer ${token}` };
+    expect((await formRoute.GET(new Request('http://auth.test/form/su-view', { headers }), params)).status).toBe(200);
+    expect((await formRoute.GET(new Request('http://auth.test/form/su-view', { headers }), params)).status).toBe(200);
+    const post = () => formRoute.POST(new Request('http://auth.test/form/su-view', { method: 'POST', body: new URLSearchParams({ f0: 'Ada' }), headers }), params);
+    expect((await post()).status).toBe(200);
+    const again = await post();
+    expect(again.status).toBe(409);
+    expect(await again.text()).toMatch(/already used/);
+  });
+
+  it('checkWebhookAuth with spend: false verifies without spending', async () => {
+    await hook('su-nospend', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single nospend', { singleUse: true })) });
+    const node = store.getWorkflow('wf_auth_su_nospend')!.nodes[0] as Parameters<typeof checkWebhookAuth>[2];
+    const token = await github('my-org/app');
+    const req = () => new Request('http://auth.test/x', { headers: { authorization: `Bearer ${token}` } });
+    expect((await checkWebhookAuth(req(), 'wf_auth_su_nospend', node, 'Webhook', 'Webhook', { spend: false })).ok).toBe(true);
+    expect((await checkWebhookAuth(req(), 'wf_auth_su_nospend', node, 'Webhook', 'Webhook', { spend: false })).ok).toBe(true);
+    expect((await checkWebhookAuth(req(), 'wf_auth_su_nospend', node)).ok).toBe(true);
+    expect((await checkWebhookAuth(req(), 'wf_auth_su_nospend', node)).ok).toBe(false);
+  });
+
+  it('does not spend a token that fails a bound claim or a signature', async () => {
+    await hook('su-unspent', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single unspent', { singleUse: true })) });
+    const sign = (repository: string, key: Awaited<ReturnType<typeof generateKeyPair>>['privateKey'] = rsa.privateKey) =>
+      new SignJWT({ repository }).setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(GITHUB).setAudience('landflow').setJti('shared-jti').setExpirationTime('5m').sign(key);
+    expect((await call('su-unspent', { authorization: `Bearer ${await sign('other/app')}` })).status).toBe(403);
+    const stranger = await generateKeyPair('RS256');
+    expect((await call('su-unspent', { authorization: `Bearer ${await sign('my-org/app', stranger.privateKey)}` })).status).toBe(401);
+    expect((await call('su-unspent', { authorization: `Bearer ${await sign('my-org/app')}` })).status).toBe(200);
+  });
+
+  it('is once per credential: the same iss and jti passes under another credential', async () => {
+    await hook('su-cred-a', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single A', { singleUse: true })) });
+    await hook('su-cred-b', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single B', { singleUse: true })) });
+    const token = await new SignJWT({ repository: 'my-org/app' }).setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(GITHUB).setAudience('landflow').setJti('per-credential').setExpirationTime('5m').sign(rsa.privateKey);
+    expect((await call('su-cred-a', { authorization: `Bearer ${token}` })).status).toBe(200);
+    expect((await call('su-cred-b', { authorization: `Bearer ${token}` })).status).toBe(200);
+    expect((await call('su-cred-a', { authorization: `Bearer ${token}` })).status).toBe(409);
+  });
+
+  it('answers 503 and logs the workflow id when the replay store fails', async () => {
+    await hook('su-down', { authentication: 'jwtAuth' }, { jwtAuth: ref(credential('Single down', { singleUse: true })) });
+    const spy = vi.spyOn(tokenReplay, 'useTokenOnce').mockRejectedValue(new Error('db down with secret-detail'));
+    const logged = vi.spyOn(logger, 'error');
+    try {
+      const response = await call('su-down', { authorization: `Bearer ${await github('my-org/app')}` });
+      expect(response.status).toBe(503);
+      expect(JSON.stringify(await response.json())).not.toContain('secret-detail');
+      expect(JSON.stringify(logged.mock.calls)).toContain('wf_auth_su_down');
+      expect(JSON.stringify(logged.mock.calls)).not.toContain('secret-detail');
+    } finally {
+      spy.mockRestore();
+      logged.mockRestore();
+    }
+  });
+});
+
+describe('useTokenOnce (token-replay.ts)', () => {
+  const payload = (over: Record<string, unknown> = {}) => ({ iss: 'https://a.test', jti: 'j1', exp: Math.floor(Date.now() / 1000) + 300, ...over });
+  const signed = (tail: string) => `aGVhZGVy.cGF5bG9hZA.${tail}`;
+  it('refuses the second use of a jti and keys it by issuer and credential', async () => {
+    const p = payload({ jti: 'unit-1' });
+    expect(await useTokenOnce(p, 'tok')).toEqual({ ok: true });
+    expect(await useTokenOnce(p, 'tok')).toEqual({ ok: false, reason: 'token_replayed' });
+    expect(await useTokenOnce(payload({ jti: 'unit-1', iss: 'https://b.test' }), 'tok')).toEqual({ ok: true });
+    expect(await useTokenOnce(p, 'tok', { credentialId: 'cred_other' })).toEqual({ ok: true });
+  });
+  it('keys a token with no jti by its signed part, so another signature encoding is the same token', async () => {
+    const p = payload({ jti: undefined });
+    expect(await useTokenOnce(p, signed('sig-one'))).toEqual({ ok: true });
+    expect(await useTokenOnce(p, signed('sig-two'))).toEqual({ ok: false, reason: 'token_replayed' });
+    expect(await useTokenOnce(p, 'other.token.sig')).toEqual({ ok: true });
+  });
+  it('refuses a token with no exp or one more than 24 h away', async () => {
+    expect(await useTokenOnce(payload({ exp: undefined }), 'x')).toEqual({ ok: false, reason: 'no_expiry' });
+    expect(await useTokenOnce(payload({ jti: 'far', exp: Math.floor(Date.now() / 1000) + 25 * 3600 }), 'x')).toEqual({ ok: false, reason: 'exp_too_far' });
+  });
+  it('forgets the id a few seconds after jose stops accepting the token (exp + 30 s)', async () => {
+    const now = Date.now();
+    const p = payload({ jti: 'unit-2', exp: Math.floor(now / 1000) + 60 });
+    expect(await useTokenOnce(p, 't', { now })).toEqual({ ok: true });
+    expect(await useTokenOnce(p, 't', { now: now + 91_000 })).toEqual({ ok: false, reason: 'token_replayed' });
+    expect(await useTokenOnce(p, 't', { now: now + 100_000 })).toEqual({ ok: true });
   });
 });

@@ -31,7 +31,11 @@ task states and OpenInference's span kinds, so an exporter can map them later. S
 `node:<nodeId>:<n>` is a node's n-th run, `<parent>/step:<id>` a remote agent's tool call. Each event carries the run's
 OTel trace id when telemetry recorded one, and a step's own span id in `attrs.otelSpanId`.
 
+Spotlight reads the same spans and node runs when it fixes a failed run: `get_run_log` (`lib/server/assistant/run-log.ts`, also an MCP tool) gives it each node's error with an HTTP node's status and response body, the plugin's log lines and a Run an Agent step's tool calls, so what a person reads here is what Spotlight read ([Test and fix](assistant.md#test-and-fix)).
+
 ### Who writes it
+
+- **The run's project and goal**: when a run starts in a project, the runner adds `attrs.project` (`{ id, name }`) and, when the run serves a goal, `attrs.goal` (`{ id, title }`) to the `run` span. The Run Trace shows them in a later wave.
 
 - **The runner** feeds every engine event of a run to a translator (`journal/translator.ts`). Node runs become `step`
   or `agent` spans, sub-node runs become `model`, `tool` or `delegate` spans, and waits become `wait` spans. A chat or
@@ -65,7 +69,9 @@ once when a run finishes or starts waiting, and never fail the run. Each flushed
 
 - **Content kept** (workflow setting `traceContent`, else `LANDFLOW_TRACE_CONTENT`): `full` (the default) keeps
   everything redacted, cut to 32 KB per event. `summaries` keeps the first 400 characters of each text. `off` keeps only
-  who did what and when: no inputs, outputs or message text, and error messages cut to 400 characters.
+  who did what and when: no inputs, outputs or message text, and error messages cut to 400 characters. An agent's
+  `attrs.saw` follows the setting: `summaries` cuts its `text` to 400 characters, `off` keeps no `text` and no persona
+  (the mode, project and goal ids and names, time and practice handles stay; the section says the text was not kept, and for `summaries` that it was cut).
 - **Retention**: events older than `LANDFLOW_TRACE_RETENTION_DAYS` (default 30, `0` keeps them) are pruned at boot and
   daily. Deleting an execution deletes its journal.
 
@@ -82,10 +88,15 @@ them with the response (`ExecuteResponse.records`, [protocol.md](protocol.md)) o
 way the engine emits a `node.record` event and the journal keeps it in the node's span. The GitHub plugin reports the
 pull requests, issues and branches it creates.
 
+**AI Judge** ([features/ai.md](features/ai.md#ai-judge)) is one span with each model round and tool call as a child, and one `decision` check: `pass` when it approved, `warn` when it denied, and `warn` with the reason in plain words when it could not decide and fell back (a waiting judge shows its [approval card](approval-inbox.md#judge-requests)).
+
+Each model call's tokens, each agent's model, tokens and cost, and a step's details always show. Run ids and trace ids appear only with **Show developer details** on (user menu; [Developer details](ui-review.md#developer-details)); **Open the trace** shows whenever a trace link is set.
+
 ## The screens
 
-**Run trace** sits next to **Canvas** above every execution. It opens by itself when the run has agents (the choice is
-remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phone.
+A workflow's run view (the Runs tab) shows the canvas, the Logs panel and a plain header; it has no Canvas / Run trace
+switch. **Full screen ↗** opens `/runs/<executionId>`, the full Run Trace, a page made for a phone; its header goes straight back to
+the run in its workflow's Runs tab (`/workflows/<id>/runs/<executionId>`, no redirect hop), and the rail marks **Runs** while it is open.
 
 - **The header**: live or finished, the time, who is working on what right now, the outcome as reported (the last
   agent's answer) and as checked (the Run report's verdict in the profile's words, with how many checks failed). A live
@@ -94,7 +105,7 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
   **Send back for a fix**), a form wait such as a team member's question (**Answer** opens the run's form page,
   `/form/waiting/<executionId>`), other waits (**Open to answer**), and failed checks nobody has decided on.
 - **Story** (the default): the run as a conversation. It shows messages, requests between agents (with **Why** they
-  were asked) and their result (Delivered, Answered, Left undelivered, Working, Waiting), waits for people, round
+  were asked) and their result (Delivered, Answered, Left undelivered, Working, Waiting; an approval nobody answered in time reads *Expired*, with the inbox's line *Expired at …: nobody approved “Send Email” in time, so it did not run*), waits for people, round
   dividers when the flow loops, and artifacts as cards. Failed steps and
   failed checks appear inline. Tool and model calls fold into "n steps" rows that open; each tool call there says what
   it did, in the agent's own words when it gave a `description` (Claude Code does with every command), else in plain
@@ -105,6 +116,18 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
   is journaled for the tool call, for the member's request and for the run, and the Story keeps the request's (who waits,
   for what), while **Needs you** keeps the run's (its buttons answer the execution); `waitEchoes` in
   `lib/shared/run-trace-model.ts` picks them. A team run opens with its [headlines](#headlines).
+- **Tabs only with something in them.** **Story** and **Trace** are always there. **Team** shows when more than one
+  person or agent took part, **Artifacts** when the run made something (files agents wrote count), **Spend** when the
+  run used model tokens, so a short single-flow run has just Story and Trace. The tabs are decided from the whole run, not the replay cut. A saved or linked tab that is
+  not shown falls back to the Story. `visibleTabs()` in `components/run-trace/run-trace-tabs.ts`.
+- **The time slider** shows only when the run took 5 seconds or more and more than one took part
+  (`showScrubber()`); otherwise there is nothing to replay.
+- **One status line**: the header says it once, as *Succeeded · 9 ms · 1d ago*. A run going on or waiting also has the
+  timeline card above the tabs (decided from the whole run, so replaying a finished run does not bring it in); a finished
+  run's line and **steps** are in the Story, which no longer ends with a second status line. A passing run with no checks
+  and nothing reported has no summary cards at all.
+- **Debug access** is in the header's **⋯** menu. Its dialog says what the key can read in plain words (*See how the
+  run went*, *See every step of the run*); the tool names behind them show only with **Show developer details** on.
 - **Trace**: the span tree with timing bars, down to a remote agent's single tool calls. A request shows why it was
   asked.
 - **Team**: who called whom, with ×n counts (laid out top to bottom, no sideways scrolling), plus a card per actor with
@@ -115,11 +138,14 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
   way where a span reports them: a Claude Code agent on kagent reports its real usage through the landflow-harness mod
   ([a2a.md](a2a.md#the-landflow-harness-mod)), so its card says "4 model calls · 52,310 in (48,000 cached) · 1,204 out
   · $0.0213 · claude-sonnet-5-5" and its guardrail stops are checks on its request.
-- **Report**: the run report, computed live with the run's profile, plus the counts (tokens with the run's cost when
-  some was priced), failed steps, who called whom, each request's result, what each agent used (time, model calls,
-  tokens, cost, model with its provider's logo), cycles, waits and artifacts. **Checked** can pick another profile to look at the run through
-  (a flow without one through Software delivery, say) without changing the flow; the header follows it. **Copy as Markdown** copies it. When a Run report node saved one,
-  **Saved report** opens it.
+- **The summary** at the top of the Story (the Run report, which used to be a tab): what was reported, **Checked**
+  (the run report, computed live with the run's profile) and tiles for run time, who took part, requests, tokens (with
+  the run's cost when some was priced), failed steps and artifacts. A tile that would read 0 is left out, and **What
+  should happen next** shows only when the report found something to do. **Checked** can pick another profile to look at
+  the run through (a flow without one through Software delivery, say) without changing the flow. A passing run with no checks draws no Checked card: the picker is a small "Check with a profile" menu beside Copy as Markdown.
+  **Copy as Markdown** copies it; when a Run report node saved one, **Saved report** opens it. **The report in full**
+  at the bottom of the Story folds the rest: failed steps, checks, claims, problems, who called whom, each request's
+  result, what each agent used, cycles and waits; it is not drawn when none of them has anything.
 - **Artifacts**: what the run made (below). Code changes first when agents changed files, then documents, links and data.
 - **The detail sheet**: tap anything to open it. It is a bottom sheet on a phone and a side panel on a wide screen,
   showing the actor and caller, times, input, output or error, and the artifacts and checks inside.
@@ -129,17 +155,78 @@ remembered). **Full screen** opens `/runs/<executionId>`, a page made for a phon
 - **The time slider**: scrub or replay the run. Tapping a time in the sheet moves it there. A live run follows the end
   until you move the slider.
 
-**Executions** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
+### The Runs list
+
+`/runs` is the one list of runs (**Runs** in the rail, tab **All runs**; it was Executions, Activity and Search runs). `/executions?…` redirects to it with its query, and `/executions?id=<id>` to `/runs/<id>`. The API paths are unchanged.
+
+- **Filter row.** One search box (workflow name, error text, node), a **Status** chip and a **Workflow** chip, then **More filters** in a popover (a sheet on a phone): agent or actor, tool, from and to dates, has failed steps, a check failed. The filters sit in the URL (`q`, `status`, `workflowId`, `actor`, `tool`, `from`, `to`, `failedSteps`, `failedCheck`), so a link lands filtered. Actor, tool, failed steps and check go through `GET /api/runs/search`; the rest filter the loaded list.
+- **Repeated failures fold.** Neighbouring failed runs of one workflow that stopped at the same node with the same message become one row, "Failed ×9 · Post to Slack: no credential". It opens to the runs, and stays open while the list updates, even when its oldest run is deleted, leaves the loaded window or is filtered out (the list holds the open groups by failure, not by row). A success or another error ends a group (`groupFailures`, `components/runs/failure-groups.ts`).
+- **Two words for running again.** **Retry from failed step** (failed and canceled runs) and **Re-run**. The choices, the workflow as it ran or the saved one, or from the start, are one step in. The row menu also has **Copy id**; the list has no ID or Mode column.
+- **Compare from the list.** Tick two rows, then **Compare 2**. `/runs/compare` without two runs goes back to `/runs`.
+- **Stop all** shows only while a run is running.
+- A chosen workflow shows its runs over time below the list.
+- **What the filters cover.** The search box, Status, From and To filter the latest 200 runs the page loads, so a date range older than those shows "No runs match" although such runs exist. Actor, tool, failed steps and check filters take at most 100 matches from `GET /api/runs/search` and intersect them with those 200 runs. Word search over journal text (with match snippets) is API-only: `GET /api/runs/search?text=`.
+
+**Runs** (the list across workflows) starts with **Needs you** across every run you can see, and a card for each
 running execution showing who is working on what.
 
-`/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`, `report`) and, once
+`/runs/<executionId>?tab=team&member=<title>` opens a tab (`story`, `trace`, `team`, `artifacts`; `report` opens the Story, where the report is now) and, once
 the run loads, that member's sheet. With `tab=story&turn=<n>` instead it scrolls the Story to the member's `n`th turn
 and marks it (a ring and a flash): a team node's ribbon links each turn this way (`turnEntryKey` in
 `shared/run-headlines.ts`).
 
+### Needs you for a project budget
+
+An open incident of a project's AI budget is an item in **Needs you** (kind **AI budget**) for the project's admins, the
+budget's owner and instance owners and admins. It counts in Home's tile and the rail's badge like any other. Its title
+and detail say what happened; the title opens the project's Settings at the budget card. A stop has **Resume this month**
+(admins and the owner: paid calls go on until the month ends), **Raise budget…** (admins: a dialog for an amount above the
+current budget) and **Open project**; a warning has **Dismiss** and **Open project**. Each button posts to
+`POST /api/projects/:id/budget/incidents/:incidentId` and reloads the list. See
+[projects-and-goals.md](projects-and-goals.md#ai-budget).
+
+### Needs you for a project task
+
+A project task's run that waits for a person is an item in **Needs you** (kind **Task**) for the project's editors and admins
+and instance owners and admins: a `requested` run (a wake-up or someone's "Ask to run now") or a `waiting` one (a tool call
+waits for approval in the agent's session). It counts in Home's tile and the rail's badge. Its title opens the task
+(`/projects/<id>?tab=tasks&task=<taskId>`) or, while waiting, the agent's session; it never links to `/runs/`. A requested
+run has **Approve** (primary), **Deny** and **Open task** for one who may decide, else **Open task**; a waiting run has
+**Open session**. Approve and Deny post to `POST /api/task-runs/:runId` (session only), then the list reloads; a 409 shows
+its message under the buttons. Phone buttons are 44 px. See
+[projects-and-goals.md](projects-and-goals.md#the-tasks-tab-and-needs-you).
+
+### Needs you for AI spend
+
+A forecast over a monthly cap, and a day of unusual spend (a person, agent, workflow, project or model far above its usual
+day), is an item in **Needs you** (kind **AI spend**) for the people it is theirs to hear, as
+[Forecasts and unusual spend](llm-gateway.md#forecasts-and-unusual-spend) says: the person for their own spend and caps, the
+editors of an agent or workflow, a project's admins, owners and admins for all (a model's and a credential cap's: owners and
+admins only). A member never gets another person's item. It counts in Home's tile and the rail's badge. The title says the
+figure; the detail says the usual day, the score, the runs and the surfaces. **Acknowledge** clears it for everyone (it opens
+again if the day's value doubles); **Open** shows the AI page at that day, narrowed to what the item is about. Nothing here
+changes a cap, a budget or a run.
+
+### Needs you for changed MCP tools
+
+When an MCP server changes (or adds) a tool after an agent was published, a run leaves it out and says so in its timeline as a
+notice, *Tool unavailable: Tracker · search: held, its description changed since the agent was published*, and the change is
+an item in **Needs you** (kind **MCP tools**, *Tracker bot: 2 MCP tools changed*) for the people who may publish the agent. It
+counts in Home's tile and the rail's badge. **Review** opens the agent page with the review sheet, where the old and the new text
+sit side by side and **Approve** or **Keep held** decides ([agents.md](agents.md#changed-mcp-tools-are-held)). The item has no run
+(`executionId`, `workflowId` and `workflowName` are `''`; `agentId`, `heldCount` and `href` are set) and leaves the list when the
+change is decided or the server goes back to what was approved.
+
+### The versions a run used
+
+Under the header a line says which versions ran ("workflow v4 · Alert triager v2"): `RunVersionsLine`, from the
+execution's `versions` (`GET /api/executions/:id`). An editor run shows "draft" for an agent it tested, a pinned run
+the pin, a run the version published at that time otherwise. The executions list shows the workflow version chip on
+each card, and the run header the full line (on a phone too).
+
 ### A run as a timeline
 
-In the new look ([the look](ui-review.md#the-look)) a card above the tabs shows the run as a timeline
+A card above the tabs shows the run as a timeline
 (`components/run-trace/run-timeline-card.tsx`, built by `runTimeline()` in `lib/shared/run-timeline.ts`):
 
 - **The card**: the face of who leads the run (the team's lead, else its first agent, else the flow's icon), the workflow,
@@ -157,11 +244,14 @@ In the new look ([the look](ui-review.md#the-look)) a card above the tabs shows 
   saying what it does (the tool it runs, "Bash: pnpm test", else "Thinking…"). A wait for a person pulses amber with what it asks, and **Answer below** scrolls
   to Needs you; a failure is a red cross with **Re-run from here** ([run it again](#run-it-again)).
 - **Elsewhere**: the same timeline, from each run's own journal, is the card of every run going on under **Running now**
-  on Home and the Executions page, and of the team's run on its team page while it works (a tap opens its Run Trace).
+  on Home and the Runs page, and of the team's run on its team page while it works (a tap opens its Run Trace).
 
 ### What a run did, in one line
 
-Also in the new look, a run can read as one line (`components/run-trace/run-line.tsx`, built by `runLine()` in
+On Home, a run of one flow with no agent or team (`isSingleFlow()`) is drawn as a single row instead: a status dot, the name,
+how long it took and when, the whole row opening the run; agent and team runs keep the card below.
+
+A run can read as one line (`components/run-trace/run-line.tsx`, built by `runLine()` in
 `lib/shared/run-line.ts`): **what came in** (the trigger with its icon and what it carried: a pull request's number and
 title, a chat message, an email's subject, a form, a schedule, a webhook, or "Run by you"), **who did it** (the agent's
 face, or the team's lead with the faces of the members who had a turn), and **what came out** (the best of the run's
@@ -169,17 +259,30 @@ artifacts, delivered ones first, then pull requests, reviews, published notes, c
 as "Answered"), green when done, amber with what it asks when it waits for you, red with the error when it failed. A tap
 on the result opens it (a pull request on GitHub); the rest of the row opens the run.
 
-- **Run Trace**: once a run is over, the [timeline](#a-run-as-a-timeline) above the tabs folds into its line (**Show the
-  steps** opens it again; a tap on the line opens the Story).
+- **Run Trace**: once a run is over, the [timeline](#a-run-as-a-timeline) card is not drawn above the tabs: the Story has
+  the steps.
 - **Home**: the recent runs are lines; runs going on show as timelines under Running now.
 - **The team page**: the team's last run as a line (its timeline while it runs); **the agent page**: the last three runs
-  the agent took part in, at the top of its Sessions tab.
+  the agent took part in, at the top of its Activity → Sessions.
 - The lines come from `GET /api/runs/lines?ids=…` (at most 20 runs), folded on the server from each run's journal and
   cached by its last event like the run digests.
 
+### Approval requests in Needs you
+
+A run nobody watches that reaches a tool that asks first waits in the approval inbox ([approval-inbox.md](approval-inbox.md), wave ap1), and its question is a row in **Needs you** with these facts (the `InboxRow`, on Home's **Waiting for your approval · n** panel and in the Runs list's **Needs you**): the tool's label, the agent and its version (*Alert mailer v2*), the workflow and its version (*Alert intake v4*), where it goes in one line, and *Waiting for your approval since 14:02 · expires 14:12*. **Approve** and **Deny** sit on the row for people who can run the workflow (everyone else reads *Only people who can run this workflow decide it*), each click is one POST, and the row then says what happened for four seconds (*Approved by Owner in Needs you · 14:05*) and leaves. When somebody or the clock decided first, the row shows the server's words instead (*Already approved by Owner at 14:05.*, *This approval expired at …*). **Details** opens the parameters the call would run with (secret-looking keys read `••••••`, here and on the server; never a credential field), where it goes, what started the run, the agent and the workflow, **Open the run**, since and expires, with the same two buttons. `/?approval=<id>` (the nudge's Needs you link) opens that request's Details, or says how it ended when it is no longer waiting. There is no *Approve all*, no select-many and no shortcut that approves.
+
+In the Run Trace the approval card of such a wait reads the same *Waiting for your approval since … · expires …* line instead of *waiting since*, shows the versions and the destination, and its **Approve** and **Deny** go through the inbox's one claim (a race answers with who won); there is no **Edit** on it, because the inbox decides what was asked, not an edit of it. A settled call says *Approved by …*, *Denied by …*, *Expired at …* or *Cancelled with the run …* on its sheet (the `approvedBy` badge; the last two read as warnings). Waits without an inbox request render as before.
+
+### Who approved a tool call
+
+A tool call's sheet names who decided its approval (AG23, wave ag5): *Approved by Spotlight (autonomous fix session)* when
+Spotlight approved a call to a destination already given in its own test run, *Left for you by Spotlight: a destination nobody
+gave* when it left one for the person, *Approved by you* / *Denied by you* for a person's own decision. The line is the span's
+`approvedBy` attribute (from the agent session's tool entry, which keeps who decided); a run with no decision shows none.
+
 ### An approval with its evidence
 
-In the new look, a run that waits for a person to approve a tool call (a team member's tool that needs approval, a
+A run that waits for a person to approve a tool call (a team member's tool that needs approval, a
 published note, a command the guard asks about) shows a **decision card** (`components/run-trace/approval-card.tsx`)
 instead of a title and two buttons, so the person decides with the reasons in front of them:
 
@@ -191,7 +294,7 @@ instead of a title and two buttons, so the person decides with the reasons in fr
   mono; a file write as its path; anything else as `key: value` lines, cut.
 - **What it looked at.** The evidence the run already records, only rows that have data (`approvalEvidence(model, wait)`
   in `lib/shared/approval-evidence.ts`): when it asked, its checks (and the tests the team kept as headlines), the code it
-  changed (+/- and files, from the run's [changes](#artifacts-and-code-changes)), its [fix cycles](#fix-cycles), its
+  changed (+/- and files, from the run's [changes](#artifacts-and-code-changes)), its [fix cycles](#iterations-rounds-turns-and-fix-cycles), its
   budget used against its own and the run's time. Each row opens its place in the Run Trace: a detail sheet, or a tab
   (`?tab=story&member=Reviewer`).
 - **Buttons named by the action.** *Post review & approve*, *Post review & request changes*, *Run the command*, *Publish
@@ -201,12 +304,12 @@ instead of a title and two buttons, so the person decides with the reasons in fr
   member's own. The journal marks the wait `edited: true` with `editedBy`, says "Approved … with changes", and the
   Approval check says it too; the wait's detail sheet shows an **Edited by you** badge. A guard's ask (a command) sends the
   edited command: the mod's poll hands it back and the mod runs it instead (still stopped by the rules nobody can allow).
+  A call that waits in the approval inbox has no **Edit**: it runs as it was reviewed, and the route refuses an edited input with 400.
 
 The card is the Needs you section's, and the waiting node's: from the editor, **Review** next to Approve / Deny on the node
 opens it in a sheet, and the execution view's phone card is it (both read the run's journal). Needs you also gets a row of
-**faces** across the top, a dot on each member that waits (and on the Executions page's list, one face per member with
-something for you across runs). The classic look keeps its title and buttons; the edit works through the API in both
-looks (`POST /api/executions/:id/approvals` with `input`, `POST /api/executions/:id/asks/:askId` with `command`).
+**faces** across the top, a dot on each member that waits (and on the Runs page's list, one face per member with
+something for you across runs). The edit works through the API too (`POST /api/executions/:id/approvals` with `input`, `POST /api/executions/:id/asks/:askId` with `command`).
 
 ### Headlines
 
@@ -240,6 +343,15 @@ GitHub, Kubernetes, Docker, MCP, kagent, PostgreSQL, SQLite), else its kind's.
 | An A2A Agent node or tool, a team's remote member | When the URL is a Landflow agent deployed to kagent (by the URL its deployment recorded, else the kagent name it ends with): **Claude Code** (when it has plugins, the mod or a Claude harness) and **kagent** (the deployment's name, sandbox and hot start), its Claude Code plugins (the landflow-harness mod among them), each EgressPolicy (GitHub, the package cache, Landflow) and the agent's own model, tools and skills. Any other URL: an A2A agent and its host. |
 | A team | Each member's connections on the chart the node's span records (`attrs.team.members[].connections`); the lead's leaves out the model and memory the flow gives. The model folds them onto the member's actor by title. |
 
+A connection may also say (AG12, wave ag3; the Run an Agent node's canvas band reads the same list from `agentConnections`):
+`asksFirst` (the tool waits for approval), `credential` (the credential's name, never its data; *credential missing* for
+a deleted one), `toolId` (for the link to its row on the agent page), `overriddenBy` and `withheld` (set only where a
+flow and project are given: the canvas route; a run's own list leaves the model and memory a sub-node gives out), a
+project's default model (`from: 'project'`) and its knowledge base (*Project knowledge*), and a vector knowledge base's
+document count. `overriddenBy`, `withheld`, the project's default model, *Project knowledge* and the document count are
+route-only: the Run Trace's path passes no project. `withheld` follows the project's tool kinds on the saved tool, not the
+runtime's per-caller tool access. A knowledge base without an embeddings model reads *SQLite · keyword search (BM25, built in)*.
+
 **GitHub MCP** is its own row for an agent that has GitHub's MCP tools (`preset: 'github'`, [a2a.md](a2a.md#githubs-mcp-tools-for-agents)),
 with the GitHub mark and kind *Tool*: *Tool · pull requests, reviews, line comments* at *Read and review*, *Tool ·
 repositories, pull requests, issues (read)* at *Read*. It sits beside the *May reach · GitHub* row of the agent's kagent
@@ -247,6 +359,72 @@ deployment (the gateway adds the token) and is never shown as an ordinary MCP se
 
 A team node's usage names the lead's model, and an agent session counts each of its model calls, so the lead's card and
 the report say "3 model calls · 5,443 in · 714 out · $0 · qwen3-coder:30b" beside a member's reported usage.
+
+### What a tool call reached
+
+A tool call says **where it went**, so a person can tell that an agent's tools are connected to something real. Each tool
+is given a `target` (`ToolTarget`, `lib/shared/tool-target.ts`) when it is built, from its config and its credential
+(`lib/server/agents/tool-target.ts`): the credential's **name** and its type's display name, `credentialId`, and **where**
+it points. A target is made only of non-secret facts: of a credential only the fields that are not secret
+(`secretFieldsOf` excludes them) and are named `host`, `port`, `url`, `baseUrl`, `endpoint`, `server`, `database` or
+`path`; a URL is cut to `host:port` (its user, password, path, query and fragment never reach it), a file path to its last
+part (`/x/y/sales.db` becomes `sales.db`). A node with no credential names its plugin and where the plugin answers (its `endpoint` is the plugin's when the node names no URL or file of its own, so the line reads `triage plugin · Normalize Alert 127.0.0.1:7798`); a
+workflow, a sub-agent, an MCP server and an A2A agent name themselves and their host. An HTTP Request whose URL the model
+gives is read per call, from the call's input, as a host only. A target never depends on the journal's redaction.
+
+It reads the same in three places: the **via line** under the tool's name in the editor's chat (`via Mailpit SMTP · SMTP
+127.0.0.1:51183`, the credential in bold), the **Reached** row of a tool span's sheet (from `attrs.target`, written by
+the agent session and, for an AI Agent node's sub-node tools, by the translator), and the agent page's timeline, where the
+**Test chat** folds settled calls into one activity line whose steps each say `via …` too (since wave ag3's live pass). The Run an
+Agent and AI Agent nodes' `tool` stream chunks carry `tool.target`. A run from before this has no `target` and shows no row.
+
+A **knowledge search** names its collection, its store and how it searched (the embeddings `provider/model`, or `keyword
+search (BM25, built in)` for a base with no embeddings model) and, on SQLite, how many documents it holds (counted with
+the call, so the tool span's end carries the settled target and the Reached row shows the count). Its output is
+shown as **passages** (`components/run-trace/passages.tsx`): the source file as a chip (`metadata.source`, else the upload's
+`fileName`), the page, the score to two places, and the text clamped to four lines with **Show all**. The raw JSON stays
+behind **Raw**. It is in the chat, the span's **Came back** and the timeline.
+
+## What it saw
+
+An agent's span (a Run an Agent step, or a team member's request) carries `attrs.saw`, written once per run, never on a
+resume: `mode`, `text` (exactly what the system prompt got: the "Where this work fits" block, then the practices block),
+`projectId`/`projectName`, `goalId`/`goalTitle`, `at` (the run's pinned time), `persona` (role, mission and what-I-do, each
+cut to 300 characters; never the instructions) and `practices` (handle and version). The type is `SawAttrs` in
+`lib/shared/what-it-saw.ts`; `lib/shared/what-it-saw-sections.ts` splits the text by its line prefixes.
+
+- **In the sheet.** Tapping an agent's span shows **What it saw**: Goal chain, Mission, Brief, Words, Status, This run,
+  Practices and Persona. Empty parts are left out. **Show the exact text** folds out the raw block. With the project
+  context off it says "Project context off for this agent" (also when practices were given). When the run's trace content
+  was `off`, it says the text was not kept; a run with nothing to show draws no section. `saw` is not repeated in the developer's raw **Details**.
+- **Memory** (C11). `attrs.saw` also has `memory` (one entry per source the run was given: the agent's `agent-profile` and
+  `agent-relevant` memories, a team's `team-notebook` block, each with `mode` `meaning` or `keywords`, a `count`, up to 40
+  `items` of `{ id, version, kind, static, score }` and a SHA-256 `hash` prefix of the block) and, when the run's trace content
+  was `full`, `memoryText` (the exact fenced block(s) the prompt got). **What it saw → Memory** lists each item as one line
+  clamped to two lines with its kind, version and score (**Show all** past five); **Show the exact text of the memory** folds out
+  `memoryText` unescaped for reading, as text. Trace content `summaries` keeps ids, kinds, versions, scores and the hash and drops
+  `memoryText`; `off` keeps neither `memory` nor `memoryText`. A run recorded before this, or with no memory, draws no Memory part.
+  On open the part asks `GET /api/memory/items?ids=` (at most 50) for each item's state now: one forgotten since says "forgotten since
+  <date>: <reason>", and a person who may change it gets **Forget** and **Versions**. An item the caller may not see is left as recorded.
+  The notebook block is recorded on the lead's and each agent member's span that got it (a `team-notebook` source with the
+  note ids, and the text on `full`); the agent's profile and relevant memories are recorded by the agent's run (C09). Memory text is read
+  through `journal/memory-visibility.ts`: only the person it was for, the agent's editors and admins get `memoryText`; anyone else who can
+  read the run sees the sources (ids, versions, scores) and no text, so the part then has no exact-text fold. A notebook block names no
+  person, so its text is for admins; the Memory part still lists its notes. The sessions tab shows the sources only (`memory`), never the text.
+- **On the run.** The root span's sheet shows **Project** and **Goal** chips from `attrs.project` and `attrs.goal`.
+- **In sessions.** An agent's **Sessions** tab has the same section as a fold, built from the session's saved context
+  and the agent's persona now.
+
+The goal chain and the project are explained in [projects-and-goals.md](projects-and-goals.md#what-an-agent-saw).
+
+### A blocked call
+
+When a remote agent's task fails because a provider limit stopped it (a usage limit or depleted credits,
+[a2a.md](a2a.md#when-a-provider-blocks-a-call)), its span still ends in error, but the Trace row carries a **Blocked**
+badge with the kind in words ("Codex usage limit reached", "Codex credits depleted") and the provider's message, and the
+run's checks show "Blocked by a provider limit" as a warning (a team member's check is named `blocked` and names the member, and its call span carries the badge). The span has no
+status of its own: `attrs.blocked = { kind, message }` rides on the error span. The row shows without the
+developer-details switch.
 
 ## Iterations: rounds, turns and fix cycles
 
@@ -377,7 +555,7 @@ report's facts only. The report's sections are the same for every flow:
 - each actor;
 - artifacts;
 - files written: every file an agent's Write or Edit step changed, with who and how many lines, as the Artifacts tab's
-  code changes show them (the Report tab counts them as artifacts too);
+  code changes show them (the Story's summary counts them as artifacts too);
 - a timeline;
 - what should happen next.
 
@@ -480,22 +658,23 @@ images are not loaded.
 
 Three routes read across runs, and two screens use them (made for a phone: one column of cards, no wide tables).
 
-- **Search** (`/runs`, **Search runs** in the side bar; `GET /api/runs/search`): words (span names, inputs and outputs,
-  messages, artifacts, checks), workflow, an agent or actor by name, a tool by name, status, **has failed steps**,
-  **a check failed** (by name, or any) and from/to dates. Results are cards (status, workflow, when, how long, the
-  failed steps and checks, and where the words were found) that open `/runs/<id>`, 20 at a time with **Show more**.
-  Only the runs of workflows you can see are searched. The queries are plain SQL on `execution_events` (`LIKE` and
-  `EXISTS`, the same on SQLite and Postgres, no schema change); each candidate run's events are then checked in code,
-  so a word that is only a field name of the stored event doesn't match. A run recorded before Run Trace is searched by
-  workflow, status and date only, until its journal is rebuilt by opening it.
-- **Compare** (`/runs/compare?a=&b=`; pick two cards in the search and press **Compare**; `GET /api/runs/compare`):
+- **Search** (`GET /api/runs/search`; the UI is the filter row of [the Runs list](#the-runs-list)): words (span names, inputs
+  and outputs, messages, artifacts, checks), workflow, an agent or actor by name, a tool by name, status, **has failed
+  steps**, **a check failed** and from/to dates. Word search is API-only; the list's UI filters are the ones in its
+  filter row, over the latest 200 runs (journal filters: at most 100 matches within them). The API returns the failed
+  steps and checks and where the words were found, 20 at a time. Only the runs of workflows you can see are searched.
+  The queries are plain SQL on `execution_events` (`LIKE` and `EXISTS`, the same on SQLite and Postgres, no schema
+  change); each candidate run's events are then checked in code, so a word that is only a field name of the stored
+  event doesn't match. A run recorded before Run Trace is searched by workflow, status and date only, until its journal
+  is rebuilt by opening it.
+- **Compare** (`/runs/compare?a=&b=`; tick two rows in the Runs list and press **Compare 2**; `GET /api/runs/compare`):
   each run is folded with `foldJournal` and shown as a card: duration, tokens in and out, cost, model calls, steps,
   failed steps, checks passed, failed and warned, the failed checks' names and the artifacts. The cards sit side by
   side on a wide screen and stack on a phone; the second shows what changed from the first (a rise is red). Under them,
   a card per actor of either run with its steps, failed steps, tokens and model calls in both runs and the
   difference; an actor that took part in only one says so.
-- **Measures over time** (`GET /api/runs/measures?workflowId=`; the chart appears on the search page once a workflow is
-  chosen): the workflow's last runs (30 by default) as duration, tokens in and out, cost, failed steps and failed
+- **Measures over time** (`GET /api/runs/measures?workflowId=`; the chart is below the Runs list once a Workflow chip is
+  set): the workflow's last runs (30 by default) as duration, tokens in and out, cost, failed steps and failed
   checks per run. The chart is a line with a dot per run for one measure at a time (duration, tokens or cost), the
   latest dot larger and labelled with its value, the largest value and the first and last dates on the axes; a run
   with a failed step, a failed check or an error is a red dot. A run profile can't define measures of its own yet.
@@ -546,8 +725,8 @@ that never ran in this run (a branch not taken) is left out, so "after" means af
   a model, it may not follow the instruction to the letter; the Story shows what it asked.
 - **Copy to editor** opens the workflow in the editor at `?execution=<id>&pin=<nodeId>`: the editor shows the run on the
   canvas as **Debug in editor** does and pins the outputs of the steps that ran before that node as test data (`pin=all`
-  pins every step). Fix the flow, then run it: pinned steps return their data instead of running. It is not saved until
-  you save.
+  pins every step). Fix the flow, then run it: pinned steps return their data instead of running. The pins are a draft
+  edit, so autosave keeps them in the draft 2 seconds after it opens (the live version changes only with Publish).
 
 ## Pause and take over
 
@@ -572,6 +751,96 @@ stopped, or after `LANDFLOW_TEAM_PAUSE_MINUTES` (default 30), when the member ca
 so. A host restart ends the run as any run is interrupted (the pause is not saved), and in queue mode the pause routes
 only reach the process that runs the execution.
 
+## Spend
+
+Two routes answer what a run's model calls cost and what one call was made of. Neither returns prompt text: numbers,
+names and hashes only (the Run Trace's own content still follows `LANDFLOW_TRACE_CONTENT`).
+
+- `GET /api/executions/:id/spend` answers the run's totals (tokens, cost, calls, and how many calls had no price: their
+  tokens count, their cost is 0), slices by purpose, model, node, agent and loop step, the prompt's parts summed over the
+  calls that have a split, the cache line and the calls, newest last (500 at most, then `truncated`). It sums the run and
+  its sub-runs: sub-workflows, and the sessions of team members and agent tools that ran under it.
+- The cache line is `hitRate` (cache reads over the whole prompt, for chat calls of providers that report cache numbers),
+  the tokens read and written, the calls that wrote the prefix again instead of reading it (`missCalls`) and why, as far
+  as hashes tell: the instructions changed, the tools changed, more than 5 minutes passed, the stable prefix may be under
+  the provider's minimum (1,024 tokens; also when a session made no cache write or read at all and its split shows a
+  small prefix), or the model asked for no cache (no split, or a prefix over the minimum); `unknown` otherwise. Hashes
+  are compared only between two splits of one source (a gateway's and Landflow's are keyed differently). `savedUsd` is
+  what the reads saved against the input price, 0 for a model with no price.
+- A sub-run the viewer can't open (a sub-workflow of another project, a team member's agent they can't read) is counted
+  in `hidden` (runs, totals) and never listed or named. An agent they can't read is "Another agent".
+- `GET /api/ai-calls/:id` answers one call (`call`), its split in tokens (`parts`, with `source`: Landflow made it or the
+  gateway did for a kagent call), the previous call of the same session (else run), agent and model (`previous`: whether
+  the stable prefix is the same and which parts changed, by hash; `compared: false` when the two splits can't be
+  compared, because one has none or one is the gateway's and the other Landflow's) and the run's link. A call opens for anyone who can
+  read its run or its agent or has a role in its project; a call with none of these opens only for its own person and
+  owners and admins; a call in a child session of an agent the viewer can't read answers 404 too, as it is left out of
+  the run's report. Anything else answers 404 (the rules are "Who sees what" in
+  [llm-gateway.md](llm-gateway.md#the-ai-page)).
+
+Limits of the report: the node slice names the innermost node (a model sub-node, not its AI Agent node); the node, agent
+and loop-step slices leave out calls without that field, so they need not sum to the totals; the cache line and the
+composition cover the newest 500 calls, the totals all; calls with no run id (unattributed gateway rows) are in no run's
+spend. See [limitations](limitations.md#call-attribution-wave-11).
+
+A run that used model tokens has a **Spend** tab (after Artifacts; desktop first, on a phone it only must not scroll
+sideways). It reads `GET /api/executions/:id/spend` (the route and its numbers are SP05's) and again every 10 seconds
+while the run is live; the model steps' sheets read the same answer (one read per run, shared), not one each. Tokens,
+models and cost are what happened in the run, never behind the developer-details switch.
+
+- **The totals**: cost, tokens in and out, cached tokens and calls. "n unpriced calls" means the tokens count and the
+  cost does not; admins get a link to Settings → AI prices (`/settings#ai-prices`). "n runs you can't open: $X" counts
+  the sub-runs of projects you can't read (their cost, never their names).
+- **Where it went**: one table, switched between Purpose, Model, Node, Agent and Step (the agent's loop step, for Landflow
+  agents and the AI Agent node), with each row's share of the cost, calls, tokens, cached tokens and cost.
+- **The cache**: "53% of the prompt came from the cache · saved $0.0432 · 0 misses", with each miss's reason in words
+  (the instructions or tools changed, may be under the provider's minimum, expired, no cache asked for).
+- **What the prompt was made of**: one stacked bar over the calls that have a split, a legend of parts with tokens and
+  shares, and how they were counted, in the same words as a call's sheet: "Counted by the provider", "Counted with the
+  model's own tokenizer" or "Estimated from text length" (the weakest method among the calls summed), plus how many
+  chat calls have a split. The ones without may be built outside Landflow, or their split may be past its retention;
+  open a call to see which (embedding and rerank calls are not counted).
+- **Calls**: time, purpose, model, tokens and cost, the latest 20 (Show all lists the rest); a time opens the call's
+  model span in the detail sheet. A call's `spanId` is the OpenTelemetry id, the Run Trace's spans have journal ids, so
+  the pair is found by one rule that the tab and the call's sheet share (`lib/client/span-call-match.ts`): the same
+  model, the same node and agent when both have one, the call's time within a second before and two after the span, one
+  call to one span (the nearest pair by the span's end first; a call is recorded when it ends; a span still open counts
+  as ending at its start). A call with no such span shows its time as plain text. The tab reads once more when the run
+  ends (also when the tab or a sheet is opened after the end, so a mid-run answer is never kept; a read asked while
+  another is in flight is followed by one more), and a failed read has a Try again button. The tab and the sheets
+  share one poll.
+
+The answer holds sizes, counts and names only: no prompt text is shown or stored for spend.
+
+### One call
+
+A model step's sheet shows what the call cost in tokens, not only how many (`components/run-trace/call-spend.tsx`,
+`lib/client/call-spend.ts`). The sheet finds the call of the run's spend record that the step is (the answer the Spend
+tab reads, shared) by the rule above, then reads its view (`GET /api/ai-calls/:id`):
+
+- **What this call was made of**: one bar and a line per part (instructions, tool definitions, memory, the conversation so
+  far and the rest) with its tokens and share, and the way the numbers were reached in words (counted by the provider,
+  counted with the model's own tokenizer, or estimated from text length: the Spend tab uses the same three phrases). A
+  split the LLM gateway made says **From the LLM gateway**. The parts that come first in a cached request (tool
+  definitions, instructions, the project block, practices) are marked **stable prefix** when the call used the cache.
+  Since wave 12 the conversation's last block is a cache point too, so the conversation so far (history and tool
+  results) is marked **may be cached** and shaded in a pale accent: when the cache read is larger than the stable
+  prefix, it covers part of the conversation as well.
+- **The cache line**: "8,000 read from the cache · 2,000 not cached · written: 0". A model that reports no cache
+  numbers says so, decided by the provider's family (a gateway row's `anthropic/…` or `litellm` is never taken for a
+  model without a cache).
+- **What changed**: "Same prefix as the previous call" (iteration 2 of a run, usually), or "The instructions changed" and
+  the like, against the previous call of the same session or run. Nothing is said when the two calls' splits can't be
+  compared (one has none, or the gateway made one and Landflow the other: their hashes use different keys).
+- **No split for this call**, with the reason: built outside Landflow, or no split was kept for it (a split is kept for a
+  limited time), or the step isn't in the run's spend record yet, or it may be older than the 500 newest calls the record
+  holds.
+- **Couldn't read this call's spend.** and the error, when a request fails: a failure is never worded as a fact about
+  the call.
+
+The **Tokens** row of a model step also names the tokens read from and written to the cache. Sizes and shares only: never
+prompt text. These sheets are for a desktop; on a phone the page still fits.
+
 ## HTTP API
 
 | Route | What it does |
@@ -587,6 +856,8 @@ only reach the process that runs the execution.
 | `POST /api/executions/:id/approvals` | `{ callId, approved, input? }`: decide a waiting tool call; `input` (a JSON object, with `approved: true`) is the tool's input as a person edited it, and the tool runs with it ([an approval with its evidence](#an-approval-with-its-evidence)). SSE: `decision`, then the resumed run. |
 | `GET /api/runs/needs-you` | Across the runs you can see: waits for a person (`approval`, `form`, `question`, `gate`) and failed checks of the last 7 days nobody decided on. |
 | `GET /api/runs/search`, `/api/runs/compare?a=&b=`, `/api/runs/measures?workflowId=` | Search, compare and measures across runs ("Search, compare and measures" below). |
+
+**What it saw, practices row** (PR09): `SawPracticesRow` lists each practice the run was given as `handle@version` with "Cited" or "Not cited" and how its check went (`GET /api/executions/:id/practices`), inside the span's "What it saw" section and in an agent's session that a workflow run started (other sessions list the practices alone); see [practices.md](practices.md#compliance).
 
 ## Not built
 
@@ -612,3 +883,16 @@ only reach the process that runs the execution.
   didn't call still shows, and a change made during the run doesn't. A kagent agent's runtime is told from its
   deployment (plugins, the mod, the harness name), not read from the cluster.
 - A trace rebuilt from an older run's data has no progress notes, artifacts, checks or decisions.
+
+
+### Memory playground
+
+**Try a search** (the agent's knowledge card, the team's Notebook tab, Brain → What Landflow knows) opens a sheet (a bottom
+sheet on a phone) with a query, mode (keywords, meaning, hybrid; a knowledge base with no embedding model offers keywords only),
+limit (1 to 50, default 10), threshold (0 to 1; 0.3 for notes and facts, 0 for a knowledge base) and rerank (off, a local chat
+model that scores each passage, or a Cohere credential). `POST /api/memory/search` runs one search and changes nothing: no note
+is touched, no store is written, no agent usage row is recorded, nothing is audited. It answers each result's score and its score
+after rerank, what the threshold dropped (count and best score) and the time per stage; with the embedding model down in meaning
+mode it says "The embedding model is unreachable". A knowledge base needs edit access to its agent, a notebook the team's, facts the
+project's; anything else is 404. 20 searches a minute a person (429 with `Retry-After`), a query up to 2,000 characters. The search is
+asked only when the person presses Search.

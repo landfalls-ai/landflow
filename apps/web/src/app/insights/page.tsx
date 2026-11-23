@@ -8,19 +8,20 @@
  * comes alongside, test runs included.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
+import { ArrowDown, ArrowUp, CircleHelp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import type { InsightsPeriod, InsightsReport, InsightsTotals } from '@/lib/shared/platform';
 import { EMPTY_USAGE, formatCache, formatCost, formatTokens, type AiUsageReport, type AiUsageTotals } from '@/lib/shared/ai-usage';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
+import { StatCard } from '@/components/ui/stat-card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SectionLabel, Switch } from '@/components/ui/inputs';
 import { change, formatMinutes, formatRate, formatRunTime } from '@/components/insights/format';
 import { FAILED_COLOR, RunsChart, SUCCEEDED_COLOR } from '@/components/insights/runs-chart';
-import { BrainPanel } from '@/components/brain/brain-panel';
 import { WorkflowTable } from '@/components/insights/workflow-table';
 import { AgentLayersCard } from '@/components/insights/agent-layers-card';
+import { Segmented } from '@/components/ui/segmented';
 
 const PERIODS: { value: InsightsPeriod; label: string; previous: string; days: number }[] = [
   { value: '24h', label: '24 hours', previous: 'previous 24 hours', days: 1 },
@@ -76,20 +77,24 @@ const KPIS: { metric: Metric; label: string; format: (t: InsightsTotals) => stri
 
 function Kpi({ label, value, metric, report, index, previousLabel }: { label: string; value: string; metric: Metric; report: InsightsReport; index: number; previousLabel: string }) {
   const delta = change(metric, report.current, report.previous);
-  const Icon = delta.direction > 0 ? ArrowUp : delta.direction < 0 ? ArrowDown : Minus;
   const before = KPIS.find((k) => k.metric === metric)!.format(report.previous);
   return (
-    <Card className="animate-fade-up" style={{ animationDelay: `${index * 50}ms` }}>
-      <SectionLabel>{label}</SectionLabel>
-      <div className="mt-1.5 text-[26px] font-semibold leading-none tabular-nums text-t1">{value}</div>
-      <div className="mt-2 flex items-center gap-1 text-[12px]" title={`${previousLabel}: ${before}`}>
-        <span className={cn('inline-flex items-center gap-0.5 font-medium', delta.trend === 'good' ? 'text-gn' : delta.trend === 'bad' ? 'text-rd' : 'text-t2')}>
-          <Icon className="size-3" strokeWidth={2.4} />
-          {delta.text}
-        </span>
-        <span className="truncate text-t3">vs {previousLabel}</span>
-      </div>
-    </Card>
+    <StatCard
+      index={index}
+      label={label}
+      value={value}
+      sub={
+        delta.text ? (
+          <>
+            <span title={`${previousLabel}: ${before}`} className={cn('inline-flex items-center gap-0.5 whitespace-nowrap font-medium', delta.trend === 'good' ? 'text-gn' : delta.trend === 'bad' ? 'text-rd' : 'text-t2')}>
+              {delta.direction > 0 ? <ArrowUp className="size-3" strokeWidth={2.4} /> : <ArrowDown className="size-3" strokeWidth={2.4} />}
+              {delta.text}
+            </span>
+            <span>vs {previousLabel}</span>
+          </>
+        ) : undefined
+      }
+    />
   );
 }
 
@@ -150,22 +155,7 @@ export default function InsightsPage() {
               <Switch checked={includeManual} onChange={setIncludeManual} label="Include manual runs" />
               Include manual runs
             </label>
-            <div role="tablist" aria-label="Period" className="flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-              {PERIODS.map((p) => (
-                <button
-                  key={p.value}
-                  role="tab"
-                  aria-selected={period === p.value}
-                  onClick={() => setPeriod(p.value)}
-                  className={cn(
-                    'flex h-7 items-center rounded-full px-3.5 text-[13px] text-t2 transition-all duration-200 hover:text-t1',
-                    period === p.value && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
-                  )}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
+            <Segmented label="Period" options={PERIODS.map((p) => ({ value: p.value, label: p.label }))} value={period} onChange={setPeriod} />
           </>
         }
       />
@@ -220,13 +210,17 @@ export default function InsightsPage() {
           )}
         </Card>
 
-        <BrainPanel />
-
-        <p className="text-[12px] leading-relaxed text-t3">
-          Insights are counted as runs finish and kept for 400 days, apart from execution history, so pruning executions doesn’t change them. Time saved is the
-          successful runs times the minutes a run saves, which you set per workflow above. AI cost is estimated per model call from the price table in Settings → AI
-          prices (local models such as Ollama cost nothing unless priced there) and includes test runs.
-        </p>
+        <details className="group text-[12px] leading-relaxed text-t3">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 hover:text-t2 [&::-webkit-details-marker]:hidden">
+            <CircleHelp className="size-3.5" aria-hidden />
+            How these are counted
+          </summary>
+          <p className="mt-1.5">
+            Insights are counted as runs finish and kept for 400 days, apart from execution history, so pruning executions doesn’t change them. Time saved is the
+            successful runs times the minutes a run saves, which you set per workflow above. AI cost is estimated per model call from the price table in Settings → AI
+            prices (local models such as Ollama cost nothing unless priced there) and includes test runs.
+          </p>
+        </details>
       </PageBody>
     </>
   );

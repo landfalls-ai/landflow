@@ -1,27 +1,32 @@
 'use client';
 /**
- * Building, step by step (docs/assistant.md#building-step-by-step), drawn in the new look only. While Spotlight works on a
- * change, the conversation folds to a card at the side of the canvas that lists the steps and ticks each one off; the nodes
- * the plan adds appear on the canvas as dashed ghosts (the one being made shimmers) with dashed new connections; a thin bar
- * on top of the canvas shows how far the plan is. It is still a plan: nothing changes in the workflow until Apply, and
- * "Ask for a change…" sends a follow-up (stopping the reply first when it is still going).
+ * Building, step by step (docs/assistant.md#building-step-by-step). While Spotlight works on a
+ * change, its reply in the Spotlight panel lists the steps and ticks each one off (LiveSteps); the nodes the plan adds
+ * appear on the canvas as dashed ghosts (the one being made shimmers) with dashed new connections; a thin bar on top of the
+ * canvas shows how far the plan is. It is still a plan: nothing changes in the workflow until it is applied (by Apply, or
+ * by autonomous mode as the reply ends).
  *
  * A proposal arrives whole, so its steps are revealed one by one on a short timer (`useReveal`); the tool calls before it
  * (Read the workflow, Searched nodes…) are steps as they stream.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BaseEdge, Handle, Position, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react';
-import { ArrowUp, Check, Loader2, Maximize2, Sparkles, Square, TriangleAlert } from 'lucide-react';
 import { create } from 'zustand';
-import { buildSteps, planOf, stepProgress, visibleGhosts, type BuildStep, type GhostNode, type Plan } from '@/lib/shared/build-steps';
+import { buildSteps, planOf, stepProgress, mergeTrace, visibleGhosts, type BuildStep, type GhostNode, type Plan } from '@/lib/shared/build-steps';
 import { nodeColor } from '@/lib/client/node-style';
+import type { ActivityStep } from '@/lib/shared/activity';
 import { cn } from '@/lib/utils';
+import { ActivityTrace } from '../ui/activity-trace';
 import { Button } from '../ui/button';
-import { NodeIcon } from '../ui/icon';
+import { NodeIcon, isImageIcon } from '../ui/icon';
 import { edgePath, useLane } from '../canvas/edge-path';
-import { useNewLook } from '../shell/look-toggle';
-import { applyChanges, editorLookup, sendFeedback, useAssistant, useWorking, type Proposal } from './assistant';
+import { applyChanges, editorLookup, sendFeedback, undos, useAssistant, useWorking, type AssistantTurn, type ChatItem, type Proposal } from './assistant';
+import { holdsForClick, useAutonomous } from './autonomous';
+import { LeftOut, Warnings } from './suggestions-card';
+import { ChangeDiff, useCanvas } from './change-diff'; // SB08:
+import { MOTION_MS, ghostFade } from './spotlight/states';
 import { handleId, useEditor } from './store';
+import { useAutonomyFacts } from './spotlight-autonomy';
 
 /** How long a step takes to tick off once the plan is there. */
 const STEP_MS = 520;
@@ -29,7 +34,7 @@ const STEP_MS = 520;
 /** The steps revealed so far, for the reply they belong to. */
 const useRevealed = create<{ reply?: string; revealed: number }>(() => ({ revealed: 0 }));
 
-interface Live {
+export interface Live {
   replyId: string;
   ask?: string;
   proposals: Array<{ itemId: string; proposal: Proposal }>;
@@ -42,9 +47,17 @@ interface Live {
   progress: number;
 }
 
-/** The change being built, if any: the last reply is still going or has proposals waiting. Undefined in the classic look. */
+/**
+ * The reply being built: the last turn when it is the assistant's own reply to this chat. A test session's turn is not one,
+ * nor is a turn brought back under "Earlier": that one keeps its ProposalCard (Apply and Dismiss) and plays no build.
+ */
+export function builtReply(items: readonly ChatItem[]): AssistantTurn | undefined {
+  const last = items.at(-1);
+  return last?.role === 'assistant' && !last.testId && !last.earlier ? last : undefined;
+}
+
+/** The change being built, if any: the last reply is still going or has proposals waiting. */
 export function useLive(): Live | undefined {
-  const newLook = useNewLook();
   const items = useAssistant((s) => s.items);
   const streaming = useAssistant((s) => s.pending);
   const busy = useAssistant((s) => s.drafting || Boolean(s.testing));
@@ -54,17 +67,16 @@ export function useLive(): Live | undefined {
   const reply = useRevealed((s) => s.reply);
   const revealedNow = useRevealed((s) => s.revealed);
 
-  const last = items.at(-1);
-  const asked = last?.role === 'assistant' && !last.testId ? last : undefined;
+  const asked = builtReply(items);
   const proposals = useMemo(() => (asked ? asked.parts.flatMap((p) => (p.kind === 'proposal' && !p.proposal.state && p.proposal.ops.length ? [{ itemId: asked.id, proposal: p.proposal }] : [])) : []), [asked]);
   const plan = useMemo(
-    () => (newLook && asked && proposals.length ? planOf(useEditor.getState().toWorkflow(), proposals.flatMap((p) => p.proposal.ops), editorLookup()) : undefined),
+    () => (asked && proposals.length ? planOf(useEditor.getState().toWorkflow(), proposals.flatMap((p) => p.proposal.ops), editorLookup()) : undefined),
     // The graph is read through the store; nodes and edges change it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [newLook, asked, proposals, nodes, edges],
+    [asked, proposals, nodes, edges],
   );
   const failed = Boolean(asked?.error) && !proposals.length;
-  const active = newLook && Boolean(asked) && !busy && !working && !failed && (streaming || proposals.length > 0);
+  const active = Boolean(asked) && !busy && !working && !failed && (streaming || proposals.length > 0);
   const empty = useMemo<Plan>(() => ({ steps: [], nodes: [], links: [], dropped: [] }), []);
   const used = plan ?? empty;
   const revealed = asked && reply === asked.id ? Math.min(revealedNow, used.steps.length) : 0;
@@ -86,12 +98,6 @@ export function useLive(): Live | undefined {
     progress: stepProgress(steps),
   };
 }
-
-/** Spotlight folds its conversation into the card while a change is being built. */
-export const useBuilding = () => {
-  const live = useLive();
-  return Boolean(live);
-};
 
 /** Reveals the plan's steps one by one while the change is being built. */
 function useReveal(live: Live | undefined) {
@@ -122,102 +128,50 @@ export function BuildProgressBar() {
   );
 }
 
-function Mark({ step }: { step: BuildStep }) {
-  if (step.state === 'done')
-    return (
-      <span className={cn('mt-px grid size-4 shrink-0 animate-pop place-items-center rounded-full text-white', step.failed ? 'bg-rd' : 'bg-gn')}>
-        {step.failed ? <TriangleAlert className="size-2.5" strokeWidth={3} /> : <Check className="size-2.5" strokeWidth={3.5} />}
-      </span>
-    );
-  if (step.state === 'active') return <Loader2 className="mt-px size-4 shrink-0 animate-spin text-viz-7" />;
-  return <span className="mt-px size-4 shrink-0 rounded-full border-[1.5px] border-bd" />;
-}
-
-function StepRow({ step }: { step: BuildStep }) {
-  const active = step.state === 'active';
-  // The step in progress names its parts: "Wiring the connections — Ask → Approved · Ask → Deny".
-  const parts = active ? step.parts.join(' · ') : step.kind === 'read' ? step.parts.join(' · ') : '';
-  return (
-    <li className="flex animate-in items-start gap-2 text-[12.5px] leading-snug">
-      <Mark step={step} />
-      <span className={cn('min-w-0 [overflow-wrap:anywhere]', active ? 'font-semibold text-t1' : step.state === 'done' ? 'text-t2' : 'text-t3')}>
-        {active ? step.doing : step.title}
-        {parts && <span className={cn('font-normal', active ? 'text-t2' : 'text-t3')}>{active ? ` — ${parts}` : ` · ${parts}`}</span>}
-      </span>
-    </li>
-  );
-}
-
-/** The card at the top left of the canvas while a change is built: steps, Apply, and an input to redirect. */
-export function BuildCard() {
-  const live = useLive();
-  const detail = useAssistant((s) => s.detail);
-  const [text, setText] = useState('');
-  if (!live || detail) return null;
+/**
+ * A change being built, as the steps of its reply in the Spotlight panel's timeline: each ticks off as the ghosts appear
+ * on the canvas. Apply and Dismiss when autonomous mode is off; on, Spotlight applies it as the reply ends.
+ */
+export function LiveSteps({ live, trace, durationMs }: { live: Live; trace?: ActivityStep[]; durationMs?: number }) {
+  const autonomous = useAutonomous((s) => s.on);
   const { streaming, plan, revealed, steps } = live;
   const ready = !streaming && live.proposals.length > 0;
   const all = revealed >= plan.steps.length;
   const dropped = live.proposals.reduce((n, p) => n + p.proposal.dropped.length, 0);
   const warnings = live.proposals.flatMap((p) => p.proposal.warnings);
+  const canvas = useCanvas(); // SB08: the canvas the waiting card is read against
+  // The proposals chain, as Apply does: a later one may name a step an earlier one adds, so one diff, one `applyOps` per proposal as Apply does.
+  const allOps = useMemo(() => live.proposals.map((p) => p.proposal.ops), [live.proposals]);
 
   const decide = (state: 'applied' | 'dismissed') => {
     for (const { itemId, proposal } of live.proposals) useAssistant.getState().setProposalState(itemId, proposal.id, state);
   };
+  // Re-render when what holdsForClick reads changes (the switch, the published read arriving, the workflow opening).
+  useAutonomyFacts((s) => s.workflows);
+  useAutonomyFacts((s) => s.switchOn);
+  useEditor((s) => s.workflowId);
   const apply = () => {
     const label = live.proposals.length === 1 ? live.proposals[0].proposal.summary : `${live.proposals.length} changes`;
-    if (!applyChanges(live.proposals.map((p) => ({ ops: p.proposal.ops, kind: 'proposal' as const })), label)) return;
+    // Each proposal keeps the one Undo, so the row it folds into can offer it.
+    const onApplied = ({ undo }: { undo: () => void }) => {
+      for (const p of live.proposals) undos.set(p.proposal.id, undo);
+    };
+    if (!applyChanges(live.proposals.map((p) => ({ ops: p.proposal.ops, kind: 'proposal' as const })), label, { onApplied })) return;
     decide('applied');
-    useAssistant.getState().setOpen(false);
-  };
-  const send = () => {
-    const message = text.trim();
-    if (!message) return;
-    setText('');
-    const assistant = useAssistant.getState();
-    // Redirecting mid-way: stop the reply that is going, then ask again with what it had.
-    if (assistant.pending) assistant.stop();
-    void useAssistant.getState().send(message);
   };
 
   return (
-    <div role="status" aria-live="polite" className="pointer-events-auto absolute left-3 top-3 z-20 flex max-h-[calc(100%-7rem)] w-[320px] max-w-[calc(100%-5rem)] animate-fade-up flex-col overflow-hidden rounded-2xl border border-hair bg-sf/95 shadow-pop backdrop-blur">
-      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-hair pl-3 pr-1">
-        {streaming ? <Loader2 className="size-3.5 shrink-0 animate-spin text-viz-7" /> : <Sparkles className="size-3.5 shrink-0 text-viz-7" />}
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-t1">{streaming ? 'Building the change' : all ? 'Ready to apply' : 'Building the change'}</span>
-        {streaming && (
-          <button title="Stop" aria-label="Stop" onClick={() => useAssistant.getState().stop()} className="grid size-6 place-items-center rounded-full text-t3 hover:bg-rddim hover:text-rd">
-            <Square className="size-3" fill="currentColor" />
-          </button>
-        )}
-        <button title="Show the conversation" aria-label="Show the conversation" onClick={() => useAssistant.setState({ detail: true, open: true })} className="grid size-6 place-items-center rounded-full text-t3 hover:bg-acdim hover:text-t1">
-          <Maximize2 className="size-3.5" />
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {live.ask && (
-          <p className="truncate px-3 pt-2 text-[11.5px] text-t3" title={live.ask}>
-            “{live.ask}”
-          </p>
-        )}
-        <ol className="space-y-2 px-3 py-2.5">
-          {steps.map((step) => (
-            <StepRow key={step.id} step={step} />
-          ))}
-        </ol>
-        {live.text && !streaming && <p className="line-clamp-4 px-3 pb-2 text-[12px] leading-snug text-t2 [overflow-wrap:anywhere]">{live.text}</p>}
-        {ready && warnings.length > 0 && (
-          <p className="flex items-start gap-1.5 px-3 pb-2 text-[11px] leading-snug text-warn">
-            <TriangleAlert className="mt-px size-3 shrink-0" /> Leaves {warnings.join('; ')}.
-          </p>
-        )}
-        {ready && dropped > 0 && (
-          <p className="px-3 pb-2 text-[11px] text-t3" title={live.proposals.flatMap((p) => p.proposal.dropped).join('\n')}>
-            {dropped} part{dropped === 1 ? '' : 's'} left out (hover for why)
-          </p>
-        )}
-      </div>
-      {ready && (
-        <div className="flex items-center gap-1.5 border-t border-hair px-3 py-2">
+    <div className="space-y-2">
+      {/* The plan's steps once there are some, else what the chat stream says it did (with times): one trace line while it works. */}
+      <ActivityTrace steps={mergeTrace(trace, steps)} live={streaming || !all} durationMs={durationMs} />
+      {ready && <Warnings warnings={warnings} />}
+      {/* SB08: what Apply changes, per step: the old value and the new one, open while the card waits */}
+      {ready && all && (!autonomous || holdsForClick(live.proposals.map((p) => p.proposal))) && <ChangeDiff before={canvas} ops={allOps} id={live.proposals.map((p) => p.proposal.id)} />}
+      {ready && dropped > 0 && (
+        <LeftOut reasons={live.proposals.flatMap((p) => p.proposal.dropped)} />
+      )}
+      {ready && all && (!autonomous || holdsForClick(live.proposals.map((p) => p.proposal))) && ( // SB04: a saved workflow, or a change that needs a click, shows Apply even with the switch on
+        <div className="flex items-center gap-1.5">
           <Button size="sm" variant="primary" onClick={apply}>
             Apply
           </Button>
@@ -234,18 +188,6 @@ export function BuildCard() {
           <span className="ml-auto text-[11px] text-t3">Nothing changes until you apply</span>
         </div>
       )}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-        className="flex items-center gap-1.5 border-t border-hair py-1.5 pl-3 pr-1.5"
-      >
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask for a change…" aria-label="Ask for a change" className="h-7 min-w-0 flex-1 bg-transparent text-[12.5px] text-t1 outline-none placeholder:text-t3" />
-        <button type="submit" disabled={!text.trim()} aria-label="Send" className="grid size-7 shrink-0 place-items-center rounded-full bg-ac2 text-on-ac transition-opacity disabled:opacity-30">
-          <ArrowUp className="size-3.5" />
-        </button>
-      </form>
     </div>
   );
 }
@@ -260,16 +202,49 @@ export interface GhostData extends Record<string, unknown> {
   ins: string[];
   outs: string[];
   active: boolean;
+  /** Apply: the ghost fades out as the real node fades in. Undo: it comes back for a moment, then fades out. */
+  fade?: 'out' | 'back';
 }
 export type GhostFlowNode = Node<GhostData, 'ghost'>;
 export type GhostFlowEdge = Edge<{ connectionType: string; active: boolean }, 'ghost'>;
 
 const NONE = { nodes: [] as GhostFlowNode[], edges: [] as GhostFlowEdge[] };
 
+/**
+ * The ghosts that stay a moment after the change is applied (they fade out as the real nodes fade in; their ids carry a
+ * prefix so they never share one with the real node) or come back when it is undone (docs/assistant.md#apply-and-undo).
+ */
+function useGhostTail(live: Live | undefined, shown: GhostFlowNode[]): GhostFlowNode[] {
+  const last = useRef<{ nodes: GhostFlowNode[]; ids: string[] }>(undefined);
+  const [tail, setTail] = useState<GhostFlowNode[]>([]);
+  const ids = live?.proposals.map((p) => p.proposal.id) ?? [];
+  if (live && shown.length) last.current = { nodes: shown, ids };
+  const states = useAssistant((s) => s.items);
+  // What the proposals of the last ghosts did since: applied, or undone again.
+  const state = (id: string) => states.flatMap((i) => (i.role === 'assistant' ? i.parts.flatMap((p) => (p.kind === 'proposal' && p.proposal.id === id ? [p.proposal.state] : [])) : []))[0];
+  const first = last.current?.ids[0];
+  const now = first && !live ? state(first) : undefined;
+  const seen = useRef<string>(undefined);
+  useEffect(() => {
+    const fade = ghostFade(now);
+    if (!last.current || !first || !fade || seen.current === `${first}:${now}`) return;
+    seen.current = `${first}:${now}`;
+    setTail(last.current.nodes.map((n) => ({ ...n, id: `fade-${n.id}`, data: { ...n.data, active: false, fade } })));
+    const timer = setTimeout(() => setTail([]), fade === 'out' ? MOTION_MS.ghosts + 60 : MOTION_MS.undoHold + MOTION_MS.ghosts + 60);
+    return () => clearTimeout(timer);
+  }, [now, first]);
+  // A new change starts over.
+  const going = Boolean(live);
+  useEffect(() => {
+    if (going) setTail((t) => (t.length ? [] : t));
+  }, [going]);
+  return tail;
+}
+
 /** The nodes and connections the plan adds, as React Flow nodes and edges to draw beside the real ones. */
 export function useGhosts(): { nodes: GhostFlowNode[]; edges: GhostFlowEdge[] } {
   const live = useLive();
-  return useMemo(() => {
+  const built = useMemo(() => {
     if (!live || !live.plan.nodes.length) return NONE;
     const shown = visibleGhosts(live.plan, live.revealed);
     // The one being made is the step in progress; once every step is reached nothing shimmers.
@@ -299,6 +274,8 @@ export function useGhosts(): { nodes: GhostFlowNode[]; edges: GhostFlowEdge[] } 
     }));
     return { nodes, edges };
   }, [live]);
+  const tail = useGhostTail(live, built.nodes);
+  return useMemo(() => (tail.length ? { nodes: tail, edges: [] as GhostFlowEdge[] } : built), [tail, built]);
 }
 
 /** A node the plan adds: a dashed tile in its colour; the one being made shimmers. */
@@ -306,11 +283,21 @@ export function GhostNodeView({ data }: NodeProps<GhostFlowNode>) {
   const info = useEditor((s) => s.nodeTypes[data.type]);
   const color = nodeColor(info);
   const isAi = (id: string) => id.startsWith('ai_');
+  // Applied: fade out at once (the real node fades in beneath). Undone: show, then fade out.
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    if (!data.fade) return;
+    const frame = requestAnimationFrame(() => setTimeout(() => setGone(true), data.fade === 'back' ? MOTION_MS.undoHold : 0));
+    return () => cancelAnimationFrame(frame);
+  }, [data.fade]);
   return (
-    <div className="pointer-events-none flex w-[88px] flex-col items-center gap-1.5 animate-node-in" style={{ ['--node' as string]: color }}>
+    <div
+      className={cn('pointer-events-none flex w-[88px] flex-col items-center gap-1.5', !data.fade && 'animate-node-in', data.fade && 'transition-opacity ease-out motion-reduce:transition-none')}
+      style={{ ['--node' as string]: color, ...(data.fade && { opacity: gone ? 0 : 1, transitionDuration: `${MOTION_MS.ghosts}ms` }) }}
+    >
       <div className={cn('relative grid size-[88px] place-items-center overflow-hidden rounded-2xl border-2 border-dashed bg-sf/80', data.active ? 'border-viz-7' : 'border-[color-mix(in_oklab,var(--node)_55%,var(--bd))]')}>
         {data.active && <span className="lf-shimmer absolute inset-x-0 bottom-0 h-[3px]" />}
-        <NodeIcon icon={info?.descriptor.icon} size={26} style={{ color }} strokeWidth={1.7} />
+        <NodeIcon icon={info?.descriptor.icon} size={isImageIcon(info?.descriptor.icon) ? 40 : 26} style={{ color }} strokeWidth={1.7} />
       </div>
       <span className="max-w-[160px] truncate rounded-full border border-dashed border-bd bg-sf px-2 py-px text-[11px] leading-4 text-t2">{data.name}</span>
       {data.ins.map((id) => (

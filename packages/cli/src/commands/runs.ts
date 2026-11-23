@@ -70,10 +70,10 @@ export const list: Command = {
   },
   args: { max: 0 },
   async run(ctx) {
-    const limit = Math.max(1, Math.min(1000, Number(ctx.flags.limit ?? 20)));
+    const limit = Math.max(1, Math.min(500, Number(ctx.flags.limit ?? 20)));
     const workflowId = ctx.flags.workflow ? String((await findWorkflow(ctx.client, String(ctx.flags.workflow))).id) : undefined;
     const status = ctx.flags.status ? String(ctx.flags.status) : undefined;
-    const { executions } = await ctx.client.get<{ executions: Json[] }>('/api/executions', { workflowId, limit: status ? 1000 : limit });
+    const { executions } = await ctx.client.get<{ executions: Json[] }>('/api/executions', { workflowId, limit: status ? 500 : limit });
     const rows = executions
       .map(executionSummary)
       .filter((e) => !status || e.status === status)

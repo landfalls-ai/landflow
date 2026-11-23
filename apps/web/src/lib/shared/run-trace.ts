@@ -40,10 +40,25 @@ export interface ActorConnection {
   detail?: string;
   /** The node type, for its icon. */
   nodeType?: string;
+  /** A node tool's node type display name ("Extract IOCs"): what its bubble reads (`name` is the agent's own tool id). */
+  nodeTitle?: string;
   /** An icon when there is no node type: `brand:<slug>` (lib/shared/brand-icons.ts) or `lucide:<name>`. */
   icon?: string;
-  /** Where it is set: a sub-node in the flow, the agent's own settings, its kagent deployment. */
-  from?: 'flow' | 'agent' | 'kagent';
+  /** Where it is set: a sub-node in the flow, the agent's own settings, its kagent deployment, or the project's settings (AG12). */
+  from?: 'flow' | 'agent' | 'kagent' | 'project';
+  // AG12: what the canvas's band says beside the Run Trace's chips (docs/agents.md#from-workflows).
+  /** The agent's tool id, for the deep link to its row. */
+  toolId?: string;
+  /** The tool waits for a person's approval before it runs (`requireApproval`). */
+  asksFirst?: boolean;
+  /** The NAME of the credential the tool uses (never its data); "credential missing" when it was deleted. */
+  credential?: string;
+  /** The name of the flow's sub-node that replaces this one for the run (a wired Chat Model or Memory). */
+  overriddenBy?: string;
+  /** Why the project's settings keep this tool out of a run. */
+  withheld?: string;
+  /** A vector knowledge base's document count. */
+  documents?: number;
 }
 
 export const CONNECTION_KINDS: ReadonlyArray<ActorConnection['kind']> = ['runtime', 'model', 'memory', 'knowledge', 'tool', 'skill', 'agent', 'plugin', 'network'];

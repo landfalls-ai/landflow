@@ -1,5 +1,6 @@
 'use client';
 import { isChromelessPage } from '../shared/auth-paths';
+import { BACKGROUND_HEADER } from '../shared/auth';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly body?: unknown) {
@@ -15,11 +16,15 @@ function signInAgain(status: number) {
   window.location.assign(`/login?next=${encodeURIComponent(here)}`);
 }
 
-export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
-  const { json, ...rest } = init;
+/**
+ * `background: true` marks a request the person did not make (a poll, a heartbeat, a reload after a live event): it does
+ * not count as use of the session, so the idle limit (LANDFLOW_SESSION_IDLE_HOURS) ends a session left open in a tab.
+ */
+export async function api<T>(path: string, init: RequestInit & { json?: unknown; background?: boolean } = {}): Promise<T> {
+  const { json, background, ...rest } = init;
   const response = await fetch(path, {
     ...rest,
-    headers: { ...(json !== undefined && { 'content-type': 'application/json' }), ...rest.headers },
+    headers: { ...(json !== undefined && { 'content-type': 'application/json' }), ...(background && { [BACKGROUND_HEADER]: '1' }), ...rest.headers },
     body: json !== undefined ? JSON.stringify(json) : rest.body,
     cache: 'no-store',
   });

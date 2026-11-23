@@ -132,6 +132,7 @@ SDK environment variables:
   "inputs":  [{ "type": "main" }],
   "outputs": [{ "type": "main" }],       // several main outputs = branches (IF: true/false)
   "usableAsTool": true,                  // can be attached to an AI Agent's ai_tool port
+  "toolInputSchema": { },                // optional: the arguments the model fills as a tool. Without one the schema is derived: a field parameter gives that argument, and a node with none gets a required `item` (the data to work on)
   "delegates": true,                     // optional: hands work to another agent; as a tool it gets a required `reason` argument
   "properties": [
     { "name": "algorithm", "displayName": "Algorithm", "type": "options", "default": "sha256",
@@ -164,6 +165,15 @@ SDK environment variables:
   "error": null                            // or { "message", "description"?, "itemIndex"? }
 }
 ```
+
+**The line under a node's name** (`apps/web/src/lib/shared/node-subtitle.ts`) says what the node will do, in this order:
+the descriptor's `subtitle` first, read with option display names (`{{operation}}` shows "Create an issue", not
+`create`) and n8n's `{{ $parameter.operation }}` and `{{ $parameter["operation"] }}` forms; a parameter that is an
+expression (`=…` or holding `{{`) shows as `…` and only a node's own parameters are read. A template that holds anything
+else, or only says `{{operation}}: {{resource}}`, falls through to the operation's `action` label ("Create an issue"),
+then "Resource · Operation" ("Issue · Get many"), then nothing (the caller shows the node's type name). The node
+creator lists the same operations as actions for an app's node (never for a core node), and picking one places the node
+with its `resource` and `operation` already set.
 
 **Composite types** (optional `composites`) are contracts for canvas frames: slots that take nodes matching a
 `NodeMatcher` (by type, kind, what a sub-node supplies, category, **capability**, an input type, or a nested composite),
@@ -223,7 +233,7 @@ SDKs expose `ctx.artifact(…)` and `ctx.check(…)` (TypeScript), `ctx.artifact
 `ctx.check(name, status, …)` (Python), `ctx.Artifact(landflow.Artifact{…})` and `ctx.Check(landflow.Check{…})` (Go);
 credential values are masked in the text fields. Schema: `schema/execute-response.schema.json`.
 
-**Model records.** A third NodeRecord shape, `type: "model"`, reports one model call: `{ model, provider, inputTokens, outputTokens, cacheReadTokens?, cacheWriteTokens?, durationMs, finishReason, prompt, answer, name }`. It is additive (gRPC already carries records as dynamic JSON, so no proto change); older hosts ignore it and older plugins are unaffected. A node descriptor may set `meterAiUsage` (optional boolean) to say its calls count in AI usage; the host then also refuses the node before it runs once a cap is reached. The host prices each `model` record, counts it in AI usage and the caps ([observability.md](observability.md#token-and-cost-tracking)) and shows it as a `model` span in Run Trace ([run-trace.md](run-trace.md)). The TypeScript SDK exposes `ctx.model(call)` beside `ctx.artifact` and `ctx.check`, masking credential values in the text fields. The Go SDK has `ctx.Model(ModelCall{...})` and `NodeDescriptor.MeterAiUsage`; the Python SDK has `ctx.model(model, provider, input_tokens, output_tokens, ...)` and passes `meterAiUsage` through. A call over a cap is still handed to Run Trace: the wrapper gives the response's `model` records to the engine before it throws.
+**Model records.** A third NodeRecord shape, `type: "model"`, reports one model call: `{ model, provider, inputTokens, outputTokens, cacheReadTokens?, cacheWriteTokens?, durationMs, finishReason, prompt, answer, name }`. It is additive (gRPC already carries records as dynamic JSON, so no proto change); older hosts ignore it and older plugins are unaffected. A node descriptor may set `meterAiUsage` (optional boolean) to say its calls count in AI usage; the host then also refuses the node before it runs once a cap is reached. The host prices each `model` record, counts it in AI usage and the caps ([observability.md](observability.md#8-token-and-cost-tracking)) and shows it as a `model` span in Run Trace ([run-trace.md](run-trace.md)). The TypeScript SDK exposes `ctx.model(call)` beside `ctx.artifact` and `ctx.check`, masking credential values in the text fields. The Go SDK has `ctx.Model(ModelCall{...})` and `NodeDescriptor.MeterAiUsage`; the Python SDK has `ctx.model(model, provider, input_tokens, output_tokens, ...)` and passes `meterAiUsage` through. A call over a cap is still handed to Run Trace: the wrapper gives the response's `model` records to the engine before it throws.
 
 ## 4. Property types
 
@@ -309,7 +319,8 @@ The host ships a generic OAuth2 type, `core.oAuth2Api` (fields `grantType` — `
 `authentication` — `header` (HTTP Basic) or `body` —, `userInfoUrl`). A plugin type that lists it in `extends`
 (n8n's `extends: ['oAuth2Api']`) becomes an OAuth2 type: the host merges the parent's properties first, a child
 property with the same name replaces the parent's in place (pin a provider's URLs with `hidden` properties and
-defaults), and the credential dialog shows **Connect**:
+defaults: the host never stores a value for a field that is `hidden` with a default, so the API can't point a
+provider's token URL elsewhere), and the credential dialog shows **Connect**:
 
 ```jsonc
 { "name": "googleOAuth2Api", "displayName": "Google OAuth2", "extends": ["oAuth2Api"], "properties": [
@@ -602,6 +613,10 @@ where `pluginId` is the manifest's `plugin.id` and the challenge is 32 random by
 ignore challenges over 256). Test vector: secret `registry-s3cret`, plugin `test-plugin`, challenge `challenge-123` →
 `d6d47aef6c9f0cdd2357464b9db5c8d2a049d3768756e10af5ec4e37ad47655e`.
 
+- An announce is held to the same proof: with the secret set, the host challenges the announced endpoint on its
+  GetManifest, so the secret header alone no longer registers an endpoint (a plugin that cannot answer, such as one
+  without the secret, gets a 422). Without a secret the registry is open only in the development profile, or with
+  `LANDFLOW_REGISTRY_OPEN=true` ([plugins.md](plugins.md#registration-rules)).
 - The three SDKs answer by themselves when `LANDFLOW_REGISTRY_SECRET` is set in the plugin's environment
   (`registryProof` / `answerRegistryChallenge` in TypeScript, `RegistryProof` in Go, `registry_proof` in Python, with
   `verify…` counterparts). Without the variable, or without a challenge, they send no proof.
@@ -833,6 +848,7 @@ recommended; [deployment.md](deployment.md#message-brokers-and-the-mcp-gateway) 
   host and to every plugin; a plugin without it cannot start a messaging binding, a host without it never uses a
   brokered endpoint. Rotation: `LANDFLOW_TRANSPORT_SECRET_PREVIOUS` (comma-separated) lists secrets that still verify
   and decrypt but no longer sign.
+- **HTTP guard (opt-in).** A plugin may require `x-landflow-plugin-token = hex(HMAC-SHA256(secret, "landflow.plugin.http/v1|" + pluginId))` on its POST routes and refuse `Origin` and cross-site requests; see [transports.md](transports.md#guarding-a-plugins-http-face).
 - **Keys.** Per plugin, two 32-byte keys by HKDF-SHA256 over the secret (no salt):
   `encKey = HKDF(secret, info = "landflow transport v1\n" + pluginId + "\nenc")` and
   `sigKey = HKDF(secret, info = "landflow transport v1\n" + pluginId + "\nsig")`. Every replica of a plugin derives the
@@ -1263,3 +1279,62 @@ templates** (`resources/templates/list`) for callers whose grant covers `trigger
   (`LANDFLOW_MCP_TRIGGER_SWEEP_SECONDS`, 60) deregisters webhooks and stops polls that lost their stream.
 - **Queue mode**: the main holding the stream polls; events live in the database, and a 1 s watch lets that main see
   a webhook another main received. A client that reconnects to another main starts a new baseline.
+
+### 15.8 Memory providers
+
+A plugin can provide a project's memory (docs/second-brain.md#memory-backend). Declare an action node with `memoryProvider: true`
+whose `operation` options property has exactly the five values `search`, `profile`, `add`, `forget` and `list`, each with an
+`outputSchema` that requires the keys the host reads: `search` and `list` `items`; `profile` `static` and `recent`; `add` and
+`forget` `item`. The host checks this when it parses the manifest, so a provider with a wrong shape fails registration with a message
+naming the node (`node “vecmem”: a memory provider needs the operation forget`). An old host treats the node as any action node.
+
+The host calls the node as any node: mode `manual`, one input item whose `json` is the request, parameters `{ operation }`, the credential
+the project chose; it reads the first output item.
+
+| `operation` | Request `json` | Output `json` |
+|---|---|---|
+| `search` | `{ container, query, mode: keyword\|meaning\|hybrid, limit, threshold }` | `{ items }` |
+| `profile` | `{ container }` | `{ static: [...], recent: [...] }` |
+| `add` | `{ container, text, kind?, static?, forgetAfter?, replaces?, confidence?, evidence? }` | `{ item }` |
+| `forget` | `{ container, id, reason }` | `{ item }` |
+| `list` | `{ container, cursor?, limit }` | `{ items, nextCursor? }` |
+
+A provider's answers are untrusted: the host refuses an item whose `id` is not 1 to 200 of letters, digits and `: . / # @ _ -`, whose `kind` is not 1 to 40 of letters, digits, `_` and `-`, or whose `version` is not a whole number, clips `text` to 2,000 characters, and keeps at most `limit` items of a search or list and 50 of each profile half. `forget` carries the container so a provider that serves several projects must refuse an id that is not in it (the host cannot know which project an external id belongs to).
+
+`container` is `project:<id>`. An item is `{ id, text, kind?, score?, version?, static?, createdAt?, updatedAt? }` with `score` 0..1.
+A provider that errors, does not answer in 10 s or answers an item without `id` and `text` fails the call; Landflow never falls back to
+another memory. Its own HTTP goes through `ctx.http`. The Go SDK has `NodeDescriptor.MemoryProvider`; the Python SDK passes the
+descriptor as a dict. The `add` request may carry `confidence` (0..1) and `evidence` (at most 6 rows of `label`, `value`, `href`) when Memory Extract writes a fact; a provider may ignore them. Neither SDK types the request body yet.
+
+## 16. Activity items
+
+Integration triggers and their **List Changed Since** operations (Slack, Google Drive and Calendar, Notion, …) output
+one shape whatever the tool, so one flow can take items from any of them: an ingest flow that records events, a digest,
+a search index. The schema is [`packages/protocol/activity-items/activity-item.schema.json`](../packages/protocol/activity-items/activity-item.schema.json);
+a node declares it as its (or its operation's) `outputSchema`.
+
+| Field | |
+|---|---|
+| `source` | the tool, lowercase (`slack`, `google-drive`, `google-calendar`, `notion`, …) |
+| `sourceId` | stable id, `<source>:<the tool's ids>`: the same change always has the same id, so a replay is recognised |
+| `url` | where a person opens it, or null |
+| `actorEmail` | the person who made the change, lowercase, or null; email is the identity key across tools |
+| `occurredAt` | ISO 8601 in UTC with milliseconds |
+| `kind` | a suggested event kind such as `work.discussion` or `work.doc_edited` (`<namespace>.<name>`); a flow may change it |
+| `title` | one line, at most 200 characters (the `sourceId` when the tool has none) |
+| `summary` | the text with whitespace collapsed, at most 600 characters |
+| `teamHint`, `initiativeHint`, `customerHint` | what the tool's own grouping suggests (a `#customer-<name>` channel, a folder, a project), or null |
+| `raw` | the tool's object, trimmed: strings at 1,000 characters, lists at 25 entries, nesting below five levels replaced by `…` |
+| `cursor` | only on List Changed Since output: pass it back as **Since** to continue after this item |
+
+The SDKs build it, with the same clipping, time parsing and errors: `activityItem()` and `ACTIVITY_ITEM_SCHEMA`
+(`@landflow/sdk`), `landflow.ActivityItem(landflow.Activity{…})` and `landflow.ActivityItemSchema()` (Go),
+`activity_item(…)` and `ACTIVITY_ITEM_SCHEMA` (`landflow_sdk`). Each throws on a missing `source` or `sourceId`, a
+`kind` that is not `<namespace>.<name>`, or a time it can't read (ISO 8601, where a date alone or a time without an
+offset is UTC; epoch milliseconds; a native date). The shared cases in
+[`activity-items/cases.json`](../packages/protocol/activity-items/cases.json) are run by all three SDKs' tests, and
+`packages/protocol` checks every expected output against the schema.
+
+Plugins that produce activity items follow the same rules: a poll trigger's first poll sets a baseline and returns
+nothing; an app-webhook trigger checks the vendor's signature; private channels, direct messages and email bodies are
+left out unless the node has an explicit option on.

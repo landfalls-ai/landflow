@@ -12,6 +12,7 @@
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { approvalSubject, type Agent, type PendingCall } from '../shared/agents';
+import { closedOf, rowFor } from './approval-inbox/store'; // AP01:
 import { ApprovalError, decideApproval, pendingApproval } from './approvals';
 import { decide, DecisionError } from './agents/runtime';
 import { agentStore } from './agents/store';
@@ -20,6 +21,8 @@ import { credentials } from './credentials/vault';
 import { database } from './db';
 import { store } from './store';
 import { logger } from './telemetry';
+import { publicUrl } from './config';
+import { HttpError } from './errors';
 
 export type EmailApprovalTarget = { t: 'wf'; e: string; c: string } | { t: 'agent'; a: string; s: string; c: string };
 
@@ -36,7 +39,7 @@ export interface LinkPayload {
 
 export const DEFAULT_TTL_HOURS = 24;
 const ttlMs = () => Math.max(1, Number(process.env.LANDFLOW_APPROVAL_EMAIL_TTL_HOURS) || DEFAULT_TTL_HOURS) * 3_600_000;
-const publicUrl = () => (process.env.LANDFLOW_PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/+$/, '');
+
 const key = () => credentials.deriveKey('approval.email');
 const b64url = (buffer: Buffer) => buffer.toString('base64url');
 
@@ -59,9 +62,13 @@ export function signLink(payload: LinkPayload): string {
 export function verifyLink(token: string, now = Date.now()): LinkPayload {
   const [body, signature, extra] = token.split('.');
   if (!body || !signature || extra !== undefined) throw new LinkError('This approval link is not valid', 400);
-  const expected = createHmac('sha256', key()).update(body).digest();
   const given = Buffer.from(signature, 'base64url');
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) throw new LinkError('This approval link is not valid', 400);
+  // Any key of the ring, and the pre-HKDF one: a link in flight survives a rotation and the upgrade.
+  const valid = credentials.deriveKeys('approval.email').some((candidate) => {
+    const expected = createHmac('sha256', candidate).update(body).digest();
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
+  if (!valid) throw new LinkError('This approval link is not valid', 400);
   let payload: LinkPayload;
   try {
     payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as LinkPayload;
@@ -74,23 +81,24 @@ export function verifyLink(token: string, now = Date.now()): LinkPayload {
     ((target?.t === 'wf' && typeof target.e === 'string' && typeof target.c === 'string') ||
       (target?.t === 'agent' && typeof target.a === 'string' && typeof target.s === 'string' && typeof target.c === 'string'));
   if (!wellFormed) throw new LinkError('This approval link is not valid', 400);
-  if (payload.x < now) throw new LinkError('This approval link has expired', 410);
+  if (payload.x < now) throw new LinkError(`This approval link has expired at ${new Date(payload.x).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`, 410); // the link's time is the request's expiry
   return payload;
 }
 
-export class LinkError extends Error {
+export class LinkError extends HttpError {
+  static readonly errorName: string = 'LinkError';
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 
 /** The approve and reject URLs of one tool call for one address. */
-export function approvalLinks(target: EmailApprovalTarget, email: string, now = Date.now()): { approve: string; reject: string; expiresAt: string } {
+export function approvalLinks(target: EmailApprovalTarget, email: string, now = Date.now(), expiresAtMs?: number): { approve: string; reject: string; expiresAt: string } {
   const g = randomBytes(12).toString('base64url');
-  const x = now + ttlMs();
+  const x = expiresAtMs ?? now + ttlMs(); // AP01: an inbox nudge's links expire with the request
   const url = (d: 'approve' | 'reject') => `${publicUrl()}/api/approvals/email/${signLink({ g, t: target, d, m: email, x })}`;
   return { approve: url('approve'), reject: url('reject'), expiresAt: new Date(x).toISOString() };
 }
@@ -105,20 +113,23 @@ export interface ApprovalEmailCall {
   tool: string;
   input: unknown;
   target: EmailApprovalTarget;
+  /** Ask a Person: the email asks about this draft instead of a tool call. */
+  confirm?: { text: string };
 }
 
 /** Email each address one message per waiting tool call, with its two links. Returns the addresses it reached. */
-export async function sendApprovalEmails(options: { to: string[]; title: string; calls: ApprovalEmailCall[]; note?: string }): Promise<string[]> {
+export async function sendApprovalEmails(options: { to: string[]; title: string; calls: ApprovalEmailCall[]; note?: string; expiresAt?: string }): Promise<string[]> {
   const sent: string[] = [];
   for (const to of options.to) {
     for (const call of options.calls) {
-      const links = approvalLinks(call.target, to);
-      const subject = `${options.title}: approve ${call.tool}?`;
+      const links = approvalLinks(call.target, to, Date.now(), options.expiresAt ? Date.parse(options.expiresAt) : undefined); // AP01:
+      const subject = call.confirm ? options.title : `${options.title}: approve ${call.tool}?`;
+      const body = call.confirm ? call.confirm.text.slice(0, 20_000) : preview(call.input);
       const text = [
         options.title,
-        `The tool "${call.tool}" needs your approval.`,
+        call.confirm ? 'Please review this and answer.' : `The tool "${call.tool}" needs your approval.`,
         '',
-        preview(call.input),
+        body,
         '',
         `Approve: ${links.approve}`,
         `Reject:  ${links.reject}`,
@@ -128,8 +139,8 @@ export async function sendApprovalEmails(options: { to: string[]; title: string;
       const button = (label: string, href: string, color: string) =>
         `<a href="${escapeHtml(href)}" style="display:inline-block;padding:9px 18px;margin-right:8px;border-radius:8px;background:${color};color:#fff;text-decoration:none;font-weight:600">${label}</a>`;
       const html =
-        `<p><strong>${escapeHtml(options.title)}</strong><br>The tool <code>${escapeHtml(call.tool)}</code> needs your approval.</p>` +
-        `<pre style="background:#f4f4f5;padding:10px;border-radius:8px;white-space:pre-wrap">${escapeHtml(preview(call.input))}</pre>` +
+        `<p><strong>${escapeHtml(options.title)}</strong><br>${call.confirm ? 'Please review this and answer.' : `The tool <code>${escapeHtml(call.tool)}</code> needs your approval.`}</p>` +
+        `<pre style="background:#f4f4f5;padding:10px;border-radius:8px;white-space:pre-wrap">${escapeHtml(body)}</pre>` +
         `<p>${button('Approve', links.approve, '#16a34a')}${button('Reject', links.reject, '#dc2626')}</p>` +
         `<p style="color:#71717a;font-size:12px">The links work once and expire ${escapeHtml(links.expiresAt)}.${options.note ? ` ${escapeHtml(options.note)}` : ''}</p>`;
       await sendMail({ to, subject, text, html });
@@ -165,23 +176,34 @@ export interface LinkView {
   title: string;
   tool: string;
   input: unknown;
+  /** Ask a Person: the request's title and draft. */
+  confirm?: { title: string; text: string };
   /** Set when the link can no longer decide: spent, already decided, run finished. */
   closed?: string;
+  /** AP01: with `closed`: 410 for an expired approval-inbox request, else 409. */
+  closedStatus?: 409 | 410;
 }
 
 const isUsed = (group: string) => Boolean(database().get('SELECT group_id FROM approval_email_used WHERE group_id = ?', group));
 
 /** What a link would decide, for its confirmation page. */
-export function describeLink(token: string): LinkView {
+export async function describeLink(token: string): Promise<LinkView> {
   const payload = verifyLink(token);
   const target = payload.t;
   let view: Omit<LinkView, 'payload'>;
   if (target.t === 'wf') {
-    const record = store.getExecution(target.e);
+    const record = await store.loadExecution(target.e);
     const approval = pendingApproval(record);
     const call = approval?.calls.find((c) => c.id === target.c);
-    view = { title: approval ? `${approval.nodeName} (${record?.workflowName ?? 'workflow'})` : 'A workflow', tool: call?.tool ?? 'a tool', input: call?.input ?? {} };
+    view = { title: approval ? `${approval.nodeName} (${record?.workflowName ?? 'workflow'})` : 'A workflow', tool: call?.tool ?? 'a tool', input: call?.input ?? {}, ...(approval?.confirm && { confirm: { title: approval.confirm.title, text: String((call?.input as { text?: unknown } | undefined)?.text ?? approval.confirm.text) } }) };
     if (!call || approval?.decisions?.[target.c]) view.closed = 'This tool call is no longer waiting for approval.';
+    // AP01: a request in the approval inbox answers its record's closed word (who decided, expired, cancelled).
+    const request = rowFor(target.e, target.c);
+    if (request && request.status !== 'waiting') {
+      const answer = closedOf(request);
+      view.closed = answer.message;
+      view.closedStatus = answer.status;
+    }
   } else {
     const agent = agentStore.get(target.a);
     const call = agentStore.getSession(target.s)?.pending?.calls.find((c) => c.callId === target.c);
@@ -196,12 +218,14 @@ export interface LinkOutcome {
   approved: boolean;
   tool: string;
   title: string;
+  /** Ask a Person's request (it has no tool). */
+  confirm?: boolean;
 }
 
 /** Decide with a link: spends its group first (so a second use fails), then records the decision; a failed decision frees the link. */
 export async function useLink(token: string): Promise<LinkOutcome> {
-  const view = describeLink(token);
-  if (view.closed) throw new LinkError(view.closed, 409);
+  const view = await describeLink(token);
+  if (view.closed) throw new LinkError(view.closed, view.closedStatus ?? 409); // AP01: closedStatus
   const { payload } = view;
   const approved = payload.d === 'approve';
   const by = `email:${payload.m}`;
@@ -220,6 +244,14 @@ export async function useLink(token: string): Promise<LinkOutcome> {
     } else {
       const agent = agentStore.get(target.a);
       if (!agent) throw new LinkError('The agent no longer exists', 404);
+      // AP01: a workflow session's call that waits in the inbox is decided there (the same closed door as the agent-session route), for links sent before.
+      const session = agentStore.getSession(target.s);
+      const inboxRow = session?.execution ? rowFor(session.execution.executionId, target.c) : undefined;
+      if (inboxRow?.status === 'waiting') throw new LinkError('This tool call waits in Needs you: decide it there', 409);
+      if (inboxRow) {
+        const closed = closedOf(inboxRow);
+        throw new LinkError(closed.message, closed.status);
+      }
       const outcome = await decide(agent, target.s, target.c, approved, { by });
       if (outcome.status === 'resumed') await deliverToChannel(agent, outcome);
     }
@@ -232,7 +264,7 @@ export async function useLink(token: string): Promise<LinkOutcome> {
   // Old rows go with the next use.
   database().deleteBefore('approval_email_used', 'expires_at', new Date().toISOString());
   logger.info('approval decided by email link', { 'landflow.approval.approved': approved, 'landflow.approval.by': by });
-  return { approved, tool: view.tool, title: view.title };
+  return { approved, tool: view.tool, title: view.confirm?.title ?? view.title, ...(view.confirm && { confirm: true }) };
 }
 
 /** After an email decision resumed a channel session, the answer belongs in that chat (Slack thread, Teams conversation). */
@@ -264,14 +296,16 @@ const PAGE = (body: string) =>
 const html = (body: string, status = 200) => new Response(PAGE(body), { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' } });
 
 /** GET: what the link would do, with a button. Never decides. */
-export function confirmationPage(token: string): Response {
+export async function confirmationPage(token: string): Promise<Response> {
   try {
-    const view = describeLink(token);
-    if (view.closed) return html(`<h2>Nothing to decide</h2><p>${escapeHtml(view.closed)}</p>`, 409);
+    const view = await describeLink(token);
+    if (view.closed) return html(`<h2>Nothing to decide</h2><p>${escapeHtml(view.closed)}</p>`, view.closedStatus ?? 409); // AP01: closedStatus
     const approve = view.payload.d === 'approve';
     return html(
-      `<h2>${approve ? 'Approve' : 'Reject'} this tool call?</h2><p><strong>${escapeHtml(view.title)}</strong> wants to run <code>${escapeHtml(view.tool)}</code>.</p>` +
-        `<pre>${escapeHtml(preview(view.input))}</pre><form method="post"><button class="${approve ? 'approve' : 'reject'}" type="submit">${approve ? 'Approve' : 'Reject'}</button></form>` +
+      (view.confirm
+        ? `<h2>${approve ? 'Approve' : 'Reject'} this?</h2><p><strong>${escapeHtml(view.confirm.title)}</strong> (${escapeHtml(view.title)}) asks for your answer.</p><pre>${escapeHtml(view.confirm.text.slice(0, 20_000))}</pre>`
+        : `<h2>${approve ? 'Approve' : 'Reject'} this tool call?</h2><p><strong>${escapeHtml(view.title)}</strong> wants to run <code>${escapeHtml(view.tool)}</code>.</p><pre>${escapeHtml(preview(view.input))}</pre>`) +
+        `<form method="post"><button class="${approve ? 'approve' : 'reject'}" type="submit">${approve ? 'Approve' : 'Reject'}</button></form>` +
         `<p class="muted">Sent to ${escapeHtml(view.payload.m)}. This link works once.</p>`,
     );
   } catch (error) {
@@ -284,7 +318,7 @@ export function confirmationPage(token: string): Response {
 export async function decisionPage(token: string): Promise<Response> {
   try {
     const outcome = await useLink(token);
-    return html(`<h2>${outcome.approved ? 'Approved' : 'Rejected'}</h2><p><code>${escapeHtml(outcome.tool)}</code> was ${outcome.approved ? 'approved' : 'rejected'}. You can close this page.</p>`);
+    return html(`<h2>${outcome.approved ? 'Approved' : 'Rejected'}</h2><p>${outcome.confirm ? `<strong>${escapeHtml(outcome.title)}</strong>` : `<code>${escapeHtml(outcome.tool)}</code>`} was ${outcome.approved ? 'approved' : 'rejected'}. You can close this page.</p>`);
   } catch (error) {
     if (error instanceof LinkError) return html(`<h2>Link not usable</h2><p>${escapeHtml(error.message)}</p>`, error.status);
     throw error;

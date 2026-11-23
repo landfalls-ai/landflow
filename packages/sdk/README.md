@@ -208,6 +208,10 @@ const repoEvents: INodeType = {
 - JWTs: `rs256Sign(privateKeyPem, payload, headers?)` and `githubAppJwt(appId, privateKeyPem, now?)` (`iss` = app id, `iat` = now − 60 s, `exp` = now + 540 s) sign with
   `node:crypto` (PKCS#1 or PKCS#8 PEM) for services that authenticate the client with a token, GitHub Apps first. Python has the same
   (`landflow_sdk.jwt`) and Go (`landflow.GitHubAppJWT`).
+- Activity items ([protocol §16](../../docs/protocol.md#16-activity-items)): `activityItem({ source, sourceId, occurredAt,
+  kind, title, summary, url, actorEmail, teamHint, initiativeHint, customerHint, raw, cursor })` returns the normalised
+  item a trigger or List Changed Since operation outputs (summary clipped to 600, `raw` trimmed, time as ISO UTC), and
+  `ACTIVITY_ITEM_SCHEMA` is its `outputSchema`. Go and Python build the same item from the same input.
 
 ## Transports and bindings
 

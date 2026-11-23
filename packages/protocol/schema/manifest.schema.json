@@ -206,6 +206,10 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "expand": {
+                  "type": "string",
+                  "const": "decide"
                 }
               },
               "required": [
@@ -281,6 +285,10 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                "expand": {
+                  "type": "string",
+                  "const": "decide"
                 }
               },
               "required": [
@@ -299,6 +307,9 @@
             "type": "boolean"
           },
           "meterAiUsage": {
+            "type": "boolean"
+          },
+          "memoryProvider": {
             "type": "boolean"
           },
           "toolDescription": {

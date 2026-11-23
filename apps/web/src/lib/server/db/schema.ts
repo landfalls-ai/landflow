@@ -1478,7 +1478,749 @@ export const MIGRATIONS: Migration[] = [
     ],
   },
   {
-    version: 2046,
+    version: 2062,
+    name: 'usage_kinds',
+    statements: [
+      // Custom usage event kinds (lib/server/usage/kinds.ts, docs/second-brain.md#your-own-event-kinds): a name like
+      // work.ticket_moved and the attributes its events declare. `fields` is a JSON list of { name, type, required, description }.
+      `CREATE TABLE IF NOT EXISTS usage_kinds (
+        kind TEXT PRIMARY KEY,
+        description TEXT NOT NULL DEFAULT '',
+        fields TEXT NOT NULL,
+        project_id TEXT,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 2063,
+    name: 'brain_entities',
+    statements: [
+      // The entity registry (lib/server/brain/entities.ts, docs/second-brain.md#entities): initiatives, people, customers
+      // and systems the brain reasons about next to workflows and agents. `attrs` is a JSON object of flat values.
+      `CREATE TABLE IF NOT EXISTS brain_entities (
+        type TEXT NOT NULL,
+        id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        owner TEXT NOT NULL DEFAULT '',
+        project_id TEXT,
+        attrs TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (type, id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS brain_entities_project ON brain_entities (project_id)`,
+    ],
+  },
+  {
+    version: 2064,
+    name: 'brain_backtests',
+    statements: [
+      // Backtests of detectors against past decisions (lib/server/brain/backtest.ts): the result is JSON in `data`; the
+      // columns are what the list filters and sorts on.
+      `CREATE TABLE IF NOT EXISTS brain_backtests (
+        id TEXT PRIMARY KEY,
+        detector TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        precision_rate REAL,
+        failing INTEGER NOT NULL DEFAULT 0,
+        data TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS brain_backtests_detector ON brain_backtests (detector, created_at)`,
+    ],
+  },
+  {
+    version: 2065,
+    name: 'brain_pages',
+    statements: [
+      // The Brain page's summaries (lib/server/brain/wiki.ts): the text the model wrote for an entity's page, and `basis`,
+      // a hash of the facts and work it was written from, so the page can say when it is out of date.
+      `CREATE TABLE IF NOT EXISTS brain_pages (
+        subject TEXT PRIMARY KEY,
+        summary TEXT NOT NULL,
+        model TEXT NOT NULL,
+        basis TEXT NOT NULL,
+        generated_at TEXT NOT NULL
+      )`,
+    ],
+  },
+  // B02: personal preferences and the conversations store (docs/assistant.md#conversation-history).
+  {
+    version: 2070,
+    name: 'user_preferences',
+    statements: [
+      // One row per person: their settings as JSON (lib/shared/preferences.ts names the keys and defaults).
+      `CREATE TABLE IF NOT EXISTS user_preferences (
+        user_id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 2071,
+    name: 'conversations',
+    statements: [
+      // A person's own chats with Spotlight, the brain, the Agent architect and an agent's test chat; owner-only.
+      `CREATE TABLE IF NOT EXISTS conversations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        surface TEXT NOT NULL,
+        project_id TEXT,
+        subject_type TEXT,
+        subject_id TEXT,
+        title TEXT NOT NULL,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS conversations_user ON conversations (user_id, updated_at)`,
+      `CREATE INDEX IF NOT EXISTS conversations_subject ON conversations (user_id, surface, subject_type, subject_id, updated_at)`,
+      `CREATE TABLE IF NOT EXISTS conversation_items (
+        conversation_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        parts TEXT NOT NULL,
+        meta TEXT,
+        at TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, seq)
+      )`,
+    ],
+  },
+  // B03: which surface made a model call (spotlight, architect, brain), so Insights counts the assistant's spend.
+  {
+    version: 2072,
+    name: 'ai_usage_surface',
+    statements: [],
+    addColumns: [{ table: 'ai_usage', column: 'surface', definition: 'TEXT' }],
+  },
+  // B05: work events (docs/work-and-briefings.md): who owns a ledger row, who may see it, and where it came from.
+  {
+    version: 2073,
+    name: 'usage_events_work_owner',
+    addColumns: [
+      { table: 'usage_events', column: 'owner_id', definition: 'TEXT' },
+      { table: 'usage_events', column: 'visibility', definition: 'TEXT' },
+      { table: 'usage_events', column: 'source', definition: 'TEXT' },
+      { table: 'usage_events', column: 'source_id', definition: 'TEXT' },
+    ],
+    statements: [
+      `CREATE UNIQUE INDEX IF NOT EXISTS usage_events_owner_source ON usage_events (owner_id, source, source_id) WHERE source_id IS NOT NULL`,
+      `CREATE INDEX IF NOT EXISTS usage_events_owner_at ON usage_events (owner_id, at)`,
+    ],
+  },
+  // B18: a person page is linked to its user (lib/server/brain/entities.ts, docs/second-brain.md#entities).
+  {
+    version: 2080,
+    name: 'brain_entities_user',
+    addColumns: [{ table: 'brain_entities', column: 'user_id', definition: 'TEXT' }],
+    statements: [`CREATE INDEX IF NOT EXISTS brain_entities_user ON brain_entities (user_id)`],
+  },
+  // B30: the nightly tomorrow-sync briefings (lib/server/brain/briefings-store.ts, docs/work-and-briefings.md#the-nightly-sync).
+  {
+    version: 2090,
+    name: 'brain_briefings',
+    statements: [
+      // One row per person and day and state: `draft` while the flow gathers and writes, `ready` once saved, `superseded` after
+      // a newer run replaced it. `gathered` and `text` are the person's own work; only they read them.
+      `CREATE TABLE IF NOT EXISTS brain_briefings (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        day TEXT NOT NULL,
+        status TEXT NOT NULL,
+        gathered TEXT,
+        text TEXT,
+        model TEXT,
+        workflow_id TEXT,
+        execution_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS brain_briefings_ready ON brain_briefings (user_id, day) WHERE status = 'ready'`,
+      `CREATE INDEX IF NOT EXISTS brain_briefings_user ON brain_briefings (user_id, day, status)`,
+    ],
+  },
+  // Who saved each workflow version (lib/server/versions.ts): the user whose save made it, NULL for a save with no person
+  // (a background or system save) and for versions older than this. The briefing nodes trust only an owner's or admin's.
+  {
+    version: 2091,
+    name: 'workflow_versions_author',
+    addColumns: [{ table: 'workflow_versions', column: 'author', definition: 'TEXT' }],
+    statements: [],
+  },
+  // Who created a credential and who last changed its data (lib/server/credentials/vault.ts; files mode keeps the same
+  // fields in credentials.json). NULL is nobody, and every credential from before this; the briefing nodes trust a
+  // credential only when an owner or admin last changed it.
+  {
+    version: 2092,
+    name: 'credentials_changed_by',
+    addColumns: [
+      { table: 'credentials', column: 'created_by', definition: 'TEXT' },
+      { table: 'credentials', column: 'updated_by', definition: 'TEXT' },
+    ],
+    statements: [],
+  },
+  // LL: the LiteLLM wave (docs/llm-gateway.md). One block, pasted byte for byte by LL02–LL06.
+  // 2200: where a model call went and what ran it: the gateway's call id and its reported cost, the runtime, the source
+  // (Landflow's meter or LiteLLM's spend log) and the project. A call id is counted once (the unique index).
+  {
+    version: 2200,
+    name: 'ai_usage_gateway',
+    addColumns: [
+      { table: 'ai_usage', column: 'call_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'source', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'runtime', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'project_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'gateway_cost', definition: 'DOUBLE PRECISION' },
+    ],
+    statements: [
+      `CREATE UNIQUE INDEX IF NOT EXISTS ai_usage_call ON ai_usage (call_id) WHERE call_id IS NOT NULL`,
+      `CREATE INDEX IF NOT EXISTS ai_usage_project ON ai_usage (project_id, day)`,
+      `CREATE INDEX IF NOT EXISTS ai_usage_source ON ai_usage (source, day)`,
+    ],
+  },
+  // 2201: the virtual keys Landflow minted for agents on runtimes outside it (kagent, Claude Code on kagent). The key is
+  // sealed with the credential vault; LiteLLM's spend log names it by its SHA-256. Never deleted: a removed agent's key
+  // is blocked.
+  {
+    version: 2201,
+    name: 'llm_gateway_keys',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS llm_gateway_keys (
+        id TEXT PRIMARY KEY,
+        runtime TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        project_id TEXT,
+        key_alias TEXT NOT NULL,
+        key_hash TEXT NOT NULL,
+        key_sealed TEXT NOT NULL,
+        team_id TEXT,
+        max_budget DOUBLE PRECISION,
+        budget_duration TEXT,
+        blocked INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS llm_gateway_keys_agent ON llm_gateway_keys (runtime, agent_id)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS llm_gateway_keys_hash ON llm_gateway_keys (key_hash)`,
+    ],
+  },
+  // 2202: what the budgets sync last wrote to LiteLLM for each project (team), person (customer) and key.
+  {
+    version: 2202,
+    name: 'llm_gateway_links',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS llm_gateway_links (
+        kind TEXT NOT NULL,
+        landflow_id TEXT NOT NULL,
+        litellm_id TEXT NOT NULL,
+        state TEXT NOT NULL,
+        budget TEXT,
+        error TEXT,
+        synced_at TEXT NOT NULL,
+        PRIMARY KEY (kind, landflow_id)
+      )`,
+    ],
+  },
+  // 2203: requests for a higher AI cap; a person decides each one through Ask a Person in the cap-raise flow.
+  {
+    version: 2203,
+    name: 'ai_cap_requests',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ai_cap_requests (
+        id TEXT PRIMARY KEY,
+        cap_id TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        period TEXT NOT NULL,
+        current_max DOUBLE PRECISION NOT NULL,
+        requested_max DOUBLE PRECISION NOT NULL,
+        reason TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        status TEXT NOT NULL,
+        workflow_id TEXT,
+        execution_id TEXT,
+        decided_by TEXT,
+        decided_at TEXT,
+        note TEXT,
+        gateway TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS ai_cap_requests_status ON ai_cap_requests (status, created_at)`,
+      `CREATE INDEX IF NOT EXISTS ai_cap_requests_by ON ai_cap_requests (requested_by, created_at)`,
+      `CREATE INDEX IF NOT EXISTS ai_cap_requests_cap ON ai_cap_requests (cap_id, status)`,
+      `CREATE INDEX IF NOT EXISTS ai_cap_requests_execution ON ai_cap_requests (execution_id)`,
+    ],
+  },
+  // 2204: LiteLLM's own id for the spend row a usage row stands for (server-assigned, unlike the call id, which a caller
+  // may send), and the hash of the key Landflow called the gateway with. The spend import matches one Landflow row to
+  // one spend row of that key, so a caller who reuses a call id can't hide a call.
+  {
+    version: 2204,
+    name: 'ai_usage_gateway_request',
+    addColumns: [
+      { table: 'ai_usage', column: 'gateway_request_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'gateway_key_hash', definition: 'TEXT' },
+    ],
+    statements: [`CREATE UNIQUE INDEX IF NOT EXISTS ai_usage_gateway_request ON ai_usage (gateway_request_id) WHERE gateway_request_id IS NOT NULL`],
+  },
+  // PC01: goals (a tree: company goals and project goals), the goals a project serves in order, the brain initiatives a goal
+  // links, and the project brief (docs/projects-and-goals.md).
+  {
+    version: 2300,
+    name: 'goals',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, title TEXT NOT NULL, why TEXT, level TEXT NOT NULL, status TEXT NOT NULL, owner_id TEXT, target_date TEXT, parent_id TEXT, project_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT)`,
+      `CREATE INDEX IF NOT EXISTS goals_parent ON goals (parent_id)`,
+      `CREATE INDEX IF NOT EXISTS goals_project ON goals (project_id)`,
+      `CREATE TABLE IF NOT EXISTS project_goals (project_id TEXT NOT NULL, goal_id TEXT NOT NULL, position BIGINT NOT NULL DEFAULT 0, created_at TEXT NOT NULL, PRIMARY KEY (project_id, goal_id))`,
+      `CREATE INDEX IF NOT EXISTS project_goals_goal ON project_goals (goal_id)`,
+      `CREATE TABLE IF NOT EXISTS goal_links (goal_id TEXT NOT NULL, kind TEXT NOT NULL, ref_id TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT, PRIMARY KEY (goal_id, kind, ref_id))`,
+    ],
+  },
+  {
+    version: 2301,
+    name: 'project_brief',
+    statements: [],
+    addColumns: ['brief', 'brief_constraints', 'done_when', 'glossary', 'status', 'target_date', 'lead_id', 'decision_owner_id'].map((column) => ({ table: 'projects', column, definition: 'TEXT' })),
+  },
+  // PC05: 2302: the goal a run served, on each model call row and each usage event (the project is on both already).
+  {
+    version: 2302,
+    name: 'run_goal',
+    addColumns: [
+      { table: 'ai_usage', column: 'goal_id', definition: 'TEXT' },
+      { table: 'usage_events', column: 'goal_id', definition: 'TEXT' },
+    ],
+    statements: [`CREATE INDEX IF NOT EXISTS ai_usage_goal ON ai_usage (goal_id, day)`, `CREATE INDEX IF NOT EXISTS usage_events_goal ON usage_events (goal_id, at)`],
+  },
+  // PR01: practices (docs/practices.md): the rule, its versions and where each was applied.
+  {
+    version: 2400,
+    name: 'practices',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS practices (id TEXT PRIMARY KEY, handle TEXT NOT NULL, scope_key TEXT NOT NULL, title TEXT NOT NULL, level TEXT NOT NULL, project_id TEXT, strength TEXT NOT NULL, topics TEXT NOT NULL, repos TEXT NOT NULL, paths TEXT NOT NULL, owner_id TEXT, status TEXT NOT NULL, approved_version BIGINT, supersedes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS practices_handle ON practices (scope_key, handle)`,
+      `CREATE INDEX IF NOT EXISTS practices_project ON practices (project_id)`,
+    ],
+  },
+  {
+    version: 2401,
+    name: 'practice_versions',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS practice_versions (practice_id TEXT NOT NULL, version BIGINT NOT NULL, title TEXT NOT NULL, strength TEXT NOT NULL, topics TEXT NOT NULL, repos TEXT NOT NULL, paths TEXT NOT NULL, summary TEXT NOT NULL, body TEXT NOT NULL, checks TEXT NOT NULL, citations TEXT NOT NULL, source TEXT NOT NULL, tainted BIGINT NOT NULL DEFAULT 0, drafted_by TEXT, created_at TEXT NOT NULL, approved_by TEXT, approved_at TEXT, rejected_by TEXT, rejected_at TEXT, reject_reason TEXT, sha256 TEXT NOT NULL, PRIMARY KEY (practice_id, version))`,
+    ],
+  },
+  {
+    version: 2402,
+    name: 'practice_applications',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS practice_applications (id TEXT PRIMARY KEY, practice_id TEXT NOT NULL, version BIGINT NOT NULL, kind TEXT NOT NULL, execution_id TEXT, agent_id TEXT, user_id TEXT, repo TEXT, reason TEXT, at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS practice_applications_practice ON practice_applications (practice_id, at)`,
+      `CREATE INDEX IF NOT EXISTS practice_applications_execution ON practice_applications (execution_id)`,
+    ],
+  },
+  // PC10: the repositories a project lists (JSON array), so a harness finds its project by repository
+  {
+    version: 2500,
+    name: 'project_repos',
+    statements: [],
+    addColumns: [{ table: 'projects', column: 'repos', definition: 'TEXT' }],
+  },
+  // PC14: a project's monthly AI budget and its incidents (docs/projects-and-goals.md#ai-budget)
+  {
+    version: 2700,
+    name: 'project_budgets',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS project_budgets (project_id TEXT PRIMARY KEY, monthly_usd DOUBLE PRECISION NOT NULL, warn_percent BIGINT NOT NULL, hard_stop BIGINT NOT NULL DEFAULT 0, owner_id TEXT, updated_at TEXT NOT NULL, updated_by TEXT)`,
+      `CREATE TABLE IF NOT EXISTS project_budget_incidents (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, month TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, used_usd DOUBLE PRECISION NOT NULL, budget_usd DOUBLE PRECISION NOT NULL, resolution TEXT, resolved_by TEXT, created_at TEXT NOT NULL, resolved_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS project_budget_incidents_month ON project_budget_incidents (project_id, month)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS project_budget_incidents_open ON project_budget_incidents (project_id, month, kind) WHERE status = 'open'`,
+    ],
+  },
+  // PC16: a project's workspace for harness runs (per repository branch and setup lines, worktree, branch template)
+  {
+    version: 2701,
+    name: 'project_workspaces',
+    statements: [`CREATE TABLE IF NOT EXISTS project_workspaces (project_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`],
+  },
+  // PC19: project tasks and their runs (docs/projects-and-goals.md#tasks)
+  {
+    version: 2800,
+    name: 'project_tasks',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS project_tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, goal_id TEXT, parent_id TEXT, title TEXT NOT NULL, description TEXT, status TEXT NOT NULL, priority TEXT NOT NULL, assignee_kind TEXT, assignee_id TEXT, wake_cron TEXT, next_wake_at TEXT, checked_out_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT)`,
+      `CREATE INDEX IF NOT EXISTS project_tasks_project ON project_tasks (project_id, status)`,
+      `CREATE INDEX IF NOT EXISTS project_tasks_wake ON project_tasks (next_wake_at)`,
+      `CREATE TABLE IF NOT EXISTS task_runs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, project_id TEXT NOT NULL, agent_id TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL, requested_at TEXT NOT NULL, requested_by TEXT, decided_by TEXT, decided_at TEXT, session_id TEXT, reply TEXT, error TEXT, finished_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS task_runs_task ON task_runs (task_id, status)`,
+      `CREATE INDEX IF NOT EXISTS task_runs_open ON task_runs (project_id, status)`,
+    ],
+  },
+  // SP01: what each model call was for and where it ran (docs/llm-gateway.md#what-each-call-was-for)
+  {
+    version: 2900,
+    name: 'ai_usage_attribution',
+    statements: [`CREATE INDEX IF NOT EXISTS ai_usage_purpose ON ai_usage (purpose, day)`],
+    addColumns: [
+      { table: 'ai_usage', column: 'node_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'span_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'purpose', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'iteration', definition: 'BIGINT' },
+      { table: 'ai_usage', column: 'caller_agent_id', definition: 'TEXT' },
+      { table: 'ai_usage', column: 'duration_ms', definition: 'BIGINT' },
+      { table: 'ai_usage', column: 'stop_reason', definition: 'TEXT' },
+    ],
+  },
+  // SP03: the parts of each model call's prompt, in tokens and hashes, no text (docs/llm-gateway.md#what-a-prompt-was-made-of)
+  {
+    version: 2901,
+    name: 'ai_call_parts',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ai_call_parts (id TEXT PRIMARY KEY, usage_id TEXT, gateway_request_id TEXT, at TEXT NOT NULL, source TEXT NOT NULL, method TEXT NOT NULL, input_tokens BIGINT NOT NULL DEFAULT 0, parts TEXT NOT NULL, prefix_hash TEXT, prompt_hash TEXT, part_hashes TEXT, tool_names TEXT)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS ai_call_parts_usage ON ai_call_parts (usage_id) WHERE usage_id IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS ai_call_parts_request ON ai_call_parts (gateway_request_id) WHERE gateway_request_id IS NOT NULL`,
+      `CREATE INDEX IF NOT EXISTS ai_call_parts_at ON ai_call_parts (at)`,
+      `CREATE INDEX IF NOT EXISTS ai_call_parts_prompt ON ai_call_parts (prompt_hash, at)`,
+    ],
+  },
+  // SP08: the daily rollup of ai_usage, for the AI page's 90 days and custom ranges (docs/llm-gateway.md, "The AI page")
+  {
+    version: 2902,
+    name: 'ai_usage_daily',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ai_usage_daily (day TEXT NOT NULL, project_id TEXT NOT NULL, goal_id TEXT NOT NULL, agent_id TEXT NOT NULL, workflow_id TEXT NOT NULL, user_id TEXT NOT NULL, credential_id TEXT NOT NULL, surface TEXT NOT NULL, purpose TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, source TEXT NOT NULL, runtime TEXT NOT NULL, input_tokens BIGINT NOT NULL DEFAULT 0, output_tokens BIGINT NOT NULL DEFAULT 0, cache_read_tokens BIGINT NOT NULL DEFAULT 0, cache_write_tokens BIGINT NOT NULL DEFAULT 0, calls BIGINT NOT NULL DEFAULT 0, runs BIGINT NOT NULL DEFAULT 0, cost DOUBLE PRECISION NOT NULL DEFAULT 0, PRIMARY KEY (day, project_id, goal_id, agent_id, workflow_id, user_id, credential_id, surface, purpose, provider, model, source, runtime))`,
+      `CREATE INDEX IF NOT EXISTS ai_usage_daily_day ON ai_usage_daily (day)`,
+      `INSERT INTO ai_usage_daily (day, project_id, goal_id, agent_id, workflow_id, user_id, credential_id, surface, purpose, provider, model, source, runtime, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, calls, runs, cost) SELECT day, COALESCE(project_id, ''), COALESCE(goal_id, ''), COALESCE(agent_id, ''), COALESCE(workflow_id, ''), COALESCE(user_id, ''), COALESCE(credential_id, ''), COALESCE(surface, ''), COALESCE(purpose, ''), COALESCE(provider, ''), COALESCE(model, ''), COALESCE(source, ''), COALESCE(runtime, ''), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0), COUNT(*), COUNT(DISTINCT COALESCE(execution_id, session_id)), COALESCE(SUM(cost), 0) FROM ai_usage GROUP BY day, COALESCE(project_id, ''), COALESCE(goal_id, ''), COALESCE(agent_id, ''), COALESCE(workflow_id, ''), COALESCE(user_id, ''), COALESCE(credential_id, ''), COALESCE(surface, ''), COALESCE(purpose, ''), COALESCE(provider, ''), COALESCE(model, ''), COALESCE(source, ''), COALESCE(runtime, '')`,
+    ],
+  },
+  // SP12: the gateway's own name for the provider an imported call ran on (`ollama_chat`), so local models are known (docs/llm-gateway.md#the-ai-page)
+  {
+    version: 2903,
+    name: 'ai_usage_gateway_provider',
+    statements: [],
+    addColumns: [{ table: 'ai_usage', column: 'gateway_provider', definition: 'TEXT' }],
+  },
+  // SP23: the forecast-over-a-cap and unusual-spend flags (docs/llm-gateway.md#forecasts-and-unusual-spend)
+  {
+    version: 2904,
+    name: 'ai_spend_flags',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ai_spend_flags (id TEXT PRIMARY KEY, kind TEXT NOT NULL, day TEXT NOT NULL, dimension TEXT NOT NULL, key TEXT NOT NULL, label TEXT, metric TEXT NOT NULL, value DOUBLE PRECISION NOT NULL DEFAULT 0, baseline_median DOUBLE PRECISION, baseline_mad DOUBLE PRECISION, score TEXT, baseline_days BIGINT, runs BIGINT NOT NULL DEFAULT 0, surfaces TEXT, cap_max DOUBLE PRECISION, p50 DOUBLE PRECISION, reaches_on TEXT, first_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_alert_value DOUBLE PRECISION, acknowledged_by TEXT, acknowledged_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS ai_spend_flags_day ON ai_spend_flags (day)`,
+    ],
+  },
+  // AG17: what moved from a workflow's wired sub-nodes into its agent's draft, one row per workflow and sub-node (docs/agents.md#from-workflows)
+  {
+    version: 2905,
+    name: 'agent_flow_moves',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS agent_flow_moves (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, node_id TEXT NOT NULL, sub_node_id TEXT NOT NULL, sub_node_name TEXT NOT NULL, slot TEXT NOT NULL, agent_id TEXT NOT NULL, outcome TEXT NOT NULL, moved_as TEXT, agent_tool_id TEXT, why TEXT, retry BIGINT NOT NULL DEFAULT 0, resolvable TEXT, snapshot TEXT NOT NULL, version_before TEXT, moved_by TEXT NOT NULL, at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS agent_flow_moves_workflow ON agent_flow_moves (workflow_id)`,
+      `CREATE INDEX IF NOT EXISTS agent_flow_moves_agent ON agent_flow_moves (agent_id)`,
+    ],
+  },
+  // AG21: a workflow version pins its agents' versions; every run records both (docs/features/editor.md#publishing-pins-the-agents)
+  {
+    version: 2906,
+    name: 'agent_versions_and_pins',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS agent_versions (agent_id TEXT NOT NULL, version BIGINT NOT NULL, published_at TEXT NOT NULL, published_by TEXT, config TEXT NOT NULL, PRIMARY KEY (agent_id, version))`,
+      `CREATE TABLE IF NOT EXISTS workflow_version_pins (version_id TEXT NOT NULL, node_id TEXT NOT NULL, agent_id TEXT NOT NULL, agent_version BIGINT NOT NULL, pinned_at TEXT NOT NULL, PRIMARY KEY (version_id, node_id, agent_id))`,
+      `CREATE INDEX IF NOT EXISTS workflow_version_pins_agent ON workflow_version_pins (agent_id, agent_version)`,
+      `CREATE TABLE IF NOT EXISTS execution_agent_versions (execution_id TEXT NOT NULL, node_id TEXT NOT NULL, agent_id TEXT NOT NULL, agent_version BIGINT, draft BIGINT NOT NULL DEFAULT 0, source TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (execution_id, node_id, agent_id))`,
+    ],
+  },
+  // AP01: one durable record per waiting tool call of a run nobody watches (docs/approval-inbox.md); kept for the audit, read through its workflow
+  {
+    version: 2907,
+    name: 'approval_inbox',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS approval_inbox (id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, call_id TEXT NOT NULL, workflow_id TEXT NOT NULL, workflow_name TEXT NOT NULL, workflow_version BIGINT, node_id TEXT NOT NULL, node_name TEXT NOT NULL, agent_id TEXT NOT NULL, agent_name TEXT NOT NULL, agent_version TEXT, session_id TEXT NOT NULL, project_id TEXT, tool TEXT NOT NULL, params TEXT NOT NULL, destination TEXT, trigger_word TEXT NOT NULL, status TEXT NOT NULL, requested_at TEXT NOT NULL, expires_at TEXT NOT NULL, nudged TEXT, decided_by TEXT, decided_by_name TEXT, decided_via TEXT, decided_at TEXT)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS approval_inbox_call ON approval_inbox (execution_id, call_id)`,
+      `CREATE INDEX IF NOT EXISTS approval_inbox_status ON approval_inbox (status, expires_at)`,
+      `CREATE INDEX IF NOT EXISTS approval_inbox_workflow ON approval_inbox (workflow_id)`,
+    ],
+  },
+  // NB03: a project's link to a Notion page and what the sync keeps about it (docs/features/notion-brain.md)
+  {
+    version: 2908,
+    name: 'notion_brain_links',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS notion_brain_links (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, credential_id TEXT NOT NULL, root_page_id TEXT NOT NULL, root_title TEXT, root_url TEXT, brain_page_id TEXT, log_page_id TEXT, databases TEXT, bot_id TEXT, bot_name TEXT, workspace_name TEXT, status TEXT NOT NULL, reason TEXT, rps BIGINT NOT NULL DEFAULT 2, knowledge_scope TEXT NOT NULL DEFAULT 'brain', cursors TEXT, copy TEXT, next_sync_at TEXT, last_push_at TEXT, last_pull_at TEXT, last_error TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS notion_brain_links_project ON notion_brain_links (project_id)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS notion_brain_links_root ON notion_brain_links (root_page_id) WHERE status <> 'unlinked'`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS notion_brain_links_active_project ON notion_brain_links (project_id) WHERE status <> 'unlinked'`,
+    ],
+  },
+  // NB03: which Notion object each local object is (the join, with the hashes the push and pull compare)
+  {
+    version: 2909,
+    name: 'notion_brain_items',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS notion_brain_items (link_id TEXT NOT NULL, kind TEXT NOT NULL, local_key TEXT NOT NULL, notion_id TEXT NOT NULL, pushed_hash TEXT, pushed_region TEXT, pushed_at TEXT, seen_edited_at TEXT, pulled_hash TEXT, state TEXT NOT NULL DEFAULT 'ok', PRIMARY KEY (link_id, kind, local_key))`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS notion_brain_items_notion ON notion_brain_items (link_id, notion_id)`,
+    ],
+  },
+  // NB03: local changes waiting to be pushed (one row per object: a second change updates the first)
+  {
+    version: 2910,
+    name: 'notion_brain_outbox',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS notion_brain_outbox (link_id TEXT NOT NULL, kind TEXT NOT NULL, local_key TEXT NOT NULL, op TEXT NOT NULL, enqueued_at TEXT NOT NULL, attempts BIGINT NOT NULL DEFAULT 0, next_at TEXT, last_error TEXT, PRIMARY KEY (link_id, kind, local_key))`,
+      `CREATE INDEX IF NOT EXISTS notion_brain_outbox_next ON notion_brain_outbox (next_at)`,
+    ],
+  },
+  // NB03: sync problems a person resolves, and the company pages read as knowledge
+  {
+    version: 2911,
+    name: 'notion_brain_problems_and_knowledge',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS notion_brain_problems (id TEXT PRIMARY KEY, link_id TEXT NOT NULL, kind TEXT NOT NULL, notion_id TEXT, local_key TEXT, detail TEXT NOT NULL, at TEXT NOT NULL, resolved_by TEXT, resolved_action TEXT, resolved_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS notion_brain_problems_link ON notion_brain_problems (link_id, resolved_at)`,
+      `CREATE TABLE IF NOT EXISTS notion_knowledge_docs (link_id TEXT NOT NULL, page_id TEXT NOT NULL, title TEXT, url TEXT, path TEXT, edited_at TEXT, hash TEXT, markdown TEXT, truncated BIGINT NOT NULL DEFAULT 0, PRIMARY KEY (link_id, page_id))`,
+    ],
+  },
+  // C01: a brain fact is a chain of versions (docs/second-brain.md#fact-versions). The chain id keeps naming the latest row.
+  {
+    version: 2912,
+    name: 'brain_fact_versions',
+    addColumns: [
+      { table: 'brain_facts', column: 'version', definition: 'BIGINT NOT NULL DEFAULT 1' },
+      { table: 'brain_facts', column: 'is_latest', definition: 'BIGINT NOT NULL DEFAULT 1' },
+      { table: 'brain_facts', column: 'parent_id', definition: 'TEXT' },
+      { table: 'brain_facts', column: 'root_id', definition: 'TEXT' },
+      { table: 'brain_facts', column: 'is_static', definition: 'BIGINT NOT NULL DEFAULT 0' },
+      { table: 'brain_facts', column: 'relation', definition: 'TEXT' },
+    ],
+    statements: [
+      // Every fact written before this is version 1 of a chain of its own.
+      `UPDATE brain_facts SET root_id = id WHERE root_id IS NULL`,
+      `CREATE INDEX IF NOT EXISTS brain_facts_chain ON brain_facts (root_id, version)`,
+      `CREATE INDEX IF NOT EXISTS brain_facts_latest ON brain_facts (is_latest, status)`,
+    ],
+  },
+  // C02: forgetting facts and notes softly (docs/second-brain.md#forgetting-a-fact, docs/team-notebook.md#forgetting-a-note)
+  {
+    version: 2913,
+    name: 'brain_forget',
+    addColumns: [
+      ...['forgotten_at', 'forget_reason', 'forgotten_by', 'forget_after'].map((column) => ({ table: 'brain_facts', column, definition: 'TEXT' })),
+      ...['forgotten_at', 'forget_reason', 'forgotten_by'].map((column) => ({ table: 'team_notes', column, definition: 'TEXT' })),
+    ],
+    statements: [
+      `CREATE INDEX IF NOT EXISTS brain_facts_forget_after ON brain_facts (forget_after)`,
+      `CREATE INDEX IF NOT EXISTS team_notes_forgotten ON team_notes (forgotten_at)`,
+    ],
+  },
+  // C04: Claude Code hook ingest (docs/harnesses.md#live-status)
+  {
+    version: 2914,
+    name: 'harness_sessions',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS harness_sessions (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, harness TEXT NOT NULL, session_key TEXT NOT NULL, agent_id TEXT, project_id TEXT, status TEXT NOT NULL, order_kind TEXT, last_order TEXT, last_event_at TEXT NOT NULL, opened_at TEXT NOT NULL, closed_at TEXT, data TEXT NOT NULL)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS harness_sessions_key ON harness_sessions (owner_id, harness, session_key)`,
+      `CREATE INDEX IF NOT EXISTS harness_sessions_open ON harness_sessions (owner_id, closed_at)`,
+      `CREATE INDEX IF NOT EXISTS harness_sessions_agent ON harness_sessions (agent_id, last_event_at)`,
+      `CREATE TABLE IF NOT EXISTS harness_events (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, order_key TEXT NOT NULL, name TEXT NOT NULL, received_at TEXT NOT NULL, data TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS harness_events_session ON harness_events (session_id, order_key)`,
+      `CREATE INDEX IF NOT EXISTS harness_events_received ON harness_events (received_at)`,
+    ],
+  },
+  // C07: memory containers read a project's facts by project (docs/second-brain.md#memory-backend)
+  {
+    version: 2915,
+    name: 'brain_facts_project',
+    statements: [`CREATE INDEX IF NOT EXISTS brain_facts_project ON brain_facts (project_id, is_latest, last_seen)`],
+  },
+  // C13: an approval-inbox request may be an AI Judge's (`kind` 'judge') with the judge's evidence; NULL (every older row) is a tool request
+  {
+    version: 2920,
+    name: 'approval_inbox_kind',
+    statements: [],
+    addColumns: [
+      { table: 'approval_inbox', column: 'kind', definition: 'TEXT' },
+      { table: 'approval_inbox', column: 'evidence', definition: 'TEXT' },
+    ],
+  },
+  // C12: the tickets a ticket channel (ServiceNow, a webhook that opens tickets) opened for an approval request: one row per (request, channel), kept for the audit of where a ticket went (docs/approval-inbox.md#tickets)
+  {
+    version: 2922,
+    name: 'approval_tickets',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS approval_tickets (request_id TEXT NOT NULL, channel_id TEXT NOT NULL, rule_id TEXT NOT NULL, system TEXT NOT NULL, state TEXT NOT NULL, external_id TEXT, external_key TEXT, external_url TEXT, attempts BIGINT NOT NULL, next_at TEXT, last_error TEXT, opened_at TEXT, closed_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY (request_id, channel_id))`,
+      `CREATE INDEX IF NOT EXISTS approval_tickets_state ON approval_tickets (state, next_at)`,
+    ],
+  },
+  // C16: a second factor for local accounts (docs/features/authentication.md#second-factor): the factors (a TOTP secret sealed with the key ring; the passkey columns are for the step that follows), the one-use recovery codes (keyed hashes), the sign-in challenges (the token's SHA-256 is the id) and when a session last passed a second-factor check
+  {
+    version: 2923,
+    name: 'mfa',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS user_mfa_factors (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, secret TEXT, credential_id TEXT, public_key TEXT, counter BIGINT, transports TEXT, last_step BIGINT, confirmed_at TEXT, flagged_at TEXT, created_at TEXT NOT NULL, last_used_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS user_mfa_factors_user ON user_mfa_factors (user_id)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS user_mfa_factors_credential ON user_mfa_factors (credential_id)`,
+      `CREATE TABLE IF NOT EXISTS user_recovery_codes (user_id TEXT NOT NULL, code_hash TEXT NOT NULL, created_at TEXT NOT NULL, used_at TEXT, PRIMARY KEY (user_id, code_hash))`,
+      `CREATE TABLE IF NOT EXISTS mfa_challenges (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, purpose TEXT NOT NULL, first_method TEXT NOT NULL, session_id TEXT, webauthn_challenge TEXT, wrong BIGINT NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS mfa_challenges_expires ON mfa_challenges (expires_at)`,
+    ],
+    addColumns: [{ table: 'sessions', column: 'mfa_verified_at', definition: 'TEXT' }],
+  },
+  // C19: webhook subscriptions to a project's run events and the durable outbox their deliveries wait in (docs/features/event-subscriptions.md); `secret` is sealed, `events`, `workflow_ids` and `node_names` are JSON arrays, `event_subscription_state.last_delivery` is JSON
+  {
+    version: 2924,
+    name: 'event_subscriptions_outbox',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS event_subscriptions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL, workflow_ids TEXT, node_names TEXT, include_output BIGINT NOT NULL DEFAULT 0, ordered BIGINT NOT NULL DEFAULT 1, secret TEXT NOT NULL, enabled BIGINT NOT NULL DEFAULT 1, disabled_reason TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      // The leader's note of each attempt lives apart from the subscription, so noting a delivery never rewrites what an admin changed.
+      `CREATE TABLE IF NOT EXISTS event_subscription_state (subscription_id TEXT PRIMARY KEY, last_delivery TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS event_subscriptions_project ON event_subscriptions (project_id)`,
+      `CREATE TABLE IF NOT EXISTS event_outbox (topic TEXT NOT NULL, target_id TEXT NOT NULL, event_id TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL, attempts BIGINT NOT NULL DEFAULT 0, next_at TEXT NOT NULL, lease_until TEXT, last_error TEXT, dead_at TEXT, PRIMARY KEY (topic, target_id, event_id))`,
+      `CREATE INDEX IF NOT EXISTS event_outbox_due ON event_outbox (topic, target_id, next_at)`,
+      `CREATE INDEX IF NOT EXISTS event_outbox_order ON event_outbox (topic, target_id, created_at, event_id)`,
+      `CREATE INDEX IF NOT EXISTS event_outbox_dead ON event_outbox (topic, target_id, dead_at)`,
+    ],
+  },
+  // C17: an API key's allow-list, use cap and last address; the uses are counted in a table of their own so the last-used touch (which rewrites the whole key row) can never overwrite a count (docs/features/authentication.md#api-keys)
+  {
+    version: 2925,
+    name: 'api_key_limits',
+    statements: [`CREATE TABLE IF NOT EXISTS api_key_uses (key_id TEXT PRIMARY KEY, uses BIGINT NOT NULL, updated_at TEXT NOT NULL)`],
+    addColumns: [
+      { table: 'api_keys', column: 'allowed_ips', definition: 'TEXT' },
+      { table: 'api_keys', column: 'max_uses', definition: 'BIGINT' },
+      { table: 'api_keys', column: 'last_used_ip', definition: 'TEXT' },
+    ],
+  },
+  // C21: an owner project per vector collection and the grants other projects hold (docs/agents.md#knowledge-bases); a grant row of level 'lost' records what the upgrade took away and gives no access
+  {
+    version: 2926,
+    name: 'vector_collection_access',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS vector_collections (store_key TEXT PRIMARY KEY, store TEXT NOT NULL, name TEXT NOT NULL, owner_project_id TEXT NOT NULL, claimed_by TEXT, claimed_at TEXT NOT NULL, source TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS vector_collections_owner ON vector_collections (owner_project_id)`,
+      `CREATE TABLE IF NOT EXISTS vector_collection_grants (store_key TEXT NOT NULL, project_id TEXT NOT NULL, level TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, PRIMARY KEY (store_key, project_id))`,
+    ],
+  },
+  // C27: what a person approved, by the hash of its content (docs/agents.md#changed-mcp-tools-are-held): an agent's MCP tools (a snapshot per tool config) and a marketplace plugin's files; `state` is approved, pending, rejected or revoked, `snapshot` is JSON
+  {
+    version: 2928,
+    name: 'trust_records',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS trust_records (subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL, hash TEXT NOT NULL, state TEXT NOT NULL, snapshot TEXT, summary TEXT, decided_by TEXT, decided_at TEXT, first_seen_at TEXT NOT NULL, PRIMARY KEY (subject_kind, subject_id, hash))`,
+      `CREATE INDEX IF NOT EXISTS trust_records_subject ON trust_records (subject_kind, subject_id, state)`,
+    ],
+  },
+  // C22: knowledge sources (a folder, S3, a site or Drive feeding an agent's knowledge base), the claim of a running sync apart from the source (an admin's edit never clears a lease), what each item looked like at the last sync, and the sync history (docs/agents.md#sources)
+  {
+    version: 2929,
+    name: 'knowledge_sources',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS knowledge_sources (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, tool_id TEXT NOT NULL, collection_key TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, location TEXT NOT NULL, settings TEXT NOT NULL, credential_id TEXT, schedule TEXT NOT NULL, paused BIGINT NOT NULL DEFAULT 0, paused_reason TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS knowledge_sources_where ON knowledge_sources (collection_key, kind, location)`,
+      `CREATE INDEX IF NOT EXISTS knowledge_sources_agent ON knowledge_sources (agent_id, tool_id)`,
+      `CREATE TABLE IF NOT EXISTS knowledge_source_state (source_id TEXT PRIMARY KEY, run_id TEXT, lease_until TEXT, next_at TEXT, last_run TEXT, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS knowledge_source_items (source_id TEXT NOT NULL, item_key TEXT NOT NULL, version TEXT NOT NULL, name TEXT, size BIGINT, extra TEXT, synced_at TEXT NOT NULL, PRIMARY KEY (source_id, item_key))`,
+      `CREATE TABLE IF NOT EXISTS knowledge_sync_runs (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, trigger TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, counts TEXT NOT NULL, errors TEXT, note TEXT)`,
+      `CREATE INDEX IF NOT EXISTS knowledge_sync_runs_source ON knowledge_sync_runs (source_id, started_at)`,
+    ],
+  },
+  // C32: custom instance roles (docs/features/authentication.md#custom-roles): `rules` is JSON `[{ action, effect: 'allow' }]`, `name_key` the lower-cased name (unique); a member holds at most one, on `users.custom_role_id`, read with the user on every request so an edit or a delete shows at the holder's next one
+  {
+    version: 2931,
+    name: 'custom_roles',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS custom_roles (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, description TEXT, rules TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    ],
+    addColumns: [{ table: 'users', column: 'custom_role_id', definition: 'TEXT' }],
+  },
+  // C31: a data key per project for its credentials, wrapped by the key ring (docs/features/secrets-and-environments.md#project-keys); `state` is active (at most one per project) or retired, `wrapped` a v2 sealed string
+  {
+    version: 2932,
+    name: 'project_keys',
+    statements: [`CREATE TABLE IF NOT EXISTS project_keys (project_id TEXT NOT NULL, version BIGINT NOT NULL, wrapped TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL, retired_at TEXT, PRIMARY KEY (project_id, version))`],
+  },
+  // C30: a leased credential issued to a run by OpenBao / Vault's database engine (docs/features/secrets-and-environments.md#dynamic-secrets): one row per (run, provider, path), the lease id and the issued values sealed and dropped when the lease ends; `failing_since` times the 24 h after which a revoke that keeps failing is given up, `dismissed_at` hides that failure's banner
+  {
+    version: 2933,
+    name: 'secret_leases',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS secret_leases (id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, workflow_id TEXT, provider TEXT NOT NULL, path TEXT NOT NULL, lease_id TEXT, lease_values TEXT, state TEXT NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT NOT NULL, renewed_until TEXT, attempts BIGINT NOT NULL DEFAULT 0, next_attempt_at TEXT, last_error TEXT, failing_since TEXT, dismissed_at TEXT, ended_at TEXT, ended_by TEXT, renew_failures BIGINT NOT NULL DEFAULT 0, renewable BIGINT NOT NULL DEFAULT 1)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS secret_leases_run_path ON secret_leases (execution_id, provider, path)`,
+      `CREATE INDEX IF NOT EXISTS secret_leases_state ON secret_leases (state, next_attempt_at)`,
+    ],
+  },
+  // C29: network runners for the HTTP Request node (docs/network-runners.md): a network (instance-wide, or bound to one project), the runners registered to it (a token each, kept as its SHA-256), what each runner last reported (apart from the runner row, so a poll never rewrites a revoke), and the calls waiting for or answered by a runner (sealed bodies, deleted once read)
+  {
+    version: 2934,
+    name: 'network_runners',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS networks (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT, project_id TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS network_runners (id TEXT PRIMARY KEY, network_id TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_hint TEXT NOT NULL, allowed_ips TEXT, created_by TEXT, created_at TEXT NOT NULL, revoked_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS network_runners_network ON network_runners (network_id)`,
+      `CREATE TABLE IF NOT EXISTS network_runner_seen (runner_id TEXT PRIMARY KEY, last_seen_at TEXT NOT NULL, connected_since TEXT, version TEXT, address TEXT)`,
+      `CREATE TABLE IF NOT EXISTS network_calls (id TEXT PRIMARY KEY, network_id TEXT NOT NULL, execution_id TEXT, workflow_id TEXT, node TEXT, state TEXT NOT NULL, runner_id TEXT, request TEXT NOT NULL, response TEXT, queued_at TEXT NOT NULL, claimed_at TEXT, done_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS network_calls_queue ON network_calls (network_id, state, queued_at)`,
+    ],
+  },
+  // C35: access requests (docs/access-requests.md). `access_entries`: one grantable thing (system, target, durations, steps, owners,
+  // eligible people; JSON in TEXT; `version` for optimistic edits); `access_requests`: a person's ask, with a snapshot of the entry
+  // it asked about; `access_grants`: what was given, its removal state and lease (`already_had`: never removed, the person had it
+  // before); `access_accounts`: a person's handle in a system (their GitHub login). Holds credential ids only, never a value.
+  {
+    version: 2935,
+    name: 'access_requests',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS access_entries (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, system TEXT NOT NULL, target TEXT NOT NULL, credential_id TEXT, durations TEXT NOT NULL, steps TEXT NOT NULL, owners TEXT NOT NULL, eligible TEXT, enabled BIGINT NOT NULL DEFAULT 1, version BIGINT NOT NULL DEFAULT 1, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS access_requests (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, entry_version BIGINT NOT NULL, entry_snapshot TEXT NOT NULL, requester_id TEXT NOT NULL, account TEXT, duration_minutes BIGINT, reason TEXT NOT NULL, channel TEXT NOT NULL, status TEXT NOT NULL, approvers TEXT NOT NULL, workflow_id TEXT, execution_id TEXT, decisions TEXT, approved_minutes BIGINT, note TEXT, question TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS access_requests_requester ON access_requests (requester_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS access_requests_entry ON access_requests (entry_id, status)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS access_requests_open ON access_requests (entry_id, requester_id) WHERE status = 'pending'`,
+      `CREATE INDEX IF NOT EXISTS access_requests_execution ON access_requests (execution_id)`,
+      `CREATE TABLE IF NOT EXISTS access_grants (id TEXT PRIMARY KEY, request_id TEXT, entry_id TEXT NOT NULL, holder_id TEXT NOT NULL, account TEXT, system TEXT NOT NULL, target TEXT NOT NULL, credential_id TEXT, status TEXT NOT NULL, since TEXT, until TEXT, approved_by TEXT, already_had BIGINT NOT NULL DEFAULT 0, lease_until TEXT, attempts BIGINT NOT NULL DEFAULT 0, next_attempt_at TEXT, ended_at TEXT, ended_by TEXT, end_reason TEXT, last_error TEXT, checked_at TEXT, overdue_noted BIGINT NOT NULL DEFAULT 0, remove_reason TEXT, remove_by TEXT, target_key TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS access_grants_due ON access_grants (status, until)`,
+      `CREATE INDEX IF NOT EXISTS access_grants_holder ON access_grants (holder_id, status)`,
+      `CREATE INDEX IF NOT EXISTS access_grants_entry ON access_grants (entry_id, holder_id, status)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS access_grants_live_target ON access_grants (target_key, lower(account)) WHERE account IS NOT NULL AND target_key IS NOT NULL AND status IN ('pending', 'active', 'removing', 'revoke_failed', 'drift', 'failed')`,
+      `CREATE TABLE IF NOT EXISTS access_accounts (user_id TEXT NOT NULL, system TEXT NOT NULL, handle TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (user_id, system))`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS access_accounts_handle ON access_accounts (system, lower(handle))`,
+    ],
+  },
+  // C36: access requests from people without a Landflow account (docs/access-requests.md#signing-in-without-an-account). `access_outside_requesters`:
+  // one row per verified address (`email_key` is its canonical form, unique); `access_outside_links`: the one-time email links (SHA-256 of the
+  // token only; single use is one conditional update on `used_at`); `access_outside_sessions`: the requester sessions (SHA-256 of the cookie).
+  // Holds no token and no secret in the clear.
+  {
+    version: 2936,
+    name: 'access_outside_identity',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS access_outside_requesters (id TEXT PRIMARY KEY, email TEXT NOT NULL, email_key TEXT NOT NULL UNIQUE, name TEXT, verified_by TEXT NOT NULL, google_subject TEXT, created_at TEXT NOT NULL, last_verified_at TEXT NOT NULL, last_seen_at TEXT, blocked_at TEXT, blocked_by TEXT)`,
+      `CREATE TABLE IF NOT EXISTS access_outside_links (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, email_key TEXT NOT NULL, email TEXT NOT NULL, ip TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS access_outside_links_email ON access_outside_links (email_key, created_at)`,
+      `CREATE TABLE IF NOT EXISTS access_outside_sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, requester_id TEXT NOT NULL, method TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, ip TEXT, user_agent TEXT)`,
+      `CREATE INDEX IF NOT EXISTS access_outside_sessions_requester ON access_outside_sessions (requester_id)`,
+    ],
+  },
+  // C36-B: requests from people without a Landflow account (docs/access-requests.md#outside-requesters-what-they-can-ask-and-see). An outside requester's
+  // id (`ext_…`) sits in `requester_id` / `holder_id` / `access_accounts.user_id`; the kind says which table names them. `outside` on an
+  // entry: open to outside requesters (0 = closed, the default). 2936 (the requester, link and session tables) is C36-A's.
+  {
+    version: 2937,
+    name: 'access_outside_requests',
+    statements: [],
+    addColumns: [
+      { table: 'access_entries', column: 'outside', definition: 'BIGINT NOT NULL DEFAULT 0' },
+      { table: 'access_requests', column: 'requester_kind', definition: `TEXT NOT NULL DEFAULT 'user'` },
+      { table: 'access_grants', column: 'holder_kind', definition: `TEXT NOT NULL DEFAULT 'user'` },
+    ],
+  },
+  {
+    version: 2938,
     name: 'debug_node_override',
     addColumns: [
       { table: 'debug_tokens', column: 'node_id', definition: 'TEXT' },
@@ -1505,6 +2247,10 @@ export const MIGRATIONS: Migration[] = [
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
 export const TABLES = {
   meta: ['key'],
+  networks: ['id'], // C29:
+  network_runners: ['id'], // C29:
+  network_runner_seen: ['runner_id'], // C29:
+  network_calls: ['id'], // C29:
   workflows: ['id'],
   executions: ['id'],
   execution_steps: ['execution_id', 'seq'],
@@ -1512,6 +2258,9 @@ export const TABLES = {
   execution_checkpoints: ['execution_id'],
   poll_state: ['key'],
   workflow_versions: ['id'],
+  agent_versions: ['agent_id', 'version'], // AG21:
+  workflow_version_pins: ['version_id', 'node_id', 'agent_id'], // AG21:
+  execution_agent_versions: ['execution_id', 'node_id', 'agent_id'], // AG21:
   folders: ['id'],
   settings: ['key'],
   variables: ['key'],
@@ -1522,6 +2271,7 @@ export const TABLES = {
   users: ['id'],
   sessions: ['id'],
   api_keys: ['id'],
+  api_key_uses: ['key_id'],
   auth_tokens: ['id'],
   debug_tokens: ['id'],
   debug_node_runs: ['token_id'],
@@ -1529,6 +2279,12 @@ export const TABLES = {
   workflow_publish_log: ['id'],
   node_static_data: ['workflow_id', 'node_id'],
   ai_usage: ['id'],
+  // SP08: the daily rollup of ai_usage
+  ai_usage_daily: ['day', 'project_id', 'goal_id', 'agent_id', 'workflow_id', 'user_id', 'credential_id', 'surface', 'purpose', 'provider', 'model', 'source', 'runtime'],
+  ai_spend_flags: ['id'], // SP23:
+  agent_flow_moves: ['id'], // AG17:
+  // SP03:
+  ai_call_parts: ['id'],
   chat_messages: ['workflow_id', 'session_id', 'seq'],
   trigger_buffers: ['key'],
   evaluation_runs: ['id'],
@@ -1579,6 +2335,21 @@ export const TABLES = {
   mcp_project_servers: ['project_id'],
   scheduled_publishes: ['id'],
   approval_email_used: ['group_id'],
+  approval_inbox: ['id'], // AP01:
+  approval_tickets: ['request_id', 'channel_id'], // C12:
+  event_subscriptions: ['id'], // C19:
+  event_subscription_state: ['subscription_id'], // C19:
+  event_outbox: ['topic', 'target_id', 'event_id'], // C19:
+  vector_collections: ['store_key'], // C21:
+  vector_collection_grants: ['store_key', 'project_id'], // C21:
+  trust_records: ['subject_kind', 'subject_id', 'hash'], // C27:
+  harness_sessions: ['id'], // C04:
+  harness_events: ['id'], // C04:
+  notion_brain_links: ['id'], // NB03:
+  notion_brain_items: ['link_id', 'kind', 'local_key'], // NB03:
+  notion_brain_outbox: ['link_id', 'kind', 'local_key'], // NB03:
+  notion_brain_problems: ['id'], // NB03:
+  notion_knowledge_docs: ['link_id', 'page_id'], // NB03:
   chat_feedback: ['id'],
   agent_definitions: ['id'],
   agent_sessions: ['id'],
@@ -1588,6 +2359,8 @@ export const TABLES = {
   composite_types: ['name', 'version'],
   usage_events: ['id'],
   usage_daily: ['day', 'kind', 'workflow_id', 'node_type', 'signature', 'agent_id'],
+  usage_kinds: ['kind'],
+  brain_entities: ['type', 'id'],
   brain_profiles: ['subject_type', 'subject_id'],
   brain_facts: ['id'],
   proposals: ['id'],
@@ -1599,6 +2372,51 @@ export const TABLES = {
   agent_eval_runs: ['id'],
   agent_response_cache: ['id'],
   agent_semantic_cache: ['id'],
+  brain_backtests: ['id'],
+  brain_pages: ['subject'],
+  // B02:
+  user_preferences: ['user_id'],
+  conversations: ['id'],
+  conversation_items: ['conversation_id', 'seq'],
+  // B30:
+  brain_briefings: ['id'],
+  // LL: the LiteLLM wave.
+  llm_gateway_keys: ['id'],
+  llm_gateway_links: ['kind', 'landflow_id'],
+  ai_cap_requests: ['id'],
+  // PC01:
+  goals: ['id'],
+  project_goals: ['project_id', 'goal_id'],
+  goal_links: ['goal_id', 'kind', 'ref_id'],
+  // PC14:
+  project_budgets: ['project_id'],
+  project_budget_incidents: ['id'],
+  // PR01:
+  practices: ['id'],
+  practice_versions: ['practice_id', 'version'],
+  practice_applications: ['id'],
+  // PC16:
+  project_workspaces: ['project_id'],
+  // PC19:
+  project_tasks: ['id'],
+  user_mfa_factors: ['id'], // C16:
+  user_recovery_codes: ['user_id', 'code_hash'], // C16:
+  mfa_challenges: ['id'], // C16:
+  task_runs: ['id'],
+  knowledge_sources: ['id'], // C22:
+  knowledge_source_state: ['source_id'], // C22:
+  knowledge_source_items: ['source_id', 'item_key'], // C22:
+  knowledge_sync_runs: ['id'], // C22:
+  custom_roles: ['id'], // C32:
+  project_keys: ['project_id', 'version'], // C31:
+  secret_leases: ['id'], // C30:
+  access_entries: ['id'], // C35:
+  access_requests: ['id'], // C35:
+  access_grants: ['id'], // C35:
+  access_accounts: ['user_id', 'system'], // C35:
+  access_outside_requesters: ['id'], // C36:
+  access_outside_links: ['id'], // C36:
+  access_outside_sessions: ['id'], // C36:
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

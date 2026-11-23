@@ -14,6 +14,37 @@ type Calendar struct {
 	ID, Summary, TimeZone string
 	Primary               bool
 	Events                []map[string]any
+	// Deleted keeps deleted events (status cancelled) for incremental sync.
+	Deleted []map[string]any
+}
+
+// UpsertEvent adds an event to a calendar, or replaces the one with its id;
+// "updated" defaults to now.
+func (s *Server) UpsertEvent(calendarID string, ev map[string]any) {
+	s.Do(func() { s.upsertEvent(calendarID, ev) })
+}
+
+func (s *Server) upsertEvent(calendarID string, ev map[string]any) bool {
+	c := s.calendarByID(calendarID)
+	if c == nil {
+		return false
+	}
+	if _, ok := ev["updated"]; !ok {
+		ev["updated"] = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	for k, old := range c.Events {
+		if old["id"] == ev["id"] {
+			c.Events[k] = ev
+			return true
+		}
+	}
+	c.Events = append(c.Events, ev)
+	return true
+}
+
+func eventUpdated(ev map[string]any) time.Time {
+	t, _ := time.Parse(time.RFC3339Nano, asString(ev["updated"]))
+	return t
 }
 
 // AddCalendar stores a calendar.
@@ -84,6 +115,7 @@ func (s *Server) calendar(w http.ResponseWriter, r *http.Request, segs []string,
 		ev["status"] = "confirmed"
 		ev["htmlLink"] = "https://www.google.com/calendar/event?eid=" + ev["id"].(string)
 		ev["created"] = time.Now().UTC().Format(time.RFC3339)
+		ev["updated"] = time.Now().UTC().Format(time.RFC3339Nano)
 		c.Events = append(c.Events, ev)
 		writeJSON(w, http.StatusOK, ev)
 	case len(segs) == 3 && segs[2] == "events" && r.Method == http.MethodGet:
@@ -111,8 +143,11 @@ func (s *Server) calendar(w http.ResponseWriter, r *http.Request, segs []string,
 			for key, v := range patch {
 				c.Events[k][key] = v
 			}
+			c.Events[k]["updated"] = time.Now().UTC().Format(time.RFC3339Nano)
 			writeJSON(w, http.StatusOK, c.Events[k])
 		case http.MethodDelete:
+			gone := map[string]any{"id": c.Events[k]["id"], "status": "cancelled", "updated": time.Now().UTC().Format(time.RFC3339Nano)}
+			c.Deleted = append(c.Deleted, gone)
 			c.Events = append(c.Events[:k], c.Events[k+1:]...)
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -169,6 +204,31 @@ func eventStart(ev map[string]any, key string) time.Time {
 
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, c *Calendar) {
 	q := r.URL.Query()
+	syncToken := q.Get("syncToken")
+	var since time.Time
+	if syncToken != "" {
+		for _, key := range []string{"iCalUID", "orderBy", "privateExtendedProperty", "q", "sharedExtendedProperty", "timeMin", "timeMax", "updatedMin"} {
+			if q.Has(key) {
+				writeError(w, http.StatusBadRequest, "The syncToken parameter cannot be combined with "+key+".")
+				return
+			}
+		}
+		t, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(syncToken, "sync-"))
+		if err != nil {
+			writeError(w, http.StatusGone, "Sync token is no longer valid, a full sync is required.")
+			return
+		}
+		since = t
+	}
+	var updatedMin time.Time
+	if v := q.Get("updatedMin"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Bad Request: updatedMin must be RFC 3339")
+			return
+		}
+		updatedMin = t
+	}
 	if q.Get("orderBy") == "startTime" && q.Get("singleEvents") != "true" {
 		writeError(w, http.StatusBadRequest, "The requested ordering is not available for the particular query.")
 		return
@@ -185,7 +245,29 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, c *Calendar)
 		}
 	}
 	var matched []map[string]any
-	for _, ev := range c.Events {
+	all := c.Events
+	if syncToken != "" || q.Get("showDeleted") == "true" {
+		all = append(append([]map[string]any{}, c.Events...), c.Deleted...)
+	}
+	latest := since
+	for _, ev := range append(append([]map[string]any{}, c.Events...), c.Deleted...) {
+		if u := eventUpdated(ev); u.After(latest) {
+			latest = u
+		}
+	}
+	for _, ev := range all {
+		if syncToken != "" {
+			if eventUpdated(ev).After(since) {
+				matched = append(matched, ev)
+			}
+			continue
+		}
+		if asString(ev["status"]) == "cancelled" && q.Get("showDeleted") != "true" {
+			continue
+		}
+		if !updatedMin.IsZero() && eventUpdated(ev).Before(updatedMin) {
+			continue
+		}
 		start, end := eventStart(ev, "start"), eventStart(ev, "end")
 		if !tMin.IsZero() && !end.After(tMin) || !tMax.IsZero() && !start.Before(tMax) {
 			continue
@@ -212,6 +294,8 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, c *Calendar)
 	resp := map[string]any{"kind": "calendar#events", "timeZone": c.TimeZone, "items": items}
 	if end < len(matched) {
 		resp["nextPageToken"] = strconv.Itoa(end)
+	} else {
+		resp["nextSyncToken"] = "sync-" + latest.UTC().Format(time.RFC3339Nano)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

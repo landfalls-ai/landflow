@@ -4,13 +4,17 @@
  * (docs/specs/19-debug-token.md). The token is shown once, with what to give an agent; the list never has it.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { KeyRound, TriangleAlert, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { KeyRound, MoreHorizontal, Sparkles, TriangleAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
+import { DevOnly } from '@/lib/client/developer-details';
 import { cn } from '@/lib/utils';
 import { claudeAddCommand, curlCheck, DEBUG_TTL_CHOICES, mcpConfigJson, relativeTime, tokenPrefix, tokenState } from '@/lib/shared/debug-token-snippets';
 import { Badge, type Tone } from '../ui/badge';
 import { Button } from '../ui/button';
+import { MenuItem, Popover } from '../ui/popover';
+import { useDialogFocus } from '../ui/use-dialog-focus';
 import { CopyButton } from '../ui/copy-button';
 import { FieldLabel, Input, Select, Switch, Textarea } from '../ui/inputs';
 import { useViewer } from '../auth/viewer';
@@ -47,39 +51,70 @@ const RUN_TTL_CHOICES = [
   { seconds: 900, label: '15 minutes' },
   { seconds: 3600, label: '1 hour' },
 ] as const;
-const SCOPES: Array<{ id: Scope; name: string; hint: string }> = [
-  { id: 'executions:read', name: 'Read the execution', hint: 'get_execution, explain_failure' },
-  { id: 'trace:read', name: 'Read the trace', hint: 'get_run_trace' },
+/** `hint` is the tools the scope opens: shown only with developer details on. */
+export const SCOPES: Array<{ id: Scope; name: string; hint: string }> = [
+  { id: 'executions:read', name: 'See how the run went', hint: 'get_execution, explain_failure' },
+  { id: 'trace:read', name: 'See every step of the run', hint: 'get_run_trace' },
 ];
 const TONE: Record<string, Tone> = { live: 'success', revoked: 'muted', expired: 'muted', 'used up': 'warning' };
 
-export function DebugAccessButton({ executionId }: { executionId: string }) {
+/** The run page's ⋯ menu: on a phone Ask first, then "Debug access…", which opens the dialog over the page once the menu has closed. */
+export function RunMenu({ executionId, ask }: { executionId: string; /** On a phone only: the header's Ask button, moved in here so the header keeps one row. */ ask?: { label: string; run: () => void } }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   return (
     <>
-      <button
-        ref={button}
-        type="button"
-        onClick={() => setOpen(true)}
-        className="ml-auto inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-hair px-3 text-[13px] font-semibold text-t2 hover:border-ac hover:text-ac"
+      <Popover
+        title="Run"
+        label="Run menu"
+        trigger={({ toggle }) => (
+          <Button ref={button} variant="ghost" size="icon-sm" onClick={toggle} aria-label="Run menu" className="text-t2">
+            <MoreHorizontal className="size-4" />
+          </Button>
+        )}
       >
-        <KeyRound className="size-4" /> <span>Debug access</span>
-      </button>
-      {open && (
-        <DebugAccessDialog
-          executionId={executionId}
-          onClose={() => {
-            setOpen(false);
-            button.current?.focus({ preventScroll: true });
-          }}
-        />
-      )}
+        {(close) => (
+          <>
+            {ask && (
+              <div className="md:hidden">
+                <MenuItem
+                  onClick={() => {
+                    close();
+                    ask.run();
+                  }}
+                >
+                  <Sparkles /> {ask.label}
+                </MenuItem>
+              </div>
+            )}
+            <MenuItem
+              onClick={() => {
+                close();
+                setOpen(true);
+              }}
+            >
+              <KeyRound /> Debug access…
+            </MenuItem>
+          </>
+        )}
+      </Popover>
+      {/* In <body>, so the header's actions keep their order on a phone. */}
+      {open &&
+        createPortal(
+          <DebugAccessDialog
+            executionId={executionId}
+            onClose={() => {
+              setOpen(false);
+              button.current?.focus({ preventScroll: true });
+            }}
+          />,
+          document.body,
+        )}
     </>
   );
 }
 
-function DebugAccessDialog({ executionId, onClose }: { executionId: string; onClose: () => void }) {
+export function DebugAccessDialog({ executionId, onClose }: { executionId: string; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [tokens, setTokens] = useState<TokenRecord[]>();
   const viewer = useViewer();
@@ -100,7 +135,7 @@ function DebugAccessDialog({ executionId, onClose }: { executionId: string; onCl
 
   const load = useCallback(
     () =>
-      api<{ tokens: TokenRecord[] }>(base)
+      api<{ tokens: TokenRecord[] }>(base, { background: true })
         .then((r) => setTokens(r.tokens))
         .catch(() => {}),
     [base],
@@ -128,12 +163,8 @@ function DebugAccessDialog({ executionId, onClose }: { executionId: string; onCl
       })
       .catch(() => setNodes([]));
   }, [runMode, nodes, executionId]);
-  useEffect(() => {
-    ref.current?.focus({ preventScroll: true });
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [onClose]);
+  // Focus moves to the dialog, Tab stays in it, Escape closes it and the focus goes back to the button that opened it.
+  useDialogFocus(ref, true, { onEscape: onClose, initial: ref });
 
   const mint = async () => {
     setBusy(true);
@@ -202,7 +233,7 @@ function DebugAccessDialog({ executionId, onClose }: { executionId: string; onCl
             <h2 className="text-[16px] font-semibold leading-tight text-t1">Debug access</h2>
             <p className="mt-1 text-[12px] leading-snug text-t3">A key an agent can use to read this one run: the trace and the failure, redacted. It cannot run or change anything. The optional debug run below is the one exception, and is off unless an owner turns it on.</p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="grid size-9 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1">
+          <button type="button" onClick={onClose} aria-label="Close" className="grid size-9 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1 max-md:size-11">
             <X className="size-4" />
           </button>
         </header>
@@ -216,10 +247,12 @@ function DebugAccessDialog({ executionId, onClose }: { executionId: string; onCl
                 <div className="flex flex-col gap-1.5">
                   {SCOPES.map((s) => (
                     <label key={s.id} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-hair px-3 py-2 text-[13px] has-[:checked]:border-ac">
-                      <input type="checkbox" checked={scopes.includes(s.id)} disabled={runMode} onChange={() => toggle(s.id)} className="size-4 accent-[var(--ac2)]" />
+                      <input type="checkbox" checked={scopes.includes(s.id)} onChange={() => toggle(s.id)} className="size-4 shrink-0" disabled={runMode} />
                       <span className="min-w-0 flex-1">
                         <b className="block font-semibold text-t1">{s.name}</b>
-                        <span className="block font-mono text-[11px] text-t3">{s.hint}</span>
+                        <DevOnly>
+                          <span className="block font-mono text-[11px] text-t3">{s.hint}</span>
+                        </DevOnly>
                       </span>
                     </label>
                   ))}

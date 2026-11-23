@@ -9,6 +9,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { NodeRateLimit, RateLimiterLike } from '@landflow/engine';
+import { singleton } from '../singleton';
 import type { Coordinator } from './coordinator';
 
 const abortError = () => Object.assign(new Error('Execution canceled'), { name: 'AbortError' });
@@ -78,9 +79,7 @@ export async function exclusive<T>(coordinator: Coordinator, name: string, fn: (
   }
 }
 
-const holder = globalThis as { __landflowClusterRateLimiter?: ClusterRateLimiter };
-
 /** The cluster-wide limiter of this process (queue mode), on the running coordinator. */
 export function clusterRateLimiter(coordinator: () => Coordinator): ClusterRateLimiter {
-  return (holder.__landflowClusterRateLimiter ??= new ClusterRateLimiter(coordinator));
+  return singleton('cluster-rate-limiter', () => new ClusterRateLimiter(coordinator));
 }

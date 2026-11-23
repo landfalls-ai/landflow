@@ -17,7 +17,6 @@ import { decideAsk, useRunAsks, useWorkingMembers } from '@/lib/client/run-contr
 import { duration, timeAgo } from '@/lib/client/format';
 import { decideToolApprovals } from '@/lib/client/run-trace';
 import { ApprovalSheet, LiveApprovalCard, type DecideFn } from '../run-trace/approval-live';
-import { useNewLook } from '../shell/look-toggle';
 import { useLastTeamRun } from '../agents/team-run-data';
 import { useRunLines } from '../run-trace/run-line';
 import { lastRunWords, rosterText } from '@/lib/shared/team-node';
@@ -373,8 +372,7 @@ export function AnswerLink({ executionId, className }: { executionId: string; cl
  */
 export function ApprovalButtons({ executionId, onDecide, className, member }: { executionId: string; onDecide?: DecideFn; className?: string; member?: string }) {
   const [busy, setBusy] = useState<'approve' | 'deny'>();
-  // The new look: Review opens the decision card (the member's reasons, the case, the evidence, Edit) over the page.
-  const newLook = useNewLook();
+  // Review opens the decision card (the member's reasons, the case, the evidence, Edit) over the page.
   const [reviewing, setReviewing] = useState(false);
   const decide = async (approved: boolean) => {
     setBusy(approved ? 'approve' : 'deny');
@@ -415,25 +413,21 @@ export function ApprovalButtons({ executionId, onDecide, className, member }: { 
       >
         {busy === 'deny' ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" strokeWidth={3} />} Deny
       </button>
-      {newLook && (
-        <>
-          <button
-            type="button"
-            {...own}
-            onClick={(e) => {
-              e.stopPropagation();
-              setReviewing(true);
-            }}
-            data-testid="team-review"
-            title="See why, what it looked at, and edit before approving"
-            aria-label="Review before deciding"
-            className="nodrag nopan inline-flex h-7 basis-full items-center justify-center gap-1.5 rounded-full text-[12px] font-semibold text-warn transition-colors hover:bg-warndim"
-          >
-            <FileSearch className="size-3.5" /> Review the case
-          </button>
-          {reviewing && <ApprovalSheet executionId={executionId} {...(member && { member })} {...(onDecide && { onDecide })} onClose={() => setReviewing(false)} />}
-        </>
-      )}
+      <button
+        type="button"
+        {...own}
+        onClick={(e) => {
+          e.stopPropagation();
+          setReviewing(true);
+        }}
+        data-testid="team-review"
+        title="See why, what it looked at, and edit before approving"
+        aria-label="Review before deciding"
+        className="nodrag nopan inline-flex h-7 basis-full items-center justify-center gap-1.5 rounded-full text-[12px] font-semibold text-warn transition-colors hover:bg-warndim"
+      >
+        <FileSearch className="size-3.5" /> Review the case
+      </button>
+      {reviewing && <ApprovalSheet executionId={executionId} {...(member && { member })} {...(onDecide && { onDecide })} onClose={() => setReviewing(false)} />}
     </span>
   );
 }
@@ -504,8 +498,8 @@ export interface TeamTileOptions {
   onDecide?: DecideFn;
   /** Open the Run Trace in a new tab (from the editor, so the flow stays open). */
   newTab?: boolean;
-  /** The editor, in the new look: before any run the node shows who is on the team and how its last run ended. */
-  idleRoster?: boolean;
+  /** The editor: before any run the node shows who is on the team and how its last run ended. `'compact'` (the lead's band is on the tile): one line, so the tile stays near 140 px. */
+  idleRoster?: boolean | 'compact';
 }
 
 /** What a waiting run's node waits on, from its wait's data (nodes/run-team.ts): a member's question, or a tool's approval. */
@@ -579,7 +573,6 @@ const AMBER = 'var(--warn)';
  * member's question, the question in amber with an Answer button. `moments` go above the node, with the roster.
  */
 export function useTeamTile(teamId: string | undefined, live: TeamProgress | undefined, activity: TeamActivity | undefined, options: TeamTileOptions = {}): { tile?: NodeLive; moments?: ReactNode; roster?: boolean } {
-  const newLook = useNewLook();
   const faces = useTeamFaces(teamId);
   const elapsed = useElapsed(live);
   const working = useWorkingMembers(options.executionId, Boolean(live && options.executionId && !options.waiting));
@@ -667,20 +660,40 @@ export function useTeamTile(teamId: string | undefined, live: TeamProgress | und
       },
     };
   }
-  if (options.idleRoster && newLook && teamId) return { tile: { body: <TeamIdle teamId={teamId} faces={faces} /> }, roster: true };
+  if (options.idleRoster && teamId) return { tile: { body: <TeamIdle teamId={teamId} faces={faces} compact={options.idleRoster === 'compact'} /> }, roster: true };
   return {};
 }
 
 /**
- * A team node before it runs, in the editor's new look: the members after the lead (whose face is the node's), and how
+ * A team node before it runs, in the editor: the members after the lead (whose face is the node's), and how
  * the team's last run ended. The strip above the node then stays away (flow-node.tsx), since this says the same.
  */
-function TeamIdle({ teamId, faces }: { teamId: string; faces: TeamFace[] }) {
+function TeamIdle({ teamId, faces, compact }: { teamId: string; faces: TeamFace[]; compact?: boolean }) {
   const run = useLastTeamRun(teamId);
   const lines = useRunLines(run && !run.live ? [run.executionId] : []);
   const others = faces.slice(1);
   const line = run ? lines?.[run.executionId] : undefined;
   const tone = line?.out.tone === 'bad' || run?.status === 'error' ? 'text-rd' : line?.out.tone === 'warn' || run?.status === 'waiting' ? 'text-warn' : 'text-gn';
+  const lastRun = run && (
+    <div className="truncate text-[11px] text-t3" title={`${run.workflowName} · ${timeAgo(run.startedAt)}`}>
+      Last run: <span className={cn('font-semibold', tone)}>{lastRunWords(run, line)}</span>
+    </div>
+  );
+  if (compact) {
+    // The lead's band is on the tile: the members' faces and the last run share one line (the names are the hover), so the tile stays near 140 px.
+    return (
+      <div className="mx-4 flex min-w-0 items-center gap-1.5 pb-2 text-[11px] text-t3" data-testid="team-idle" title={faces.map((f) => f.title).join(', ')}>
+        {others.length > 0 && (
+          <span className="flex shrink-0">
+            {others.slice(0, 5).map((f, i) => (
+              <AgentAvatar key={f.member.id} agent={f.face} size={18} round className={cn('ring-2 ring-sf', i && '-ml-1.5')} />
+            ))}
+          </span>
+        )}
+        <span className="min-w-0 flex-1 truncate">{run ? lastRun : others.length > 0 ? rosterText(others.map((f) => f.title)) : null}</span>
+      </div>
+    );
+  }
   return (
     <div className="mx-4 flex flex-col gap-1.5 border-t border-hair pb-6 pt-2" data-testid="team-idle">
       {others.length > 0 && (
@@ -693,11 +706,7 @@ function TeamIdle({ teamId, faces }: { teamId: string; faces: TeamFace[] }) {
           <span className="truncate">{rosterText(others.map((f) => f.title))}</span>
         </div>
       )}
-      {run && (
-        <div className="truncate text-[11px] text-t3" title={`${run.workflowName} · ${timeAgo(run.startedAt)}`}>
-          Last run: <span className={cn('font-semibold', tone)}>{lastRunWords(run, line)}</span>
-        </div>
-      )}
+      {lastRun}
     </div>
   );
 }
@@ -746,7 +755,9 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace, executionId }
             {paused ? `${worker.title} is paused` : consulting && live.consulting ? `${consulting.title} ${live.consulting.kind === 'handoff' ? 'handed over to the' : 'is consulting the'} ${worker.title}` : `${worker.title} is ${lowerFirst(words)}`}
           </div>
           {consulting && <div className="text-[12.5px] leading-4 text-t2">{words}</div>}
-          {live.command && <div className="truncate font-mono text-[10.5px] text-t3">{live.command}</div>}
+          {live.command && (
+            <div className="truncate font-mono text-[10.5px] text-t3">{live.command}</div>
+          )}
         </div>
       </div>
       <TeamTicker steps={live.steps} className="mt-2.5" />
@@ -770,10 +781,9 @@ export function TeamNowCard({ teamId, live, nodeName, onOpenTrace, executionId }
 /** The phone card of a run waiting on a member's question: who asks, the question in full, and the Answer button. */
 export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }: { teamId: string; waiting: TeamWaiting; nodeName: string; executionId?: string; onDecide?: DecideFn }) {
   const faces = useTeamFaces(teamId);
-  const newLook = useNewLook();
   if (!faces?.length) return null;
   const face = faceByTitle(faces, waiting.member) ?? faces[0];
-  const classic = (
+  const plainCard = (
     <section className="rounded-2xl border border-warn/50 bg-warndim p-3 shadow-pop" data-testid="team-ask-card" aria-live="polite">
       <div className="mb-2 truncate text-[11px] font-semibold uppercase tracking-[0.06em] text-warn">Needs you · {nodeName}</div>
       <div className="flex min-w-0 items-start gap-3">
@@ -805,7 +815,7 @@ export function TeamAskCard({ teamId, waiting, nodeName, executionId, onDecide }
       {executionId && (waiting.approval ? <ApprovalButtons executionId={executionId} onDecide={onDecide} className="mt-3" /> : <AnswerLink executionId={executionId} className="mt-3 w-full" />)}
     </section>
   );
-  // The new look: a tool approval is a decision card with the member's reasons and the evidence it looked at.
-  if (newLook && executionId && waiting.approval) return <LiveApprovalCard executionId={executionId} member={waiting.member} {...(onDecide && { onDecide })} fallback={classic} />;
-  return classic;
+  // A tool approval is a decision card with the member's reasons and the evidence it looked at.
+  if (executionId && waiting.approval) return <LiveApprovalCard executionId={executionId} member={waiting.member} {...(onDecide && { onDecide })} fallback={plainCard} />;
+  return plainCard;
 }

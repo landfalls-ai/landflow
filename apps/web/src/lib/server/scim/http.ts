@@ -4,13 +4,19 @@
  * guard (lib/shared/auth-paths.ts); `scimRoute` authenticates the bearer token itself (./auth) and runs the handler
  * as the token's user, so "who changed this" works as it does for API keys.
  */
-import { withAuth } from '../auth/context';
+import { noteAuditPrincipal } from '../audit/context';
+import { noteKeyRefusal } from '../auth/api-key-audit';
+import { KEY_REFUSAL_MESSAGE } from '../auth/api-key-refusal';
+import { consumeApiKeyUse } from '../auth/api-key-uses';
+import { withAuth, type Principal } from '../auth/context';
+import { clientIp } from '../auth/rate-limit';
 import { publicOrigin } from '../auth/cookies';
 import { UserError } from '../auth/users';
-import { ensureBootstrapped } from '../bootstrap';
+import { HttpError } from '../errors';
+import { handler } from '../http';
 import { ProjectError } from '../projects/store';
-import { logger } from '../telemetry';
 import { authenticateScim, type ScimCaller } from './auth';
+import { recordScimAuthFailure } from './audit';
 
 export const SCIM_CONTENT_TYPE = 'application/scim+json';
 
@@ -29,13 +35,14 @@ export const SCHEMAS = {
 /** RFC 7644 §3.12 error types. */
 export type ScimType = 'invalidFilter' | 'tooMany' | 'uniqueness' | 'mutability' | 'invalidSyntax' | 'invalidPath' | 'noTarget' | 'invalidValue' | 'invalidVers' | 'sensitive';
 
-export class ScimError extends Error {
+export class ScimError extends HttpError {
+  static readonly errorName: string = 'ScimError';
   constructor(
-    readonly status: number,
+    status: number,
     message: string,
     readonly scimType?: ScimType,
   ) {
-    super(message);
+    super(message, status, { code: scimType ?? 'scim_error' });
   }
 }
 
@@ -45,6 +52,16 @@ export function scimJson(data: unknown, status = 200, headers: Record<string, st
 
 export function scimError(status: number, detail: string, scimType?: ScimType, headers: Record<string, string> = {}): Response {
   return scimJson({ schemas: [SCHEMAS.error], status: String(status), ...(scimType && { scimType }), detail }, status, headers);
+}
+
+/**
+ * A normalized route error as a SCIM error document. The generic 500 carries its request id in `detail` too (the
+ * error schema has no field for it; the `X-Request-Id` header has it as well), so a support request can quote it.
+ */
+export function scimErrorFor(http: HttpError): Response {
+  const requestId = typeof http.details?.requestId === 'string' ? http.details.requestId : undefined;
+  const detail = requestId && http.status >= 500 ? `${http.message} (request ${requestId})` : http.message;
+  return scimError(http.status, detail, http instanceof ScimError ? http.scimType : undefined);
 }
 
 /** 204 No Content (DELETE). */
@@ -75,29 +92,43 @@ export interface ScimContext {
 }
 
 /**
- * Wrap a /scim/v2 route: bootstrap, authenticate the SCIM token, then run `fn` as its user. ScimError, and the
- * user and project errors the stores throw, come back as SCIM errors.
+ * Wrap a /scim/v2 route: `handler` (lib/server/http.ts: audit context and request id, readiness wait, drain, generic
+ * 500) with the SCIM token check in place of the session guard, and every error rendered as a SCIM error document.
+ * ScimError, and the user and project errors the stores throw, come back with their status and `scimType`.
  */
 export function scimRoute<P extends Record<string, string> = Record<string, string>>(fn: (ctx: ScimContext, params: P) => Promise<Response>) {
-  return async (request: Request, context?: { params?: Promise<P> }): Promise<Response> => {
-    try {
-      await ensureBootstrapped();
-      const checked = authenticateScim(request);
-      if (!checked.ok) return scimError(checked.status, checked.message, undefined, checked.status === 401 ? { 'www-authenticate': 'Bearer realm="landflow-scim"' } : {});
+  return handler(
+    async (request: Request, context?: { params?: Promise<P> }): Promise<Response> => {
       const params = ((await context?.params) ?? {}) as P;
-      const { caller } = checked;
-      return await withAuth({ principal: { user: caller.user, via: 'api-key', apiKey: { id: caller.keyId, scopes: caller.scopes } } }, () =>
-        fn({ request, caller, base: scimBaseUrl(request) }, params),
-      );
-    } catch (caught) {
-      if (caught instanceof ScimError) return scimError(caught.status, caught.message, caught.scimType);
-      if (caught instanceof UserError || caught instanceof ProjectError) {
-        return scimError(caught.status, caught.message, caught.status === 409 ? 'uniqueness' : caught.status === 400 ? 'invalidValue' : undefined);
+      const checked = authenticateScim(request);
+      if (!checked.ok && checked.refused) {
+        noteKeyRefusal(checked.refused.reason, checked.refused.key);
+        return scimError(401, checked.message, undefined, { 'www-authenticate': 'Bearer realm="landflow-scim"' });
       }
-      logger.error('SCIM request failed', { error: caught, 'url.path': safePath(request) });
-      return scimError(500, (caught as Error).message ?? 'Internal error');
-    }
-  };
+      if (!checked.ok) {
+        recordScimAuthFailure(clientIp(request), checked.status, checked.message, checked.keyId && checked.userId ? { keyId: checked.keyId, userId: checked.userId } : undefined);
+        return scimError(checked.status, checked.message, undefined, checked.status === 401 ? { 'www-authenticate': 'Bearer realm="landflow-scim"' } : {});
+      }
+      const { caller } = checked;
+      // A capped token: this call is one of its uses (counted in the database, as for every other key).
+      if (caller.maxUses && !(await consumeApiKeyUse({ id: caller.keyId, maxUses: caller.maxUses })).ok) {
+        noteKeyRefusal('uses_exhausted', { id: caller.keyId, label: caller.label ?? caller.keyId });
+        return scimError(401, KEY_REFUSAL_MESSAGE.uses_exhausted, undefined, { 'www-authenticate': 'Bearer realm="landflow-scim"' });
+      }
+      const principal: Principal = { user: caller.user, via: 'api-key', apiKey: { id: caller.keyId, scopes: caller.scopes } };
+      noteAuditPrincipal(principal);
+      return withAuth({ principal }, () => fn({ request, caller, base: scimBaseUrl(request) }, params));
+    },
+    {
+      mapError: (caught) => {
+        if (caught instanceof UserError || caught instanceof ProjectError) {
+          return new ScimError(caught.status, caught.message, caught.status === 409 ? 'uniqueness' : caught.status === 400 ? 'invalidValue' : undefined);
+        }
+        return undefined;
+      },
+      formatError: scimErrorFor,
+    },
+  );
 }
 
 /** A discovery route (ServiceProviderConfig, Schemas, ResourceTypes): static documents, answered without a token. */
@@ -110,12 +141,4 @@ export function scimPublicRoute<P extends Record<string, string> = Record<string
       throw caught;
     }
   };
-}
-
-function safePath(request: Request): string | undefined {
-  try {
-    return new URL(request.url).pathname;
-  } catch {
-    return undefined;
-  }
 }

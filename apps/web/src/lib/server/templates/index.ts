@@ -57,19 +57,20 @@ import { getRemote, remoteBase, remoteLabel, REMOTE_PAGE_SIZE, REMOTE_PREFIX, se
 import { fileSchema, LIMITS, type SaveTeamTemplateInput, type SaveTemplateInput, type UpdateTemplateInput } from './schema';
 import { bundleTeam, BundleError, createFromBundle, remapWorkflow, teamSummary, visitAgentCredentials, visitTeamCredentials, type CreatedBundle } from './team';
 import { localTemplates, type LocalTemplate } from './store';
+import { HttpError } from '../errors';
 
 export { BUILTIN_TEMPLATES } from './builtin';
 export { saveTeamTemplateSchema, saveTemplateSchema, updateTemplateSchema } from './schema';
 
 /** A template request that can't be served: `status` is the HTTP status. */
-export class TemplateError extends Error {
+export class TemplateError extends HttpError {
+  static readonly errorName: string = 'TemplateError';
   constructor(
     message: string,
-    readonly status = 400,
-    readonly details?: Record<string, unknown>,
+    status = 400,
+    details?: Record<string, unknown>,
   ) {
-    super(message);
-    this.name = 'TemplateError';
+    super(message, status, { expose: true, ...(details && { details }) });
   }
 }
 

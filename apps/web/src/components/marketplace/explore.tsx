@@ -1,43 +1,44 @@
 'use client';
 /**
- * The marketplace's Explore tab: every node plugin, workflow, composite type and Claude Code plugin in one place. It
- * merges GET /api/marketplaces/explore (every added marketplace, the Landflow plugins' flows), the registry's own
- * plugins (/api/plugins: those no marketplace installed show as "This instance"), the Templates library (built-in and
- * saved templates; a marketplace flow already installed is shown once, as its flow) and the composite types
- * (/api/composites: the plugins' and those saved here, docs/composites.md). One search, a kind switch, a source (all, or
- * one marketplace with its Refresh / Remove) and categories.
+ * The marketplace's Explore tab: every node plugin, composite type and Claude Code plugin (agents and skills) in one
+ * place. Workflows are not here: the Templates page is their home. It merges GET /api/marketplaces/explore (every added
+ * marketplace), the registry's own plugins (/api/plugins: those no marketplace installed show as "This instance") and
+ * the composite types (/api/composites: the plugins' and those saved here, docs/composites.md). One filter row: search,
+ * a kind switch, a source menu (only with more than one marketplace; one marketplace with its Refresh / Remove) and one
+ * category menu.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Boxes, Check, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ArrowRight, Boxes, Check, ChevronDown, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
+import { cn } from '@/lib/utils';
 import { timeAgo } from '@/lib/client/format';
-import type { ExploreFlow, ExplorePlugin, MarketplaceSummary } from '@/lib/shared/marketplace';
+import { DevOnly } from '@/lib/client/developer-details';
+import type { ExplorePlugin, MarketplaceSummary } from '@/lib/shared/marketplace';
 import type { CompositeTypeInfo } from '@/lib/shared/composites';
-import type { NodeTypeInfo, PluginSummary } from '@/lib/shared/types';
-import { TEMPLATE_CATEGORIES, type TemplateSummary } from '@/lib/shared/templates';
-import { TemplateNodeIcons } from '@/components/templates/template-card';
-import { useNodeTypeMap, useTemplateList } from '@/components/templates/use-templates';
+import type { PluginSummary } from '@/lib/shared/types';
+import { TEMPLATE_CATEGORIES } from '@/lib/shared/templates';
 import { Card } from '@/components/shell/page-header';
-import { Badge, Chip, StatusDot } from '@/components/ui/badge';
+import { Badge, Chip, LanguageBadge, StatusDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { AppIcon } from '@/components/ui/icon';
-import { Input } from '@/components/ui/inputs';
+import { brandIcon, brandOfApp } from '@/lib/shared/brand-icons';
+import { SearchInput } from '@/components/ui/inputs';
+import { MenuItem, Popover } from '@/components/ui/popover';
 import { useExplore } from './use-marketplace';
+import { Segmented, SegmentedCount } from '../ui/segmented';
 
-type Kind = 'all' | 'nodes' | 'flows' | 'composites' | 'claude';
-/** A marketplace id, or this instance (registry plugins and the Templates library). */
+export type Kind = 'all' | 'nodes' | 'composites' | 'claude';
+/** A marketplace id, or this instance (the registry's own plugins and the composite types). */
 const LOCAL = 'local';
 /** How many of each kind "All" shows before "Show all". */
 const SECTION = 8;
 
-const KINDS: Array<{ id: Kind; label: string }> = [
+export const KINDS: Array<{ id: Kind; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'nodes', label: 'Node plugins' },
-  { id: 'flows', label: 'Workflows' },
   { id: 'composites', label: 'Composites' },
   { id: 'claude', label: 'Agents & skills' },
 ];
@@ -50,19 +51,24 @@ export function categoryLabel(category: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-type Item =
+export type Item =
   | { kind: 'nodes'; key: string; source: string; categories: string[]; text: string; plugin: ExplorePlugin }
   | { kind: 'nodes'; key: string; source: typeof LOCAL; categories: string[]; text: string; local: PluginSummary }
-  | { kind: 'flows'; key: string; source: string; categories: string[]; text: string; flow: ExploreFlow }
-  | { kind: 'flows'; key: string; source: typeof LOCAL; categories: string[]; text: string; template: TemplateSummary }
   | { kind: 'composites'; key: string; source: typeof LOCAL; categories: string[]; text: string; composite: CompositeTypeInfo }
   | { kind: 'claude'; key: string; source: string; categories: string[]; text: string; plugin: ExplorePlugin };
+
+/** An entry that is not (yet) a running plugin has no icon of its own: the real mark of the app it is named after, when it is one. */
+const appIcon = (plugin: ExplorePlugin, fallback: string) => {
+  const brand = brandOfApp(plugin.name) ?? brandOfApp(plugin.displayName);
+  return brand ? brandIcon(brand) : fallback;
+};
 
 const lower = (...parts: Array<string | undefined>) => parts.filter(Boolean).join(' ').toLowerCase();
 
 const isNodePlugin = (p: ExplorePlugin) => Boolean(p.read?.nodePlugin || p.landflow);
 
-function buildItems(plugins: ExplorePlugin[], flows: ExploreFlow[], local: PluginSummary[], templates: TemplateSummary[], composites: CompositeTypeInfo[]): Item[] {
+/** Every plugin, agent and skill pack, and composite type: never a workflow (those are the Templates). */
+export function buildItems(plugins: ExplorePlugin[], local: PluginSummary[], composites: CompositeTypeInfo[]): Item[] {
   const linked = new Set(plugins.flatMap((p) => (p.read?.nodePlugin ? [p.read.nodePlugin.id] : [])));
   const items: Item[] = [];
   for (const plugin of plugins) {
@@ -72,14 +78,6 @@ function buildItems(plugins: ExplorePlugin[], flows: ExploreFlow[], local: Plugi
   for (const plugin of local) {
     if (linked.has(plugin.id)) continue;
     items.push({ kind: 'nodes', key: `local/${plugin.id}`, source: LOCAL, categories: [], text: lower(plugin.id, plugin.info.name, plugin.info.description, plugin.info.language, plugin.nodes.map((n) => n.displayName).join(' ')), local: plugin });
-  }
-  for (const flow of flows) {
-    items.push({ kind: 'flows', key: `${flow.marketplace.id}/${flow.plugin}/${flow.path}`, source: flow.marketplace.id, categories: flow.categories, text: lower(flow.name, flow.description, flow.plugin, flow.pluginDisplayName, flow.nodeTypes.join(' ')), flow });
-  }
-  // Installed marketplace flows are templates too (with an origin): they show once, as their flow.
-  for (const template of templates) {
-    if (template.origin) continue;
-    items.push({ kind: 'flows', key: `template/${template.id}`, source: LOCAL, categories: template.categories, text: lower(template.name, template.description, template.author, template.nodeTypes.join(' ')), template });
   }
   // Composite types this instance knows: what plugins declare (they come with the plugin) and the library saved here.
   for (const composite of composites) {
@@ -115,7 +113,7 @@ function NodePluginTile({ plugin, onOpen }: { plugin: ExplorePlugin; onOpen: () 
   return (
     <button onClick={onOpen} className={tileClass}>
       <TileHead
-        icon={<AppIcon icon={live?.icon ?? 'blocks'} color={live?.color} size={28} />}
+        icon={<AppIcon icon={live?.icon ?? appIcon(plugin, 'blocks')} color={live?.color} size={28} />}
         title={plugin.displayName ?? plugin.name}
         sub={[plugin.marketplace.name, plugin.version && `v${plugin.version}`].filter(Boolean).join(' · ')}
         badge={plugin.installed && installedBadge}
@@ -127,7 +125,11 @@ function NodePluginTile({ plugin, onOpen }: { plugin: ExplorePlugin; onOpen: () 
             <StatusDot status={live.status as PluginSummary['status']} /> {live.status} · {live.nodes} nodes
           </span>
         )}
-        {plugin.read?.nodePlugin && <Badge tone="muted">{plugin.read.nodePlugin.runtime}</Badge>}
+        {plugin.read?.nodePlugin && (
+          <DevOnly>
+            <Badge tone="muted">{plugin.read.nodePlugin.runtime}</Badge>
+          </DevOnly>
+        )}
         {plugin.flows > 0 && <Badge tone="accent">Flows {plugin.flows}</Badge>}
         {plugin.category && <Chip>{categoryLabel(plugin.category)}</Chip>}
       </div>
@@ -138,55 +140,15 @@ function NodePluginTile({ plugin, onOpen }: { plugin: ExplorePlugin; onOpen: () 
 function LocalPluginTile({ plugin }: { plugin: PluginSummary }) {
   return (
     <Link href={`/plugins?plugin=${encodeURIComponent(plugin.id)}`} className={tileClass}>
-      <TileHead icon={<AppIcon icon={plugin.info.icon} color={plugin.info.color} size={28} />} title={plugin.info.name} sub={`This instance · v${plugin.info.version}`} badge={plugin.source === 'builtin' && <Badge tone="muted">Built in</Badge>} />
+      <TileHead icon={<AppIcon icon={plugin.info.icon} color={plugin.info.color} size={28} />} title={plugin.info.name} sub={`This instance · v${plugin.info.version}`} badge={plugin.source === 'builtin' && <Badge tone="muted">Built-in</Badge>} />
       <p className="line-clamp-2 text-[12px] leading-snug text-t2">{plugin.info.description || 'No description.'}</p>
       <div className="mt-auto flex flex-wrap items-center gap-1.5 text-[11px] text-t3">
         <span className="inline-flex items-center gap-1.5">
           <StatusDot status={plugin.status} /> {plugin.status} · {plugin.nodes.length} nodes
         </span>
-        <Badge tone="muted">{plugin.info.language}</Badge>
-      </div>
-    </Link>
-  );
-}
-
-function FlowTile({ flow, types }: { flow: ExploreFlow; types: Record<string, NodeTypeInfo> }) {
-  const needs = flow.pluginInstalled ? [] : flow.needs;
-  return (
-    <Link href={flow.link ?? '#'} className={tileClass}>
-      <TemplateNodeIcons nodeTypes={flow.nodeTypes} types={types} />
-      <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold text-t1">{flow.name}</div>
-        <div className="truncate text-[11px] text-t3">
-          {flow.pluginDisplayName ?? flow.plugin} · {flow.marketplace.name}
-        </div>
-      </div>
-      <p className="line-clamp-2 text-[12px] leading-snug text-t2">{flow.description || 'No description.'}</p>
-      <div className="mt-auto flex flex-wrap items-center gap-1.5 text-[11px] text-t3">
-        {flow.pluginInstalled ? installedBadge : <Badge tone="muted">Installs with {flow.pluginDisplayName ?? flow.plugin}</Badge>}
-        {needs.length > 0 && (
-          <Badge tone="warning" title={`Node types this instance doesn't have: ${needs.join(', ')}`}>
-            Needs {needs.length} plugin{needs.length === 1 ? '' : 's'}
-          </Badge>
-        )}
-        <span>{flow.nodeCount} nodes</span>
-      </div>
-    </Link>
-  );
-}
-
-function TemplateTile({ template, types }: { template: TemplateSummary; types: Record<string, NodeTypeInfo> }) {
-  return (
-    <Link href={`/templates/${encodeURIComponent(template.id)}`} className={cn(tileClass, !template.usable && 'bg-sf2')}>
-      <TemplateNodeIcons nodeTypes={template.nodeTypes} types={types} />
-      <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold text-t1">{template.name}</div>
-        <div className="truncate text-[11px] text-t3">{template.source === 'builtin' ? 'Built-in template' : template.projectName ? `Saved in ${template.projectName}` : 'Saved on this instance'}</div>
-      </div>
-      <p className="line-clamp-2 text-[12px] leading-snug text-t2">{template.description || 'No description.'}</p>
-      <div className="mt-auto flex flex-wrap items-center gap-1.5 text-[11px] text-t3">
-        {!template.usable && <Badge tone="warning">Needs a plugin</Badge>}
-        <span>{template.nodeCount} nodes</span>
+        <DevOnly>
+          <LanguageBadge language={plugin.info.language} />
+        </DevOnly>
       </div>
     </Link>
   );
@@ -230,7 +192,9 @@ function CompositeTile({ composite, onDeleted }: { composite: CompositeTypeInfo;
           {d.slots.length} slot{d.slots.length === 1 ? '' : 's'}, {required} required
         </span>
         {d.closed && <Chip>Closed</Chip>}
-        <span className="truncate font-mono">{composite.type}</span>
+        <DevOnly>
+          <span className="truncate font-mono">{composite.type}</span>
+        </DevOnly>
       </div>
     </div>
   );
@@ -240,7 +204,7 @@ function ClaudePluginTile({ plugin, onOpen }: { plugin: ExplorePlugin; onOpen: (
   const read = plugin.read;
   return (
     <button onClick={onOpen} className={tileClass}>
-      <TileHead icon={<AppIcon icon="bot" size={28} />} title={plugin.displayName ?? plugin.name} sub={[plugin.marketplace.name, plugin.author].filter(Boolean).join(' · ')} badge={plugin.installed && installedBadge} />
+      <TileHead icon={<AppIcon icon={appIcon(plugin, 'bot')} size={28} />} title={plugin.displayName ?? plugin.name} sub={[plugin.marketplace.name, plugin.author].filter(Boolean).join(' · ')} badge={plugin.installed && installedBadge} />
       <p className="line-clamp-2 text-[12px] leading-snug text-t2">{plugin.description || 'No description.'}</p>
       <div className="mt-auto flex flex-wrap items-center gap-1.5 text-[11px] text-t3">
         {read && read.agents > 0 && <Badge tone="accent">Agents {read.agents}</Badge>}
@@ -261,10 +225,53 @@ function locationText(m: MarketplaceSummary) {
   return l.kind === 'github' ? `github.com/${l.owner}/${l.repo}${l.ref ? ` @ ${l.ref}` : ''}` : l.kind === 'url' ? l.url : l.path;
 }
 
-export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { marketplaces: MarketplaceSummary[]; version: number; onAdd: () => void; onOpen: (marketplaceId: string, name: string) => void; onChanged: () => void }) {
+/** The source menu only helps with more than one marketplace: with one, every item comes from it or from this instance. */
+export const showSourceFilter = (marketplaceCount: number) => marketplaceCount > 1;
+
+/** One dropdown filter: a button with the current choice that opens a menu (a bottom sheet on a phone). */
+function FilterMenu({ label, value, allLabel, options, onChange }: { label: string; value: string | undefined; allLabel: string; options: Array<{ value: string; label: string; count?: number }>; onChange: (value: string | undefined) => void }) {
+  const current = options.find((o) => o.value === value);
+  return (
+    <Popover
+      align="start"
+      title={label}
+      className="max-h-[320px] min-w-[220px] overflow-y-auto"
+      trigger={({ toggle, open }) => (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label={label}
+          className={cn('inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[13px] max-md:h-10 max-md:text-[14px]', current ? 'border-ac bg-acdim font-semibold text-ac' : 'border-hair bg-sf text-t1 hover:border-bd')}
+        >
+          {current?.label ?? allLabel}
+          <ChevronDown className="size-3.5 text-t3" />
+        </button>
+      )}
+    >
+      {(close) => (
+        <>
+          {[{ value: undefined, label: allLabel, count: undefined as number | undefined }, ...options].map((o) => (
+            <MenuItem
+              key={o.value ?? 'all'}
+              hint={o.count}
+              onClick={() => {
+                onChange(o.value);
+                close();
+              }}
+            >
+              <span className={cn(o.value === value && 'font-semibold text-ac')}>{o.label}</span>
+            </MenuItem>
+          ))}
+        </>
+      )}
+    </Popover>
+  );
+}
+
+export function Explore({ marketplaces, version, onOpen, onChanged }: { marketplaces: MarketplaceSummary[]; version: number; onOpen: (marketplaceId: string, name: string) => void; onChanged: () => void }) {
   const { explore, loading, error } = useExplore(version);
-  const { listing } = useTemplateList('');
-  const types = useNodeTypeMap();
   const [local, setLocal] = useState<PluginSummary[]>([]);
   const [composites, setComposites] = useState<CompositeTypeInfo[]>([]);
   const [compositesVersion, setCompositesVersion] = useState(0);
@@ -288,19 +295,23 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
     if (source && source !== LOCAL && !marketplaces.some((m) => m.id === source)) setSource(undefined);
   }, [marketplaces, source]);
 
-  const items = useMemo(() => (explore ? buildItems(explore.plugins, explore.flows, local, listing?.templates ?? [], composites) : []), [explore, local, listing, composites]);
+  const items = useMemo(() => (explore ? buildItems(explore.plugins, local, composites) : []), [explore, local, composites]);
   const inSource = useMemo(() => items.filter((i) => !source || i.source === source), [items, source]);
   const categories = useMemo(() => {
     const byLabel = new Map<string, string>();
     for (const item of inSource) for (const c of item.categories) byLabel.set(categoryLabel(c), byLabel.get(categoryLabel(c)) ?? c);
     return [...byLabel.keys()].sort((a, b) => a.localeCompare(b));
   }, [inSource]);
+  // A category the source no longer has would still filter while the menu reads "All categories" (or is hidden).
+  useEffect(() => {
+    if (category && explore && !categories.includes(category)) setCategory(undefined);
+  }, [categories, category, explore]);
   const matching = useMemo(() => {
     const q = query.trim().toLowerCase();
     return inSource.filter((i) => (!category || i.categories.some((c) => categoryLabel(c) === category)) && (!q || i.text.includes(q)));
   }, [inSource, query, category]);
   const counts = useMemo(() => {
-    const c: Record<Kind, number> = { all: matching.length, nodes: 0, flows: 0, composites: 0, claude: 0 };
+    const c: Record<Kind, number> = { all: matching.length, nodes: 0, composites: 0, claude: 0 };
     for (const i of matching) c[i.kind]++;
     return c;
   }, [matching]);
@@ -337,52 +348,39 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
 
   const tile = (item: Item) => {
     if (item.kind === 'nodes') return 'local' in item ? <LocalPluginTile key={item.key} plugin={item.local} /> : <NodePluginTile key={item.key} plugin={item.plugin} onOpen={() => onOpen(item.plugin.marketplace.id, item.plugin.name)} />;
-    if (item.kind === 'flows') return 'template' in item ? <TemplateTile key={item.key} template={item.template} types={types} /> : <FlowTile key={item.key} flow={item.flow} types={types} />;
     if (item.kind === 'composites') return <CompositeTile key={item.key} composite={item.composite} onDeleted={() => setCompositesVersion((v) => v + 1)} />;
     return <ClaudePluginTile key={item.key} plugin={item.plugin} onOpen={() => onOpen(item.plugin.marketplace.id, item.plugin.name)} />;
   };
   const grid = (list: Item[]) => <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-2.5">{list.map(tile)}</div>;
-  const chip = (active: boolean) => cn('inline-flex h-8 items-center gap-2 rounded-full border px-3.5 text-[13px] transition-colors', active ? 'border-ac bg-acdim font-semibold text-ac' : 'border-hair bg-sf text-t1 hover:border-ac');
 
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full max-w-[360px]">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-t3" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search plugins, workflows, agents…" className="pl-9" aria-label="Search the marketplace" />
+        <SearchInput value={query} onChange={setQuery} placeholder="Search plugins, agents, skills…" label="Search the marketplace" className="w-full max-w-[360px] max-md:max-w-none" />
+        <div className="max-w-full overflow-x-auto max-md:pb-0.5">
+          <Segmented label="Kind" value={kind} onChange={setKind} options={KINDS.map((k) => ({ value: k.id, label: <>{k.label} <SegmentedCount>{counts[k.id]}</SegmentedCount></> }))} />
         </div>
-        <div role="tablist" aria-label="Kind" className="flex w-fit items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-          {KINDS.map((k) => (
-            <button
-              key={k.id}
-              role="tab"
-              aria-selected={kind === k.id}
-              onClick={() => setKind(k.id)}
-              className={cn('h-7 rounded-full px-3 text-[12px] text-t2 transition-all duration-200 hover:text-t1', kind === k.id && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]')}
-            >
-              {k.label} <span className="font-mono text-[11px] font-normal tabular-nums text-t3">{counts[k.id]}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Source">
-        <button onClick={() => setSource(undefined)} aria-pressed={!source} className={chip(!source)}>
-          All sources
-        </button>
-        {marketplaces.map((m) => (
-          <button key={m.id} onClick={() => setSource(m.id)} aria-pressed={source === m.id} className={chip(source === m.id)}>
-            {m.name}
-            <span className="font-mono text-[11px] font-normal text-t3">{sourceCounts.get(m.id) ?? m.plugins}</span>
-          </button>
-        ))}
-        <button onClick={() => setSource(LOCAL)} aria-pressed={source === LOCAL} className={chip(source === LOCAL)} title="The registry's own plugins and the Templates library">
-          This instance
-          <span className="font-mono text-[11px] font-normal text-t3">{sourceCounts.get(LOCAL) ?? 0}</span>
-        </button>
-        <button onClick={onAdd} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-dashed border-bd px-3 text-[12px] text-t2 hover:border-ac hover:text-ac">
-          <Plus className="size-3.5" /> Add
-        </button>
+        {categories.length > 0 && (
+          <FilterMenu
+            label="Category"
+            value={category}
+            allLabel="All categories"
+            options={categories.map((c) => ({ value: c, label: c }))}
+            onChange={setCategory}
+          />
+        )}
+        {showSourceFilter(marketplaces.length) && (
+          <FilterMenu
+            label="Source"
+            value={source}
+            allLabel="All sources"
+            options={[...marketplaces.map((m) => ({ value: m.id, label: m.name, count: sourceCounts.get(m.id) ?? m.plugins })), { value: LOCAL, label: 'This instance', count: sourceCounts.get(LOCAL) ?? 0 }]}
+            onChange={setSource}
+          />
+        )}
+        <Link href="/templates" className="text-[12px] text-t3 hover:text-t1 max-md:w-full md:ml-auto">
+          Workflow templates live in Templates <ArrowRight className="inline size-3" />
+        </Link>
       </div>
 
       {current && (
@@ -390,7 +388,7 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="text-[13px] font-semibold text-t1">{current.name}</span>
-              {!current.removable && <Badge tone="accent">Built in</Badge>}
+              {!current.removable && <Badge tone="accent">Built-in</Badge>}
               {current.owner && <span className="text-[12px] text-t3">by {current.owner}</span>}
             </div>
             <p className="truncate text-[12px] text-t3">
@@ -408,21 +406,6 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
             </Button>
           )}
         </Card>
-      )}
-
-      {categories.length > 0 && (
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Categories">
-          {[undefined, ...categories].map((c) => (
-            <button
-              key={c ?? 'all'}
-              onClick={() => setCategory(c)}
-              aria-pressed={category === c}
-              className={cn('rounded-full border px-2.5 py-0.5 text-[12px] transition-colors', category === c ? 'border-ac bg-acdim text-ac' : 'border-hair text-t2 hover:border-ac')}
-            >
-              {c ?? 'All categories'}
-            </button>
-          ))}
-        </div>
       )}
 
       {error && <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>}
@@ -462,7 +445,7 @@ export function Explore({ marketplaces, version, onAdd, onOpen, onChanged }: { m
         ))}
       {explore && !matching.some((i) => kind === 'all' || i.kind === kind) && (
         <Card className="py-6">
-          <EmptyState compact title="Nothing matches" hint={items.length ? 'Try another search, kind, source or category.' : 'Add a marketplace to explore its plugins and workflows.'} />
+          <EmptyState compact title="Nothing matches" hint={items.length ? 'Try another search, kind, source or category.' : 'Add a marketplace to explore its plugins, agents and skills.'} />
         </Card>
       )}
       {!explore && loading && (

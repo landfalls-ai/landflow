@@ -3,23 +3,26 @@
  * One data table as an editable grid: click a cell to edit it (Enter or Tab
  * saves, Esc cancels; booleans toggle), add rows and columns, rename or delete
  * columns from their header menu, sort by a column, search, page through rows,
- * select and delete rows, and import or export CSV.
+ * select and delete rows, and import or export CSV. The grid itself is the kit's
+ * `DataGrid` (components/ui/data-grid.tsx); this page owns the data, the paging and the column menus.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Columns3, Download, Ellipsis, Loader2, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, Ellipsis, Loader2, Pencil, Plus, Search, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api, ApiError } from '@/lib/client/api';
-import { timeAgo } from '@/lib/client/format';
-import { COLUMN_TYPES, type ColumnType, type CsvImportResult, type DataTable, type DataTableColumn, type DataTableRow, type RowPage } from '@/lib/shared/data-tables';
+import { plural, timeAgo } from '@/lib/client/format';
+import { showHeaderAction } from '@/lib/client/list-page';
+import { COLUMN_TYPES, type CellValue, type ColumnType, type CsvImportResult, type DataTable, type DataTableColumn, type DataTableRow, type RowPage } from '@/lib/shared/data-tables';
 import { PageHeader } from '../shell/page-header';
 import { Button } from '../ui/button';
+import { DataGrid, type GridColumn } from '../ui/data-grid';
 import { EmptyState } from '../ui/empty-state';
 import { FieldLabel, Input, Select } from '../ui/inputs';
+import { askAbout, askDetail } from '../../lib/client/ask-about';
 import { MenuItem, MenuSeparator, Popover } from '../ui/popover';
-import { formatCell, toLocalInput, TypeIcon, TYPE_META } from './column-type';
+import { formatCell, TypeIcon, TYPE_META } from './column-type';
 import { ConfirmDialog } from './dialog';
 
 type TableInfo = DataTable & { rowCount: number };
@@ -27,47 +30,9 @@ type Sort = { column: string; direction: 'asc' | 'desc' } | undefined;
 type Confirm = { kind: 'rows' } | { kind: 'table' } | { kind: 'column'; name: string };
 
 const PAGE_SIZES = [25, 50, 100, 250];
-const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 
-/** Text input for one cell. `onCommit(undefined)` = unchanged. */
-function CellEditor({ column, value, onCommit, onCancel }: { column: DataTableColumn; value: unknown; onCommit: (value: unknown, move?: 1 | -1) => void; onCancel: () => void }) {
-  const initial = column.type === 'date' ? toLocalInput(value as string) : value === null || value === undefined ? '' : String(value);
-  const [text, setText] = useState(initial);
-  const done = useRef(false);
-  const commit = (move?: 1 | -1) => {
-    if (done.current) return;
-    done.current = true;
-    if (text === initial) return onCommit(undefined, move);
-    if (!text.trim() && column.type !== 'string') return onCommit(null, move);
-    onCommit(column.type === 'date' ? new Date(text).toISOString() : text === '' ? null : text, move);
-  };
-  return (
-    <input
-      autoFocus
-      type={column.type === 'date' ? 'datetime-local' : 'text'}
-      inputMode={column.type === 'number' ? 'decimal' : undefined}
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={() => commit()}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          commit();
-        } else if (e.key === 'Escape') {
-          e.preventDefault();
-          done.current = true;
-          onCancel();
-        } else if (e.key === 'Tab') {
-          e.preventDefault();
-          commit(e.shiftKey ? -1 : 1);
-        }
-      }}
-      className={cn('h-8 w-full rounded-md border border-ac bg-sf px-2 text-[13px] text-t1 outline-none', column.type !== 'string' && 'font-mono')}
-    />
-  );
-}
-
-function AddColumn({ onAdd }: { onAdd: (name: string, type: ColumnType) => Promise<boolean> }) {
+/** The + at the end of the header row: opens a small form that adds a column. */
+export function AddColumn({ onAdd }: { onAdd: (name: string, type: ColumnType) => Promise<boolean> }) {
   const [name, setName] = useState('');
   const [type, setType] = useState<ColumnType>('string');
   const [busy, setBusy] = useState(false);
@@ -76,9 +41,9 @@ function AddColumn({ onAdd }: { onAdd: (name: string, type: ColumnType) => Promi
       align="end"
       className="w-[280px] p-3"
       trigger={({ toggle }) => (
-        <Button size="sm" onClick={toggle}>
-          <Columns3 className="size-3.5" /> Add column
-        </Button>
+        <button onClick={toggle} aria-label="Add column" title="Add column" className="grid size-7 place-items-center rounded-md text-t3 transition-colors hover:bg-acdim hover:text-t1">
+          <Plus className="size-4" />
+        </button>
       )}
     >
       {(close) => {
@@ -156,7 +121,8 @@ export function DataTableView({ tableId }: { tableId: string }) {
   const [query, setQuery] = useState('');
   const [reload, setReload] = useState(0);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [editing, setEditing] = useState<{ rowId: number; column: string }>();
+  // A row just added opens its first cell for editing (the grid opens it once).
+  const [openCell, setOpenCell] = useState<{ rowId: string; key: string }>();
   const [editNewRow, setEditNewRow] = useState<number>();
   const [renamingTable, setRenamingTable] = useState(false);
   const [renamingColumn, setRenamingColumn] = useState<string>();
@@ -213,7 +179,7 @@ export function DataTableView({ tableId }: { tableId: string }) {
   // A row just added opens its first cell for editing once its page is loaded.
   useEffect(() => {
     if (editNewRow === undefined || !page?.rows.some((r) => r.id === editNewRow)) return;
-    if (table?.columns[0]) setEditing({ rowId: editNewRow, column: table.columns[0].name });
+    if (table?.columns[0]) setOpenCell({ rowId: String(editNewRow), key: table.columns[0].name });
     setEditNewRow(undefined);
   }, [page, editNewRow, table]);
 
@@ -233,13 +199,6 @@ export function DataTableView({ tableId }: { tableId: string }) {
     } catch (e) {
       toast.error((e as Error).message);
     }
-  };
-
-  const commitCell = (row: DataTableRow, column: DataTableColumn, value: unknown, move?: 1 | -1) => {
-    const index = columns.findIndex((c) => c.name === column.name);
-    const next = move ? columns[index + move] : undefined;
-    setEditing(next ? { rowId: row.id, column: next.name } : undefined);
-    if (value !== undefined) void saveCell(row, column, value);
   };
 
   const addRow = async () => {
@@ -334,18 +293,15 @@ export function DataTableView({ tableId }: { tableId: string }) {
     }
   };
 
+  // The grid's sort is server-side: it asks, the page sorts through the query.
   const toggleSort = (column: string) =>
     setSort((current) => (current?.column !== column ? { column, direction: 'asc' } : current.direction === 'asc' ? { column, direction: 'desc' } : undefined));
 
-  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
-  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)));
-  const toggleRow = (id: number) =>
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const editCell = (rowId: string, key: string, value: unknown) => {
+    const row = rows.find((r) => String(r.id) === rowId);
+    const column = columns.find((c) => c.name === key);
+    if (row && column) void saveCell(row, column, column.type === 'string' && value === '' ? null : value);
+  };
 
   if (missing) {
     return (
@@ -366,27 +322,98 @@ export function DataTableView({ tableId }: { tableId: string }) {
 
   const sortIcon = (column: string) =>
     sort?.column === column ? sort.direction === 'asc' ? <ArrowUp className="size-3 shrink-0 text-t1" /> : <ArrowDown className="size-3 shrink-0 text-t1" /> : null;
-  const header = (name: string, label: string, type: ColumnType, extra?: string) => (
-    <th key={name} scope="col" className={cn('group border-b border-r border-hair bg-sf2 px-2.5 py-0 text-left font-semibold last:border-r-0', extra)}>
-      <button onClick={() => toggleSort(name)} className="flex h-9 w-full min-w-0 items-center gap-1.5 text-[12px] text-t2 hover:text-t1" title={`Sort by ${label}`}>
-        <TypeIcon type={type} className="size-3.5 shrink-0 text-t3" />
-        <span className="truncate">{label}</span>
-        {sortIcon(name)}
-      </button>
-    </th>
-  );
+
+  // The grid's columns: id, one per table column (with its menu in the header), and when it was updated.
+  const gridColumns: Array<GridColumn<DataTableRow>> = [
+    { key: 'id', label: 'id', type: 'number', sortable: true, width: 72, icon: <TypeIcon type="number" className="size-3.5 shrink-0 text-t3" />, align: 'left', className: 'font-mono text-[12px] text-t3', render: (row) => <span className="font-mono text-[12px] text-t3">{row.id}</span> },
+    ...columns.map((column): GridColumn<DataTableRow> => ({
+      key: column.name,
+      label: column.name,
+      type: column.type === 'string' ? 'text' : column.type,
+      editable: true,
+      format: (value) => formatCell(value as CellValue, column.type),
+      header:
+        renamingColumn === column.name ? (
+          <InlineRename value={column.name} onSave={(name) => void renameColumn(column.name, name)} onCancel={() => setRenamingColumn(undefined)} className="h-7 w-full font-mono text-[12px]" />
+        ) : (
+          <div className="flex items-center gap-1">
+            <button onClick={() => toggleSort(column.name)} className="flex h-9 min-w-0 flex-1 items-center gap-1.5 text-[12px] text-t2 hover:text-t1" title={`${TYPE_META[column.type].label} · sort by ${column.name}`}>
+              <TypeIcon type={column.type} className="size-3.5 shrink-0 text-t3" />
+              <span className="truncate">{column.name}</span>
+              {sortIcon(column.name)}
+            </button>
+            <Popover
+              trigger={({ toggle, open }) => (
+                <button onClick={toggle} aria-label={`${column.name} column menu`} className={cn('grid size-6 shrink-0 place-items-center rounded-md text-t3 transition hover:bg-acdim hover:text-t1', open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100')}>
+                  <Ellipsis className="size-3.5" />
+                </button>
+              )}
+            >
+              {(close) => (
+                <>
+                  <MenuItem
+                    onClick={() => {
+                      setSort({ column: column.name, direction: 'asc' });
+                      close();
+                    }}
+                  >
+                    <ArrowUp /> Sort ascending
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setSort({ column: column.name, direction: 'desc' });
+                      close();
+                    }}
+                  >
+                    <ArrowDown /> Sort descending
+                  </MenuItem>
+                  <MenuSeparator />
+                  <MenuItem
+                    onClick={() => {
+                      setRenamingColumn(column.name);
+                      close();
+                    }}
+                  >
+                    <Pencil /> Rename column
+                  </MenuItem>
+                  <MenuItem
+                    danger
+                    onClick={() => {
+                      setConfirm({ kind: 'column', name: column.name });
+                      close();
+                    }}
+                  >
+                    <Trash2 /> Delete column
+                  </MenuItem>
+                </>
+              )}
+            </Popover>
+          </div>
+        ),
+    })),
+    {
+      key: 'updatedAt',
+      label: 'Updated',
+      type: 'date',
+      sortable: true,
+      width: 150,
+      icon: <TypeIcon type="date" className="size-3.5 shrink-0 text-t3" />,
+      render: (row) => (
+        <span className="text-[12px] text-t3" title={row.updatedAt}>
+          {timeAgo(row.updatedAt)}
+        </span>
+      ),
+    },
+  ];
   const from = total ? offset + 1 : 0;
   const to = Math.min(offset + limit, total);
 
   return (
     <div className="flex min-h-screen flex-col">
       <PageHeader
+        back={{ href: '/data-tables', label: 'Data tables' }}
         title={
-          <span className="flex min-w-0 items-center gap-1.5">
-            <Link href="/data-tables" className="text-t3 transition-colors hover:text-t1">
-              Data tables
-            </Link>
-            <span className="text-t3">/</span>
+          <span className="flex min-w-0 items-center">
             {renamingTable && table ? (
               <InlineRename value={table.name} onSave={renameTable} onCancel={() => setRenamingTable(false)} className="h-7 w-64 text-[15px] font-semibold" />
             ) : (
@@ -400,12 +427,6 @@ export function DataTableView({ tableId }: { tableId: string }) {
         actions={
           <>
             <input ref={fileInput} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => e.target.files?.[0] && void importCsv(e.target.files[0])} />
-            <Button size="sm" onClick={() => fileInput.current?.click()} disabled={busy} title="Append rows from a CSV whose first line names the columns">
-              <Upload className="size-3.5" /> Import CSV
-            </Button>
-            <a href={`/api/data-tables/${tableId}/export`} download className="inline-flex h-7 items-center gap-1.5 rounded-full border border-bd px-[11px] text-[12px] font-semibold text-t1 transition-colors hover:border-ac hover:text-ac">
-              <Download className="size-3.5" /> Export CSV
-            </a>
             <Popover
               trigger={({ toggle }) => (
                 <Button size="icon-sm" variant="ghost" onClick={toggle} aria-label="More actions">
@@ -416,6 +437,15 @@ export function DataTableView({ tableId }: { tableId: string }) {
               {(close) => (
                 <>
                   <MenuItem
+                    disabled={!table}
+                    onClick={() => {
+                      close();
+                      if (table) askAbout(askDetail({ type: 'dataTable', id: tableId, name: table.name }));
+                    }}
+                  >
+                    <Sparkles /> Ask Spotlight
+                  </MenuItem>
+                  <MenuItem
                     onClick={() => {
                       setRenamingTable(true);
                       close();
@@ -423,6 +453,24 @@ export function DataTableView({ tableId }: { tableId: string }) {
                   >
                     <Pencil /> Rename table
                   </MenuItem>
+                  <MenuItem
+                    disabled={busy}
+                    onClick={() => {
+                      fileInput.current?.click();
+                      close();
+                    }}
+                  >
+                    <Upload /> Import CSV…
+                  </MenuItem>
+                  <a
+                    href={`/api/data-tables/${tableId}/export`}
+                    download
+                    onClick={close}
+                    role="menuitem"
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-t1 hover:bg-acdim [&_svg]:size-3.5"
+                  >
+                    <Download /> Export CSV
+                  </a>
                   <MenuSeparator />
                   <MenuItem
                     danger
@@ -463,156 +511,55 @@ export function DataTableView({ tableId }: { tableId: string }) {
               </Button>
             </div>
           )}
-          <div className="ml-auto flex items-center gap-2">
-            <AddColumn onAdd={addColumn} />
-            <Button size="sm" variant="primary" onClick={addRow} disabled={!table}>
-              <Plus className="size-3.5" /> Add row
-            </Button>
-          </div>
-        </div>
-
-        <div className="max-h-[calc(100vh-190px)] min-h-[220px] overflow-auto rounded-2xl border border-hair bg-sf">
-          <table className="w-full border-separate border-spacing-0 text-[13px]" style={{ minWidth: 120 + columns.length * 180 + 150 }}>
-            <thead className="sticky top-0 z-10">
-              <tr>
-                <th scope="col" className="w-10 border-b border-r border-hair bg-sf2 px-2.5">
-                  <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all rows on this page" className="size-3.5 accent-[var(--ac2)]" />
-                </th>
-                {header('id', 'id', 'number', 'w-[72px]')}
-                {columns.map((column) =>
-                  renamingColumn === column.name ? (
-                    <th key={column.name} className="border-b border-r border-hair bg-sf2 px-1.5">
-                      <InlineRename value={column.name} onSave={(name) => void renameColumn(column.name, name)} onCancel={() => setRenamingColumn(undefined)} className="h-7 w-full font-mono text-[12px]" />
-                    </th>
-                  ) : (
-                    <th key={column.name} scope="col" className="group border-b border-r border-hair bg-sf2 px-2.5 py-0 text-left font-semibold">
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => toggleSort(column.name)} className="flex h-9 min-w-0 flex-1 items-center gap-1.5 text-[12px] text-t2 hover:text-t1" title={`${TYPE_META[column.type].label} · sort by ${column.name}`}>
-                          <TypeIcon type={column.type} className="size-3.5 shrink-0 text-t3" />
-                          <span className="truncate">{column.name}</span>
-                          {sortIcon(column.name)}
-                        </button>
-                        <Popover
-                          trigger={({ toggle, open }) => (
-                            <button onClick={toggle} aria-label={`${column.name} column menu`} className={cn('grid size-6 shrink-0 place-items-center rounded-md text-t3 transition hover:bg-acdim hover:text-t1', open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100')}>
-                              <Ellipsis className="size-3.5" />
-                            </button>
-                          )}
-                        >
-                          {(close) => (
-                            <>
-                              <MenuItem
-                                onClick={() => {
-                                  setSort({ column: column.name, direction: 'asc' });
-                                  close();
-                                }}
-                              >
-                                <ArrowUp /> Sort ascending
-                              </MenuItem>
-                              <MenuItem
-                                onClick={() => {
-                                  setSort({ column: column.name, direction: 'desc' });
-                                  close();
-                                }}
-                              >
-                                <ArrowDown /> Sort descending
-                              </MenuItem>
-                              <MenuSeparator />
-                              <MenuItem
-                                onClick={() => {
-                                  setRenamingColumn(column.name);
-                                  close();
-                                }}
-                              >
-                                <Pencil /> Rename column
-                              </MenuItem>
-                              <MenuItem
-                                danger
-                                onClick={() => {
-                                  setConfirm({ kind: 'column', name: column.name });
-                                  close();
-                                }}
-                              >
-                                <Trash2 /> Delete column
-                              </MenuItem>
-                            </>
-                          )}
-                        </Popover>
-                      </div>
-                    </th>
-                  ),
-                )}
-                {header('updatedAt', 'Updated', 'date', 'w-[150px]')}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className={cn('group/row', selected.has(row.id) ? 'bg-acdim' : 'hover:bg-sf2')}>
-                  <td className="border-b border-r border-hair px-2.5">
-                    <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggleRow(row.id)} aria-label={`Select row ${row.id}`} className="size-3.5 accent-[var(--ac2)]" />
-                  </td>
-                  <td className="border-b border-r border-hair px-2.5 font-mono text-[12px] text-t3">{row.id}</td>
-                  {columns.map((column) => {
-                    const value = row[column.name];
-                    const isEditing = editing?.rowId === row.id && editing.column === column.name;
-                    if (column.type === 'boolean') {
-                      return (
-                        <td key={column.name} className="h-9 border-b border-r border-hair px-2.5">
-                          <input
-                            type="checkbox"
-                            checked={value === true}
-                            ref={(el) => {
-                              if (el) el.indeterminate = value === null || value === undefined;
-                            }}
-                            onChange={() => void saveCell(row, column, value !== true)}
-                            aria-label={`${column.name} of row ${row.id}`}
-                            title={value === null || value === undefined ? 'Empty — click to set' : String(value)}
-                            className="size-3.5 accent-[var(--ac2)]"
-                          />
-                        </td>
-                      );
-                    }
-                    return (
-                      <td key={column.name} className={cn('h-9 max-w-0 border-b border-r border-hair', isEditing ? 'px-0.5' : 'cursor-text px-2.5')} onClick={() => !isEditing && setEditing({ rowId: row.id, column: column.name })}>
-                        {isEditing ? (
-                          <CellEditor column={column} value={value} onCommit={(next, move) => commitCell(row, column, next, move)} onCancel={() => setEditing(undefined)} />
-                        ) : (
-                          <div className={cn('truncate', column.type === 'number' && 'text-right font-mono text-[12px]', column.type === 'date' && 'tabular-nums')} title={value === null || value === undefined ? undefined : String(value)}>
-                            {formatCell(value, column.type) || <span className="text-t3 opacity-0 group-hover/row:opacity-60">empty</span>}
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                  <td className="border-b border-hair px-2.5 text-[12px] text-t3" title={row.updatedAt}>
-                    {timeAgo(row.updatedAt)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {page && !rows.length && (
-            <EmptyState
-              compact
-              className="py-12"
-              title={query ? 'No row matches your search' : columns.length ? 'No rows yet' : 'Add a column to start'}
-              hint={
-                query
-                  ? 'Search looks at the id and every column.'
-                  : columns.length
-                    ? 'Add a row here, import a CSV, or let a workflow insert rows with the Data Table node.'
-                    : 'Columns have a name and a type: string, number, boolean or date.'
-              }
-              action={
-                !query && columns.length ? (
-                  <Button size="sm" variant="primary" onClick={addRow}>
-                    <Plus className="size-3.5" /> Add row
-                  </Button>
-                ) : undefined
-              }
-            />
+          {/* The empty grid carries its own Add row, so the toolbar's copy hides until there are rows. */}
+          {showHeaderAction(Boolean(page && !rows.length && !query && columns.length)) && (
+            <div className="ml-auto flex items-center gap-2">
+              <Button size="sm" variant="primary" onClick={addRow} disabled={!table}>
+                <Plus className="size-3.5" /> Add row
+              </Button>
+            </div>
           )}
         </div>
+
+        <DataGrid<DataTableRow>
+          label="Rows"
+          columns={gridColumns}
+          rows={rows}
+          className="max-h-[calc(100vh-190px)] min-h-[220px]"
+          minWidth={120 + columns.length * 180 + 150 + 44}
+          selectable
+          selected={[...selected].map(String)}
+          onSelect={(ids) => setSelected(new Set(ids.map(Number)))}
+          sort={sort && { key: sort.column, dir: sort.direction }}
+          onSort={(next) => setSort(next && { column: next.key, direction: next.dir })}
+          onEdit={editCell}
+          openCell={openCell}
+          rowActions={() => null}
+          trailingHeader={<AddColumn onAdd={addColumn} />}
+          empty={
+            page && (
+              <EmptyState
+                compact
+                className="py-12"
+                title={query ? 'No row matches your search' : columns.length ? 'No rows yet' : 'Add a column to start'}
+                hint={
+                  query
+                    ? 'Search looks at the id and every column.'
+                    : columns.length
+                      ? 'Add a row here, import a CSV, or let a workflow insert rows with the Data Table node.'
+                      : 'Columns have a name and a type: string, number, boolean or date.'
+                }
+                action={
+                  !query && columns.length ? (
+                    <Button size="sm" onClick={addRow}>
+                      <Plus className="size-3.5" /> Add row
+                    </Button>
+                  ) : undefined
+                }
+              />
+            )
+          }
+        />
 
         <div className="flex flex-wrap items-center gap-3 text-[12px] text-t2">
           <span className="tabular-nums">

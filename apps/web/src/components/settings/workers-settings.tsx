@@ -11,7 +11,9 @@ import { timeAgo } from '@/lib/client/format';
 import type { ClusterInstance, ClusterStatus } from '@/lib/shared/cluster';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
+import { HelpTip } from '@/components/ui/help-tip';
 import { SectionLabel } from '@/components/ui/inputs';
+import { StatusRow } from './status-rows';
 
 const REFRESH_MS = 5_000;
 
@@ -67,7 +69,7 @@ export function WorkersSettings() {
   useEffect(() => {
     let alive = true;
     const load = () =>
-      api<ClusterStatus>('/api/settings/workers')
+      api<ClusterStatus>('/api/settings/workers', { background: true })
         .then((next) => {
           if (!alive) return;
           setStatus(next);
@@ -84,7 +86,7 @@ export function WorkersSettings() {
 
   if (!status) {
     return error ? (
-      <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>
+      <div role="alert" className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>
     ) : (
       <div className="h-36 rounded-2xl border border-hair bg-sf animate-pulse-soft" />
     );
@@ -92,18 +94,12 @@ export function WorkersSettings() {
 
   if (status.mode === 'regular') {
     return (
-      <Card className="px-5 py-4">
-        <div className="mb-3 flex items-center gap-2">
-          <Server className="size-4 text-t3" strokeWidth={1.8} />
-          <SectionLabel>Regular mode</SectionLabel>
-        </div>
-        <p className="text-[13px] leading-relaxed text-t2">
-          Every execution runs in this process ({status.database === 'postgres' ? 'Postgres' : 'SQLite'}). To spread production runs over worker processes and run
-          several mains with failover, start every process with <span className="font-mono text-[12px] text-t1">LANDFLOW_EXECUTIONS_MODE=queue</span>,{' '}
-          <span className="font-mono text-[12px] text-t1">LANDFLOW_VALKEY_URL</span> and Postgres, then start workers with{' '}
-          <span className="font-mono text-[12px] text-t1">pnpm worker</span>.
+      <StatusRow config={{ label: 'Queue mode', configured: false, off: `off, every run is in this process (${status.database === 'postgres' ? 'Postgres' : 'SQLite'})` }}>
+        <p>
+          To spread production runs over worker processes and run several mains with failover, start every process with <span className="font-mono text-[12px] text-t1">LANDFLOW_EXECUTIONS_MODE=queue</span>,{' '}
+          <span className="font-mono text-[12px] text-t1">LANDFLOW_VALKEY_URL</span> and Postgres, then start workers with <span className="font-mono text-[12px] text-t1">pnpm worker</span>.
         </p>
-      </Card>
+      </StatusRow>
     );
   }
 
@@ -130,14 +126,21 @@ export function WorkersSettings() {
         <p className="mt-3 text-[12px] leading-relaxed text-t3">
           {leader ? (
             <>
-              <span className="font-mono text-t2">{leader}</span> leads (fencing token {status.leader?.token}): it runs schedules, polls, IMAP IDLE, timers and
-              retention. Another main takes over within about {Math.round((status.settings?.leaderTtlSeconds ?? 10) * 1.4)} s if it stops.
+              <span className="font-mono text-t2">{leader}</span> leads.
             </>
           ) : (
             'No main leads right now: schedules and timers wait until one takes over.'
-          )}{' '}
-          Editor runs {status.settings?.offloadManual ? 'go to the workers too' : 'run in the main that started them'}; a worker that stops is replaced after{' '}
-          {status.settings?.stalledSeconds ?? 30} s and its runs continue from their last checkpoint.
+          )}
+          <HelpTip label="How leading and failover work" className="ml-1 align-middle">
+            {leader && (
+              <>
+                The leader (fencing token {status.leader?.token}) runs schedules, polls, IMAP IDLE, timers and retention. Another main takes over within about{' '}
+                {Math.round((status.settings?.leaderTtlSeconds ?? 10) * 1.4)} s if it stops.{' '}
+              </>
+            )}
+            Editor runs {status.settings?.offloadManual ? 'go to the workers too' : 'run in the main that started them'}; a worker that stops is replaced after {status.settings?.stalledSeconds ?? 30} s and its runs continue
+            from their last checkpoint.
+          </HelpTip>
         </p>
       </Card>
 
@@ -169,7 +172,10 @@ export function WorkersSettings() {
         )}
         {!workers.length && (
           <p className="mt-3 rounded-[10px] border border-warnbd bg-warndim px-3 py-2 text-[12px] text-warn">
-            No worker is running: production runs wait in the queue. Start one with <span className="font-mono">pnpm worker</span>.
+            No worker is running: production runs wait in the queue.
+            <HelpTip label="How to start a worker" text="How to start one ›" className="ml-1 align-middle">
+              Run <span className="font-mono">pnpm worker</span>.
+            </HelpTip>
           </p>
         )}
       </Card>

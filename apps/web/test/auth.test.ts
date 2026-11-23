@@ -7,7 +7,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'landflow-auth-'));
@@ -26,6 +26,8 @@ const { guardRequest } = await import('@/lib/server/auth/guard');
 const { isPublicPath, safeNext } = await import('@/lib/shared/auth-paths');
 const { can, canManageUser, hasScope } = await import('@/lib/shared/auth');
 const { proxy } = await import('@/proxy');
+const { queryEvents } = await import('@/lib/server/audit/store');
+const { hostMetrics } = await import('@/lib/server/telemetry/metrics');
 
 const statusRoute = await import('@/app/api/auth/status/route');
 const setupRoute = await import('@/app/api/auth/setup/route');
@@ -167,6 +169,24 @@ describe('sign-in, sessions and sign-out', () => {
     expect(me.body).toMatchObject({ user: { id: ownerId, role: 'owner' }, via: 'session' });
   });
 
+  it('counts each failed sign-in once (landflow.auth.sign_in_failures), and nothing for a good one or the other forms', async () => {
+    // The counter is inferred from hits on the `email` limiter, so only the login route may hit it, once per failure.
+    const counted = vi.spyOn(hostMetrics().signInFailures, 'add');
+    try {
+      expect((await call(loginRoute.POST, '/api/auth/login', { body: { email: 'olive@example.com', password: 'nope-nope-2' } })).status).toBe(401);
+      expect(counted).toHaveBeenCalledTimes(1);
+      expect((await call(loginRoute.POST, '/api/auth/login', { body: { email: 'nobody-2@example.com', password: 'whatever1' } })).status).toBe(401);
+      expect(counted).toHaveBeenCalledTimes(2);
+      await signIn(OWNER.email, OWNER.password);
+      await call(forgotRoute.POST, '/api/auth/password/forgot', { body: { email: OWNER.email } });
+      await call(resetRoute.POST, '/api/auth/password/reset', { body: { token: 'not-a-token', password: 'another-password-1' } });
+      await call(setupRoute.POST, '/api/auth/setup', { body: { ...OWNER, email: 'third@example.com' } });
+      expect(counted).toHaveBeenCalledTimes(2);
+    } finally {
+      counted.mockRestore();
+    }
+  });
+
   it('marks the cookie Secure behind https', async () => {
     const result = await call(loginRoute.POST, '/api/auth/login', { body: { email: OWNER.email, password: OWNER.password }, headers: { 'x-forwarded-proto': 'https' } });
     expect(sessionCookie(result.response)!.attributes).toContain('secure');
@@ -212,6 +232,9 @@ describe('sign-in, sessions and sign-out', () => {
     expect((await call(loginRoute.POST, '/api/auth/login', { body: { email: OWNER.email, password: OWNER.password } })).status).toBe(401);
     await signIn(OWNER.email, 'new-owner-password');
     await call(meRoute.PATCH, '/api/auth/me', { method: 'PATCH', session: token, body: { name: 'Olive Owner', currentPassword: 'new-owner-password', newPassword: OWNER.password } });
+    // A password change ends the user's other sessions (session-hardening.test.ts), so the shared owner session needs a new one.
+    expect((await call(meRoute.GET, '/api/auth/me', { session: ownerSession })).status).toBe(401);
+    ownerSession = await signIn(OWNER.email, OWNER.password);
   });
 });
 
@@ -332,14 +355,39 @@ describe('password resets', () => {
 
     const old = await signIn('mia@example.com', 'mia-password');
     expect((await call(resetRoute.GET, `/api/auth/password/reset?token=${token}`)).body).toMatchObject({ email: 'mia@example.com', name: 'Mia' });
-    const reset = await call(resetRoute.POST, '/api/auth/password/reset', { body: { token, password: 'mia-new-password' } });
+    // Opened in a browser that is still signed in: a reset, not also a password change.
+    const changes = queryEvents({ action: ['auth.password_change'] }).events.length;
+    const reset = await call(resetRoute.POST, '/api/auth/password/reset', { body: { token, password: 'mia-new-password' }, session: old });
     expect(reset.status).toBe(200);
+    expect(queryEvents({ action: ['auth.password_change'] }).events).toHaveLength(changes);
+    expect(queryEvents({ action: ['auth.password_reset'] }, { limit: 1 }).events[0]).toMatchObject({ target: { type: 'user', name: 'mia@example.com' } });
     expect(sessionCookie(reset.response)?.token).toBeTruthy();
     // Other sessions end; the old password stops working; the link works once.
     expect((await call(meRoute.GET, '/api/auth/me', { session: old })).status).toBe(401);
     expect((await call(loginRoute.POST, '/api/auth/login', { body: { email: 'mia@example.com', password: 'mia-password' } })).status).toBe(401);
     await signIn('mia@example.com', 'mia-new-password');
     expect((await call(resetRoute.POST, '/api/auth/password/reset', { body: { token, password: 'third-password' } })).status).toBe(404);
+  });
+
+  it('production without LANDFLOW_PUBLIC_URL: the same 503 for known and unknown emails, and no token or invite made', async () => {
+    setMailTransport({ send: async (message) => void sent.push(message) });
+    const sentBefore = sent.length;
+    const invitesBefore = auth.listInvites().length;
+    process.env.LANDFLOW_PROFILE = 'production';
+    try {
+      const known = await call(forgotRoute.POST, '/api/auth/password/forgot', { body: { email: 'mia@example.com' } });
+      const unknown = await call(forgotRoute.POST, '/api/auth/password/forgot', { body: { email: 'ghost@example.com' } });
+      expect(known.status).toBe(503);
+      expect(unknown.status).toBe(503);
+      expect(known.body).toEqual(unknown.body);
+      const invited = await call(invitesRoute.POST, '/api/users/invites', { body: { email: 'nobody-yet@example.com' }, session: ownerSession });
+      expect(invited.status).toBe(503);
+      expect(invited.body.error).toContain('LANDFLOW_PUBLIC_URL');
+    } finally {
+      delete process.env.LANDFLOW_PROFILE;
+    }
+    expect(sent).toHaveLength(sentBefore);
+    expect(auth.listInvites()).toHaveLength(invitesBefore);
   });
 
   it('admins make reset links for others (a link to copy without SMTP)', async () => {

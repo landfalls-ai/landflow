@@ -23,6 +23,8 @@ import { traceToolCall } from '../telemetry';
 import { resolveCall } from '../notebook/binding';
 import { callNotebookTool, sawOutside } from '../notebook/tools';
 import { deployedConfig, kagentTools } from './deploy';
+import { isPracticeTool, practiceToolCall, practiceToolSpecs } from './practice-tools';
+import { isMemoryTool, memoryToolCall } from './memory-tools';
 
 export async function handleAgentMcpRequest(request: Request, agentId: string): Promise<Response> {
   const agent = agentStore.get(agentId);
@@ -50,15 +52,43 @@ function agentMcpServer(agent: Agent, config: AgentConfig, version: number, sign
     (listed ??= kagentTools(agent, config)).then((set) => (part ? set.tools.filter((tool) => tool.requireApproval === (part === 'approval')) : set.tools));
   // Raw JSON schemas, so the low-level handlers rather than registerTool (which takes zod).
   server.server.setRequestHandler('tools/list', async () => ({
-    tools: (await tools()).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: { ...tool.inputSchema, type: 'object' as const } })),
+    tools: [
+      ...(await tools()).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: { ...tool.inputSchema, type: 'object' as const } })),
+      // PR07: the two practice tools, listed whatever the run; they never pause, so not on the approval part.
+      ...(part === 'approval' ? [] : practiceToolSpecs.map((spec) => ({ ...spec, inputSchema: { ...spec.inputSchema } }))),
+    ],
   }));
   server.server.setRequestHandler('tools/call', async (request) => {
+    if (isPracticeTool(request.params.name) && part !== 'approval') {
+      const named = request.params.name;
+      const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+      let failed: boolean | undefined;
+      const outcome = await traceToolCall({ agentId: agent.id, agentName: agent.name, tool: named, callId: `kagent_${nanoid(10)}`, kind: 'practice' }, async () => {
+        const answer = practiceToolCall(agent, named, args);
+        failed = answer.isError;
+        return { output: answer.text };
+      });
+      return textResult(outcome.output, failed);
+    }
     const tool = (await tools()).find((t) => t.name === request.params.name);
     if (!tool) return textResult(`The agent “${config.name}” has no tool ${request.params.name}`, true);
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
     if (tool.kind === 'notebook') return notebookCall(agent, tool.name, args);
+    if (tool.kind === 'memory' && isMemoryTool(tool.name)) {
+      // C09: the signed key names the person; the call is a span like any tool (ids and counts only, never the key or the text).
+      let failed: boolean | undefined;
+      const outcome = await traceToolCall({ agentId: agent.id, agentName: config.name, tool: tool.name, callId: `kagent_${nanoid(10)}`, kind: 'memory' }, async () => {
+        const answer = await memoryToolCall(agent.id, tool.name, args);
+        failed = answer.isError;
+        return { output: answer.text };
+      });
+      return textResult(outcome.output, failed);
+    }
     const ctx = toolContext(agent, config, version, signal);
     try {
+      // A tool set up as a read whose call is not one: this path cannot pause for a person, so it is refused (agents/runtime.ts holds it).
+      const held = tool.requireApproval ? undefined : await tool.holdReason?.(args, ctx).catch(() => 'The call’s parameters could not be checked.');
+      if (held) return textResult(`${held} kagent cannot pause this call`, true);
       const outcome = await traceToolCall({ agentId: agent.id, agentName: config.name, tool: tool.name, callId: `kagent_${nanoid(10)}`, kind: tool.kind }, () =>
         tool.invoke((request.params.arguments ?? {}) as Record<string, unknown>, ctx),
       );

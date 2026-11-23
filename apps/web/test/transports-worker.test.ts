@@ -187,9 +187,17 @@ describe('a queue-mode worker on brokers', () => {
     await until(() => expect(summary()).toBeUndefined());
   });
 
-  it('keeps the MCP gateway sync out of the worker (mains only)', () => {
+  it('keeps the MCP gateway sync out of the worker (mains only)', async () => {
     const source = readFileSync(join(__dirname, '../src/lib/server/cluster/worker-main.ts'), 'utf8');
     expect(source).not.toMatch(/gateway-sync|McpGatewaySync|startGatewaySync/i);
-    expect(source).toMatch(/brokerConnections\.start\(registry\)/);
+    // worker-main.ts starts the worker role of the service table in runtime.ts (one runtime for main and worker).
+    expect(source).toMatch(/startRuntime\(\{ role: 'worker' \}\)/);
+    const { servicesFor } = await import('@/lib/server/runtime');
+    const worker = servicesFor('worker').map((spec) => spec.name);
+    expect(worker).not.toContain('mcp gateway sync');
+    expect(servicesFor('main').map((spec) => spec.name)).toContain('mcp gateway sync');
+    expect(worker).toContain('broker connections');
+    const runtimeSource = readFileSync(join(__dirname, '../src/lib/server/runtime.ts'), 'utf8');
+    expect(runtimeSource).toMatch(/brokerConnections\.start\(registry\)/);
   });
 });

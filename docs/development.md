@@ -12,14 +12,14 @@ infra stack and the images.
 pnpm install
 (cd plugins/py-insights && ./setup.sh)        # .venv with the Python SDK, gRPC, MCP and broker extras
 (cd plugins/productivity && ./setup.sh)       # the same for the Python integrations
-pnpm dev:all                                  # host on :3000 + the seven plugins (7101–7107 HTTP, 7201–7207 gRPC)
+pnpm dev:all                                  # host on :3000 + ten plugins (7101–7107 and 7116–7118 HTTP, 7201–7207 and 7216–7218 gRPC)
 pnpm dev:all:browser                          # the same plus the Browser plugin (7112 / 7212; needs agent-browser and Chrome on the Mac)
 pnpm dev:all:agent-shell                      # the same plus the Agent Shell plugin (7114 / 7214)
 pnpm dev:all:web-search                       # the same plus the Web Search plugin (7113 / 7213; needs a SearXNG URL or an API key credential)
 docker compose -f deploy/compose.infra.yml up -d --wait   # Postgres, Valkey, Mailpit, MinIO, OpenBao (optional)
 ```
 
-`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|browser|web-search|agent-shell|desktop|ai-sdk|sap` runs one plugin (`sap` on 7116 / 7216; `desktop` on 7117 / 7217, needs the sandbox image from `services/desktop-sandbox` and Docker; `web-search` on 7113 / 7213, `agent-shell` on 7114 / 7214, `ai-sdk` on 7115 / 7215; the last two are opt-in and not in `dev:all`), and
+`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|linear|attio|fathom|clickland|landledger|landfall|triage|threat-intel|browser|deck|web-search|agent-shell|desktop|ai-sdk|sap` runs one plugin (`sap` on 7123 / 7223; `desktop` on 7124 / 7224, needs the sandbox image from `services/desktop-sandbox` and Docker; `deck` on 7122 / 7222, run inside a deck pane; `web-search` on 7113 / 7213, `agent-shell` on 7114 / 7214, `ai-sdk` on 7115 / 7215; these three, `deck`, `github`, `clickland`, `landledger` and the Landfall, triage and threat-intel plugins are not in `dev:all`; see ports in [platform/kubernetes.md](platform/kubernetes.md)), and
 `pnpm worker` runs a queue-mode worker. The host keeps its data in `apps/web/.data` (SQLite, `credentials.json`,
 `encryption.key`). Don't edit those files by hand: use the UI, the API or the [CLI](features/cli.md).
 [deployment.md, "Using the infra from the dev server on the host"](deployment.md#using-the-infra-from-the-dev-server-on-the-host)
@@ -58,10 +58,43 @@ filesystem access causes tracing of the whole project".
 
 ## Conventions
 
-- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order; the highest so far is 1882. One SQL text runs
-  on SQLite and Postgres (TEXT, BIGINT, DOUBLE PRECISION, JSON in TEXT, `ON CONFLICT` upserts); set `postgres` only when
-  the dialects must differ. Never edit a shipped migration: add one. A column that a shipped `CREATE TABLE` gained
-  later goes in `addColumns`. A new table also goes in `TABLES` (its primary key) in the same file.
+- **Migrations** live in `apps/web/src/lib/server/db/schema.ts`, in order. A new one goes at the end with a version
+  above the current highest (the last entry of `MIGRATIONS`). A migration numbered below one a database already has
+  still runs there, but after the higher ones, while a fresh database runs it before them, so the order differs
+  between databases and their schemas can diverge (`apps/web/test/migrations-order.test.ts` fails on one; only 1200
+  and 1300, which shipped out of order, are grandfathered). One SQL text runs on SQLite and Postgres (TEXT, BIGINT,
+  DOUBLE PRECISION, JSON in TEXT, `ON CONFLICT` upserts); set `postgres` only when the dialects must differ. Never
+  edit a shipped migration: add one. A column that a shipped `CREATE TABLE` gained later goes in `addColumns`. A new
+  table also goes in `TABLES` (its primary key) in the same file.
+- **Environment variables** go in the catalog first: add an entry to `CONFIG_CATALOG` in
+  `apps/web/src/lib/server/config/catalog.ts` (default and description as the page shows them, group, `secret`,
+  `profile`, `readBy`, `aliases`), read it with `envFlag` / `envNumber` / `envInt` / `envString` / `envUrl` (`envWithAliases` for a renamed one) from
+  `lib/server/config`, and run `pnpm --filter @landflow/web gen:config-docs` to regenerate
+  [reference/configuration.md](reference/configuration.md). `test/config-catalog.test.ts` fails on a name the source
+  reads that is not catalogued, on a stale page, and when more files read `process.env` directly than
+  `MAX_FILES_READING_PROCESS_ENV` allows (86; lower it when a reader moves into config, never raise it).
+- **Errors**: a route (or the store below it) throws an `HttpError` (`lib/server/errors.ts`: `(message, status = 400,
+  { code?, details?, cause?, expose? })`) and does not catch it to build a response: `handler()` answers it as
+  `{ error, code, …details }`. Give a domain error its own class (`class OutOfStockError extends HttpError`, same
+  `(message, status)` order as the older classes) instead of a `try`/`catch` per route, and name it with a literal on
+  the first line of its body: `static readonly errorName: string = 'OutOfStockError';`. `code` (`out_of_stock_error`)
+  and `name` come from it, because `next build` minifies class names (from `new.target.name` the image would answer
+  `code: "v"`); `test/error-mapping.test.ts` fails a subclass without one. Anything that is not an
+  `HttpError` or a `ZodError` becomes a generic 500 with the request id, so write user-facing failures as `HttpError`s
+  with a 4xx, 502 or 503 status (`expose: true` for a 5xx whose text may reach the client). Every domain error with a
+  status (`VariableError`, `PublishError`, `ProjectError`, `CredentialError`, `SourceControlError`, `TemplateError`, …)
+  now extends `HttpError`, so do not `catch` one in a route only to answer `error(caught.message, caught.status)`: let it
+  propagate, and carry extra response fields in `details` (`FolderNotEmptyError`, `TemplateError`, `CompositeError`,
+  `RunSkippedError`). Keep a `catch` only when it does something else (an audit row, cleanup, a different status or a
+  page instead of JSON). A class with no status (an internal error) stays a plain `Error`: it becomes the generic 500.
+  `test/error-mapping.test.ts` checks both. `mapError` and `formatError` remain for `scimRoute`.
+- **Access rules**: `test/policy-coverage.test.ts` walks every `route.ts` and fails for a mutating route that is not
+  public, not named by `routePolicy()` (the table marks its default with `fallback: true`) or a resource rule, and has
+  no check of its own in the handler (`requireUser`, `routeActor`, `can(`, `projectRoute`, …). Add the policy line; an
+  `ALLOWED` entry in that test needs a one-line reason.
+- **The database** caches prepared statements by SQL text in a bounded LRU: `LANDFLOW_DB_STATEMENT_CACHE` (default 500)
+  caps it, because `IN (?, ?, …)` lists of every length are different texts. List paths read access with one query per
+  kind (`allShares(kind)`, the memberships) and not one per item; keep the single-item functions for single resources.
 - **Routes** wrap their body in `handler()` and answer with `json()` or `error()` from `lib/server/http.ts`, and
   validate bodies with `parseBody()` and a zod schema (shared ones are in `lib/server/schemas.ts`). Who may call a route
   is decided once in `lib/server/auth/policy.ts`, before the handler runs: add a line there for anything that isn't a
@@ -75,8 +108,8 @@ filesystem access causes tracing of the whole project".
   code.
 - **Docs move with the code.** A change to a feature updates its page under [features/](README.md#feature-map) (or
   [reference/](reference/api.md) for routes and environment variables), [limitations.md](limitations.md) when it adds
-  or removes a limit, and [roadmap.md](roadmap.md) when it closes or opens an item. Each commit gets a row in
-  [history.md](history.md).
+  or removes a limit, and [roadmap.md](roadmap.md) when it closes or opens an item. Each change records its history rows in a fragment ([History fragments](#history-fragments)); never edit
+  [history.md](history.md) on a package branch.
 - **Local only.** Everything runs on this machine: the OrbStack Docker engine and its Kubernetes cluster (context
   `orbstack`, namespace `landflow-dev`). Never deploy to or push images to a cloud account. Build with
   `COMPOSE_BAKE=false` (the default buildx builder belongs to another project) and build cluster images with
@@ -84,14 +117,83 @@ filesystem access causes tracing of the whole project".
   `http://127.0.0.1:54566` with dummy keys and `AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null`, so
   `~/.aws` is never read. Use only the development credentials in `deploy/.env.example`.
 
+## History fragments
+
+Every change records its [history.md](history.md) rows in a fragment, so parallel branches never conflict on that page.
+Never edit `docs/history.md` on a package branch.
+
+- **File**: `docs/history.d/<yyyy-mm-dd>-<slug>.md`; the slug is lowercase letters, digits and dashes, up to 60
+  characters. `docs/history.d/README.md` is the one other file allowed; it is never assembled.
+- **Content**: an optional first line `section: <heading text>` (no `## `) names the date section the rows go under
+  (default: the last `## ` section of `history.md` at the time it is assembled); then one or more rows
+  `| (this change) | <what changed, in plain words> | [page](link) |`. Exactly three columns (the third may be empty);
+  write a `|` inside text as `\|`. Blank lines are ignored; nothing else is allowed.
+- **Links** are paths relative to `docs/` (`reference/api.md#anchor`, or `<../reports/A B.md>` for spaces); the file
+  must exist, anchors are not checked, `http(s)://` URLs are not checked.
+- `pnpm check:history` fails (exit 1, `docs/history.d/<file>:<line>: <problem>`) on a bad name or first line, a row
+  without three columns, a missing link target, or a row that `history.md` already has (delete that fragment). With no
+  fragments it passes. `pnpm check` runs it, and `pnpm test:scripts` (the script's tests).
+- `pnpm history:assemble` appends every fragment's rows to `history.md` under its section (creating `## <section>` with
+  the table header when it is missing), in file-name order, then deletes the fragments. The integrator runs it once per
+  wave, after the last merge and before the gate; outside a wave, the branch's author runs it as the last commit
+  before merging. Running it again changes nothing. It leaves every other row as it is,
+  so a row added to `history.md` directly (an old branch, a hotfix) stays.
+
+## Working with Claude Code: constitution, agents, feature skill
+
+Claude Code works on this repository with three things checked in beside the code:
+
+- **The constitution**, [constitution.md](constitution.md): the rules every research and implementation starts from.
+  `CLAUDE.md` imports it (`@docs/constitution.md`), so every session reads it. Every rule describes code that exists
+  (the backend refactor's conventions have all landed); change the page when a convention changes.
+- **Agents** in `.claude/agents/`: subagents that know this repository: its paths, helpers, pitfalls and the order of
+  work. Claude Code picks one by its description, or you name it ("use landflow-security-reviewer on this branch").
+  Reviewers and the researcher are read-only. None of them starts sub-agents of its own.
+- **The feature skill**, `.claude/skills/landflow-feature/SKILL.md`: the pipeline a feature follows, with the exact
+  commands (worktree, install, gate, secret scan). Ask for it by name (`/landflow-feature`) or let Claude Code load it
+  for any new feature or multi-step change.
+
+| Agent | Model | Tools | Use it for |
+|---|---|---|---|
+| `landflow-researcher` | sonnet | read-only | how an area works today and what to reuse, with file:line |
+| `landflow-planner` | opus | read-only | a plan of packages with disjoint files, tests, docs and acceptance criteria |
+| `landflow-implementer` | sonnet | all | one package in its own worktree from `origin/main` |
+| `landflow-security-reviewer` | fable | read-only | access and project scoping, audit, secrets, outbound calls, sandboxing, input limits |
+| `landflow-code-reviewer` | fable | read-only | correctness, regressions, conventions, tests and docs against the brief |
+| `landflow-test-engineer` | sonnet | all | tests in this repository's style and the regression gate |
+| `landflow-integrator` | sonnet | all | merging a wave's branches, shared-doc conflicts, the full gate |
+| `landflow-data-engineer` | sonnet | all | migrations, the store, Postgres mode, paging, retention |
+| `landflow-observability-engineer` | sonnet | all | logs, spans, metrics, health, alerts |
+| `landflow-ui-engineer` | sonnet | all | pages and components to [ui-review.md](ui-review.md) and [mobile.md](mobile.md), checked at desktop and phone |
+| `landflow-ai-assistant-engineer` | sonnet | all | Spotlight, agents, teams, A2A and kagent, the notebook, the brain, Run Trace |
+| `landflow-plugin-engineer` | sonnet | all | plugins, the protocol, the three SDKs, transports |
+| `landflow-docs-writer` | sonnet | all | feature pages, reference, limitations, roadmap, history rows |
+| `landflow-local-ops` | sonnet | all | the infra stack, the OrbStack cluster, kagent's kind cluster, the scratch host |
+
+**The `landflow-dev` plugin.** Seven more skills (`landflow-platform-overview`, `landflow-server-change`,
+`landflow-agents`, `landflow-kubernetes`, `landflow-plugin-typescript`, `landflow-plugin-python`, `landflow-plugin-go`)
+and two agents (`landflow-platform-guide`, `landflow-plugin-builder`) live in
+[`claude-plugins/landflow-dev/`](../claude-plugins/landflow-dev/README.md), a Claude Code plugin that is also listed in
+`.claude-plugin/marketplace.json`. The plugin is the source: the same files are copied into `.claude/skills/` and
+`.claude/agents/` so this repository loads them with no install. To change one, edit the plugin copy, run
+`node scripts/sync-claude-plugin.mjs --write`, and commit both. `pnpm check:claude-plugin` (part of `pnpm check`) runs
+the script with `--check` and fails when a copy differs or is missing. The script touches only files the plugin has: the
+contributor agents above and `landflow-feature` are not part of it. Check the plugin with
+`claude plugin validate claude-plugins/landflow-dev` and the marketplace with `claude plugin validate .`.
+
+The models follow one rule: planning on the strongest planner, implementation on a cheaper model, reviews on fable,
+with at most two fable agents running at once. To change an agent, edit its file; keep its paths true to the code,
+and keep the constitution and the agents in step.
+
 ## Verification
 
 Every suite, from the repository root. All of them run offline.
 
 ```bash
 (cd apps/web && npx vitest run)                    # the host: routes, store, runner, auth, AI, queue mode on fakes…
+                                                   # (a test file that needs a DOM starts with `// @vitest-environment happy-dom`: node-credentials-effect.test.ts)
 pnpm typecheck                                     # every TypeScript package
-for p in protocol transports engine sdk cli; do (cd packages/$p && npx vitest run); done
+for p in protocol transports engine sdk cli test-fakes; do (cd packages/$p && npx vitest run); done
 (cd services/code-runner && npx vitest run)
 for p in messaging text-toolkit github landfall triage browser desktop; do (cd plugins/$p && npx vitest run); done
 (cd sdks/go && go test ./...)
@@ -102,14 +204,54 @@ for p in go-crypto google-workspace databases threat-intel; do (cd plugins/$p &&
 plugins/py-insights/.venv/bin/python -m unittest discover -s sdks/python/tests
 (cd plugins/py-insights && .venv/bin/python -m unittest discover -s tests)
 (cd plugins/productivity && .venv/bin/python -m unittest discover -s tests)
+# the LLM gateway's callback, in the pinned LiteLLM image (by digest; no network)
+docker --context orbstack run --rm --network none -e LITELLM_LOCAL_MODEL_COST_MAP=True -v "$PWD/deploy/llm-gateway:/w" -w /w --entrypoint python ghcr.io/berriai/litellm:v1.108.2-lts@sha256:d8b4ac356743d647a13bb93f45b941fcd5f5354122cfd205948a1b192790389d -m unittest discover -s tests
 deploy/scripts/smoke.sh code                       # the dockerised code runner: health + network/file-system isolation
 ```
+
+The Claude Code mods' own hook tests (`apps/web/claude-plugins/landflow-brain/hooks/*.test.ts`) import
+`claude-code/testing`, an engine module that only the Claude Code CLI provides, so neither vitest nor `pnpm check` can run
+them. Run them with `claude plugin validate apps/web/claude-plugins/landflow-brain && claude plugin test
+apps/web/claude-plugins/landflow-brain`, and with the same pair for `landflow-harness`, whenever a hook changes. The
+mods' pure rules are also tested in the host's suite (`apps/web/test/claude-brain-mod.test.ts`), which `pnpm check` runs.
 
 The host's suite runs its files in parallel, so `apps/web/vitest.config.ts` gives each test 20 s and each hook 30 s:
 the marketplace, cluster runtime and MCP file-approval tests timed out at the defaults under that load.
 
-`pnpm test` runs the TypeScript packages' suites in one go. After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
+The engine's suite runs on the machine's Node (22). `packages/engine/test/expression-sandbox.test.ts` walks the
+expression realm's globals for anything that returns a promise, so after a Node upgrade, or before relying on a newer
+Node than the `engines` field's minimum, run the engine's suite on that version too, for example
+`(cd packages/engine && npx -y node@26 node_modules/vitest/vitest.mjs run)`: a new global of that kind fails it there first.
+
+Route tests boot the way the host does: `apps/web/test/setup.ts` registers the bootstrapper, and the first `handler()`
+call boots through `whenReady()`, outside that request's audit and log context (what the boot records is not the
+request's). Once the boot is `ready`, `handler()` no longer reaches the `bootstrap` singleton, so a
+test that forgets that singleton to boot again must call `ensureBootstrapped()` itself; the next request won't reboot.
+
+`pnpm test` runs every workspace package's `test` script in one go, the host's included (`pnpm check` adds typecheck and the boundary check). After editing `packages/protocol/proto/landflow/plugin/v1/plugin.proto`, run
 `pnpm gen:proto` (re-embeds the proto and regenerates the JSON Schema).
+
+### Checking the boundaries
+
+`pnpm check` is the local gate before a change is done: `pnpm typecheck`, `pnpm test` (every package's suite, the host's
+included) and `pnpm check:deps`. There is no CI workflow (decision: this project runs and checks everything on this
+machine), so nothing else runs these for you.
+
+`pnpm check:deps` runs dependency-cruiser with `.dependency-cruiser.cjs` over `apps/web/src` and `packages/*/src`. The rules:
+
+| Rule | Forbids |
+|---|---|
+| `server-not-components` | `apps/web/src/lib/server` importing `components/` |
+| `shared-not-server` | `lib/shared` importing `lib/server` (type-only imports are fine) |
+| `client-not-server-values` | a file starting with `'use client'` importing a value from `lib/server` (types are fine) |
+| `routes-not-db` | a route file (`app/**/route.ts`) importing `lib/server/db` |
+| `packages-not-apps` | anything in `packages/` importing `apps/` |
+| `no-circular` | a new value import cycle (cycles inside `lib/server/runner/`, whose modules call each other only at run time, are allowed; type-only imports are not counted, as they are erased at build time). One new edge inside an existing cycle group can re-report neighbouring known edges, because a known cycle is matched by its exact set of modules |
+
+The violations that existed when the rules were added (the cycles, and two routes that import `lib/server/db`: `form-test`
+and `proposals/[id]/applied`) are recorded in `.dependency-cruiser-known-violations.json` and ignored, so only new ones
+fail. `client-not-server-values` checks direct imports only: a module without the directive that a client component imports could still pull in a server value. Fixing one makes its entry stale and does no harm; to shrink the record after fixing some, or to accept a new cycle
+on purpose, run `pnpm check:deps:baseline` and commit the file with the reason.
 
 ### Recorded plugin manifests
 
@@ -162,14 +304,17 @@ python3 deploy/scripts/servicebus-config.py --check   # the Service Bus emulator
 
 ### Integration tests (`LANDFLOW_INTEGRATION`)
 
+`access` runs `test/access-contract.test.ts`: the real Go Google plugin against fakegoogle and the real GitHub plugin against its stateful fake (needs `go`). `browser` also runs `e2e/access.spec.ts`.
+
 The host's tests against real services are skipped unless `LANDFLOW_INTEGRATION` (a comma-separated list) names them.
 Start the matching infra services first ([deployment.md](deployment.md)), then run the files from `apps/web`, e.g.
 `LANDFLOW_INTEGRATION=postgres,ollama npx vitest run test/pgvector.test.ts test/rag-live.test.ts`.
 
 | Flag | Needs | Test files |
 |---|---|---|
-| `postgres` | the infra Postgres, database `landflow_test` (or `LANDFLOW_PG_URL`, `LANDFLOW_TEST_DATABASE_URL`) | `pgvector.test.ts`, `postgres.test.ts` (the store, schema `landflow_runtime_test`), `projects-migration.test.ts`, `project-folders-variables.test.ts` |
-| `queue` | the infra Valkey (`LANDFLOW_TEST_VALKEY_URL`, under a throwaway key prefix) and Postgres | `cluster-coordinator.test.ts` (coordinator, leader election, stalled-job takeover, relay), `cluster-postgres.test.ts` (processes following each other's writes, schema `landflow_queue_test`), `config-store-postgres.test.ts` (credentials and settings shared by two processes, in a database it creates and drops), `audit-chain.postgres.test.ts` (the hash chain sealed by two processes at once, SAML state shared by mains), `transports.postgres.test.ts` |
+| `postgres` | the infra Postgres, database `landflow_test` (or `LANDFLOW_PG_URL`, `LANDFLOW_TEST_DATABASE_URL`) | `pgvector.test.ts` (also the replace, rollback, concurrent-reader and `syncDocument` cases of C20), `vector-store-access.test.ts` (its pgvector case; C21), `postgres.test.ts` (the store, schema `landflow_runtime_test`), `postgres-hot-mirror.test.ts` (the hot mirror: eviction, cold reads through the async seam, promotion, schema `landflow_hot_test`; run it in its own vitest call, as the two share `landflow_test`), `projects-migration.test.ts`, `project-folders-variables.test.ts`, `access.postgres.test.ts` (C35: two processes claim one due grant, two approvals record one decision; schema `landflow_access_test`; also runs with `queue`) |
+| `queue` | the infra Valkey (`LANDFLOW_TEST_VALKEY_URL`, under a throwaway key prefix) and Postgres | `cluster-coordinator.test.ts` (coordinator, leader election, stalled-job takeover, relay), `cluster-postgres.test.ts` (processes following each other's writes, schema `landflow_queue_test`), `config-store-postgres.test.ts` (credentials and settings shared by two processes, in a database it creates and drops), `rotate-key-postgres.test.ts` (the `rotate-key` script re-sealing a credential and a settings row in Postgres, in a database it creates and drops), `audit-chain.postgres.test.ts` (the hash chain sealed by two processes at once, SAML state shared by mains), `transports.postgres.test.ts`, `approval-inbox-cluster-ap1.test.ts` (two processes claim one approval-inbox row in Postgres, exactly one wins; wave ap1), `knowledge-sources.postgres.test.ts` (C22: one sync claim of thirty wins across two processes), `harness-hooks-cluster.test.ts` (two processes apply hook events to one harness session; a late event never clears Error; also runs under `postgres`; C04), `mfa.postgres.test.ts` (a sign-in challenge, a recovery code, a TOTP step and a WebAuthn challenge and counter taken by two mains at once; C16), `api-key-uses.postgres.test.ts` (a cap of 100 taken by 150 calls from two processes: exactly 100 succeed; C17), `event-outbox.postgres.test.ts` (a worker saves, the leader delivers; a lease across two processes; C19), `collection-access.test.ts` (the claim race), `collection-adoption.test.ts` (two mains adopt once) and `collection-transfer.test.ts` (C21) |
+| `browser` | Chrome on this machine (never downloaded) and a free port; nothing else, the host and the fakes are the tier's own | the Playwright specs in `apps/web/e2e` (`pnpm test:browser`; see [Browser tests](#browser-tests)). Not run by `pnpm test` or the host's vitest |
 | `sentinel` | `deploy/compose.sentinel.yml` | `valkey-sentinel.integration.test.ts` (the primary is killed; a run in flight and new runs finish on the promoted replica) |
 | `valkey-cluster` | the infra `valkey-cluster` profile | `valkey-cluster.integration.test.ts` |
 | `oidc` | Keycloak (`auth` profile) | `oidc.integration.test.ts` (fills in its login form as alice and bob) |
@@ -178,12 +323,81 @@ Start the matching infra services first ([deployment.md](deployment.md)), then r
 | `smtp` | Mailpit | `smtp.integration.test.ts` (invites, password resets), `alerts-smtp.test.ts` (failure alert emails) |
 | `imap` | GreenMail (`mail` profile) | `email-imap.test.ts`, `email-imap-host.test.ts` (the Email Trigger) |
 | `s3` | MinIO | `binary-store.test.ts` (the S3 binary store) |
+| `grafana` (no flag: a local service) | the compose `grafana` profile: `LANDFLOW_GRAFANA_PORT=<port> docker compose -p <project> -f deploy/compose.infra.yml --profile grafana up -d --wait grafana` (default port 53130, `admin` / `landflow-dev-only`) | one alert rule, **High CPU on web-01** (`host=web-01`, `severity=critical`), fires within a minute. A viewer token: `POST /api/serviceaccounts` then `/api/serviceaccounts/<id>/tokens` with basic auth; the Grafana credential's URL is `http://127.0.0.1:<port>/api/alertmanager/grafana` |
 | `git-ssh` | the `git` profile, after `deploy/infra/git/gen-keys.sh` | `source-control-git.test.ts` (push and pull over SSH with host-key pinning) |
 | `secrets` | OpenBao at `http://127.0.0.1:58200` | `secrets-openbao.integration.test.ts` (token and AppRole auth, set up idempotently through the API; lease renewal; a run whose credential reads a secret). The other providers are tested against local fakes |
-| `aws` | LocalStack (`aws` profile) at `http://127.0.0.1:54566` (`LANDFLOW_LOCALSTACK_PORT`, `LANDFLOW_LOCALSTACK_URL`) | `secrets-aws.integration.test.ts` (access keys and environment auth, a `{environment}` prefix, JSON and plain secrets, redaction; the endpoint must be loopback, the keys are dummies and `~/.aws` is never read) |
+| `aws` | LocalStack (`aws` profile) at `http://127.0.0.1:54566` (`LANDFLOW_LOCALSTACK_PORT`, `LANDFLOW_LOCALSTACK_URL`) | `secrets-aws.integration.test.ts` (access keys and environment auth, a `{environment}` prefix, JSON and plain secrets, redaction; the endpoint must be loopback, the keys are dummies and `~/.aws` is never read), `knowledge-sources-localstack.test.ts` (C22: the S3 source against LocalStack's `s3` service) |
 | `audit-anchor` | MinIO; must be the only flag | `audit-integrity.test.ts` (signed heads in a real bucket) |
 | `k8s` | the OrbStack cluster, namespace `landflow-dev`, the plugin image built locally | `kubernetes.integration.test.ts` (discovery, scale to 0 and back, calls spread over two pods) |
-| `ollama` | Ollama at `OLLAMA_URL` with nomic-embed-text and qwen3-coder:30b | `rag-live.test.ts`, `evaluations-live.test.ts` (qwen3-coder as the judge), `ollama-streaming-live.test.ts` |
+| `isolate` | the optional `isolated-vm` addon, and `NODE_OPTIONS=--no-node-snapshot` | `packages/engine/test/expression-isolate.test.ts` (the realm suite on the isolate, memory bombs each in a child process, churn, benchmark), `apps/web/test/expression-preview-isolate.test.ts` (a route uses the isolate) |
+| `ollama` | Ollama at `OLLAMA_URL` with nomic-embed-text and qwen3-coder:30b | `rag-live.test.ts`, `evaluations-live.test.ts` (qwen3-coder as the judge), `ollama-streaming-live.test.ts`, `landledger-flows.test.ts` (the variance-notes flow drafting with qwen3-coder against the fake Landledger, which checks every cite), `decide-live.test.ts` (Decide against `nimble:9b`: `ollama pull nimble:9b`, Ollama 0.40 or later) |
+| `spotlight` | Ollama at `OLLAMA_URL` (default `http://localhost:11434`) with `qwen3-coder:30b` (never pulled for you: the suite stops with a message if it is missing); nothing else, the echo server is the suite's own on `127.0.0.1:3399` | `spotlight-scenarios.test.ts` (the live form of every scenario in `test/spotlight-scenarios/`, three runs each, printing the scorecard; the scripted form always runs) |
+| `litellm` | the LiteLLM compose profile ([llm-gateway.md](llm-gateway.md)) and Ollama with qwen3-coder:30b; set `LANDFLOW_LLM_GATEWAY_URL=http://127.0.0.1:54100` and `LANDFLOW_LLM_GATEWAY_ADMIN_KEY` (the dev master key from `deploy/.env.example`); `litellm-live.test.ts` also reads `LANDFLOW_TEST_LITELLM_URL` and `LANDFLOW_TEST_LITELLM_MASTER_KEY` with the same defaults | `litellm-live.test.ts` (Landflow's own calls through the gateway), `litellm-ingest-live.test.ts` (the spend import), `litellm-budgets-live.test.ts` (budgets and a stop) |
+| `gateway-image` | Docker on the OrbStack engine and the pinned LiteLLM image, by digest (`ghcr.io/berriai/litellm:v1.108.2-lts@sha256:d8b4ac35…`, as in `deploy/compose.infra.yml`); runs with `--network none`, pulls nothing | `spend-bpe-join.test.ts` (the gateway callback's Python BPE counter and hashes against Landflow's, on the shared fixture and 200 seeded strings; the fixture copies are compared without the flag), `spend-gateway-join.test.ts` (the callback's signed post through `POST /api/gateway-parts`, the spend import and `GET /api/ai-calls/:id`, and a Landflow split winning in every order) |
+
+#### Spotlight scorecard
+
+Spotlight's builds, one-step fixes and agent creation are scored by scenarios in `apps/web/test/spotlight-scenarios/`
+(the evaluation of 2026-11-16, moved into the repo). Each scenario has a scripted form that always runs in the unit
+suite (`spotlight-scenarios.test.ts`: the product's route handlers, registry, `applyOps` and guards are real, only the
+model is scripted) and a live form on the local model that counts its checks:
+
+```bash
+cd apps/web && NODE_OPTIONS="--require $PWD/test/spotlight-scenarios/local-only.cjs" LANDFLOW_INTEGRATION=spotlight \
+  LANDFLOW_SPOTLIGHT_REPORT=/tmp/scorecard.json npx vitest run test/spotlight-scenarios.test.ts
+```
+
+It prints three tables (Build, Fix one step, Agents: per scenario the runs, the time range and "k of n" per check) and
+writes the same as JSON (sizes and check results only, no reply or ask text). Variables: `LANDFLOW_SPOTLIGHT_MODEL`
+(default `qwen3-coder:30b`), `LANDFLOW_SPOTLIGHT_RUNS` (runs per scenario; default the scenario's, 3),
+`LANDFLOW_SPOTLIGHT_ONLY` (comma-separated scenario ids or owners, e.g. `SB03,sb04-why-last-run`),
+`LANDFLOW_SPOTLIGHT_REPORT` (the JSON path; default `$TMPDIR/landflow-spotlight-scorecard.json`),
+`LANDFLOW_SPOTLIGHT_ECHO_PORT` (the suite's echo server, default 3399) and `LANDFLOW_SPOTLIGHT_PLUGINS` (comma-separated
+local plugin endpoints, the Go and Python plugins a scenario's `start.plugins` names; the live form registers the bundled Linear and
+Messaging plugins in the test process either way, so builds see the core nodes plus those two, not the whole bundled catalog; the
+scripted form uses small stand-ins). **A model of another provider** (`LANDFLOW_SPOTLIGHT_MODEL=anthropic/claude-sonnet-5-5`) needs that provider's key in the environment and no Ollama (the runner stops with the variable's name when the key is missing, and never prints it); a bare or `ollama/` name needs Ollama as before. A scenario's `start.plugins` (AG02, ids `triage`, `grafana`, `text-toolkit`, `databases`, `go-crypto`, `py-insights`, `messaging`) registers the plugins it needs: the scripted form builds stand-ins from the recorded manifests (each records the item it was called with, `Outcome.toolInputs`; Grafana runs its own code in-process), the live form runs the TypeScript ones in-process and the Go and Python ones from `LANDFLOW_SPOTLIGHT_PLUGINS`; a live run whose plugin is not online is listed under "Skipped live" with the reason. Wave ag1's scenario files are `sb-agNN.ts` (the runner globs `sb*.ts`; `owner: 'AGNN'`). The guard, `test/spotlight-scenarios/local-only.cjs`, makes every connection to
+anything but this machine fail with `ECONNREFUSED` (and every lookup of another name with `ENOTFOUND`), printing
+`[local-only] refused <host>:<port>`. It must be on from the process's start: the runner stops with a message when the live form is asked for
+and it is not loaded, so the command above sets `NODE_OPTIONS` (a live check of a running host does the same). It covers
+`net` connections and `dns.lookup`; it does not cover `dns.resolve*` or `Resolver` (c-ares over UDP), `dgram` or child
+processes, which no product code uses today. A build scenario's `start.staged` plans first as the editor does (the plan route, then the build with that plan; both forms do so unless it says `false` (the scripted form too since the wave sb3 integration: the script is the plan's replies, then one reply per step, a step sent back once answering again; `false` posts `staged: false`, the one-shot draft); `LANDFLOW_SPOTLIGHT_STAGED=false` never plans, the one-shot draft a live comparison measures "before" with), and its `Outcome.plan` and `Outcome.prompts` (each call's tokens, the greater of the reported and the characters over four) feed the `one-trigger` and `prompt-under` checks (`promptUnder(6000)`). A scenario can give a build its plan outright (`start.plan`, a `BuildPlan` as JSON; SB14's are in `test/spotlight-scenarios/fixtures/sb14-plans.json`), posted with the prompt to `POST /api/ai/build`, so stage 2 is scored without the plan stage. A package adds
+its scenarios as `test/spotlight-scenarios/<owner>.ts` (`export default defineScenarios([...])`, ids `<owner>-<slug>`):
+the runner finds it, no index to edit. A scenario's `start.autonomy` decides what the scripted form applies: asks-first
+leaves every card waiting (nobody clicks Apply; a session waiting for Apply is stopped as the person would with ■), auto
+applies a card unless it removes a step or leaves one without its input (`needsAClick`), and unset applies every card
+(a session runs as auto). `start.approvedDestinations` is the person's yes to a session's test runs that send, by
+`host:port`. In the scripted form the fake Ollama spends no script turn on a request that is not a chat (the model
+list), and a script turn that throws `Ollama error 500: <body>` is answered as that status and body. A scenario's `start.outbound` (`blocked`, the default, or `allowed`) is the host's outbound policy for the
+live session's test runs, set outright (`LANDFLOW_OUTBOUND_BLOCK_PRIVATE=true`, because vitest's development profile does
+not block): only `allowed` sets `LANDFLOW_OUTBOUND_ALLOW=127.0.0.1,localhost` (never because an echo server runs). The
+echo answers `?fail=NNN` with that status; a session's "changed nothing" ignores cards that were refused or are waiting. A build's checks read its draft: `credentials-listed` an item of kind `credential` in `draft.left`, `left-listed`
+`draft.left` (n/a when empty), `sent-back-once` `draft.calls` (n/a for one call and nothing empty); `Outcome.model` is the
+reply's `done` model or the draft's. Two shared checks read what a designed agent holds (`Outcome.agents[].caseInputs` and `toolParameters`, `card.needs`): `caseInputsReal` (no test case's input is a description, a `<placeholder>` or under 12 characters) and `destinationsGiven(ask)` (every destination parameter of every node tool is empty or a value the ask holds). [assistant.md](assistant.md#how-spotlight-is-measured) says what the checks mean.
+
+Each backbone wave's packages are joined on their real sides in a joins file (`spotlight-sb1-joins.test.ts` …
+`spotlight-sb3-joins.test.ts`, `agents-ag1-joins.test.ts`, `agents-ag2-joins.test.ts`, `agents-ag3-joins.test.ts`,
+`agents-ag4-joins.test.ts`, `fix-path-ag5-joins.test.ts`, `approval-inbox-ap1-joins.test.ts`, `notion-brain-nb1-joins.test.ts`, `notion-brain-nb2-joins.test.ts`, `notion-brain-nb3-joins.test.ts`); they always run with scripted models. Wave nb2's pull tests are `notion-pull-nb05.test.ts` (what comes back: names, notes, new pages, facts, practices as tainted drafts, notes for a team, trash, schema, the capped query, the practice-approval emit) and `notion-conflicts-nb05.test.ts` (the region, both sides, the problem actions and the instance switch); both seed the linked state themselves with `notion-pull-seed.ts` (the root, a link row, the brain page, four databases, rows and items, through the real client against the fake) because NB04's copy is a separate package, and assert a re-push as an `notion_brain_outbox` row (with NB04 merged, a seeded item has no outbox row waiting and `outbox()` reads the objects queued, not the Home and Log rows NB04's listener marks due). With `LANDFLOW_BACKBONE_CONTRACTS` set, `notion-pull-nb05.test.ts` also compares `sync.ts` and the four files of `test/fixtures/notion-render/` with the contracts' `nb/` folder. Wave nb1's joins NB01's brain store and change feed, NB02's Notion client and NB03's links on their real sides against the [Notion fake](#the-notion-fake) only (the client is the one `runtime.ts` registers, never a stub): a linked project's store reports `notion` and writes locally with one change, the check route through the real client writes nothing and keeps the key out of every response, audit row and log line, and a fact added in a linked project reaches a listener; its last block compares `lib/shared/brain-store.ts`, `lib/server/brain/store/port.ts`, `lib/server/notion/port.ts`, `test/fake-notion.ts` and `lib/shared/notion-brain.ts` with the contracts folder's `nb/`. Wave nb2's joins NB04's copy and push, NB05's pull and NB06's knowledge walk on their real sides, loaded through `@/lib/server/runtime` only (never `brain/store`, `pull.ts` or `knowledge.ts` directly; it checks that `SERVICES` names `notion brain` before it imports `service.ts` for `tickOnce`), with NB02's real client against the Notion fake: J1 a description changed through the entity route is one `PATCH` of its row on the next tick; J2 a Facts row a person adds is pulled on Sync now, gets its `Landflow ID` back and `POST /api/brain/ask` lists it; J3 a practice edited in Notion is a tainted draft v2 that `selectForRun` does not carry until it is approved with `reviewedSources` (the approve route answers 409 without), while the fake's row shows the approved text with the callout; J4 a page under the brain page is the `project_knowledge` passage in a scripted agent run and the connection reads "Notion · <brain page title>"; J5 a row pointed at a page under another shared root is refused by the scoped writer and the next object in the same tick lands; J6 with `LANDFLOW_NOTION_BRAIN=off` ten ticks make no request while the local brain works and one tick after switching it on pushes what changed; J7 compares `sync.ts`, the four render fixtures and the five nb1 copies with `nb/`. Wave nb3's joins NB07's Brain card and Brain-page fields and NB08's Spotlight turn and brain MCP on their real sides, set up as nb2's (the sync through `@/lib/server/runtime`, NB02's real client against the Notion fake), with a `fetch` shim that turns each request of the browser's client contract (`lib/client/notion-brain.ts`) into a call of the real route handler as the synthetic owner, an editor or a member (any other URL goes to the real fetch): N1 the Brain page's `notion.url` and `brain_search_facts`' `notionUrl` (over the in-memory MCP transport) are the fake's rows, the page's goes once the row is trashed and detached, and no fact has one after Disconnect; N2 the client lists the project's Notion key, checks the page, says "In sync · synced …", lists a trashed row's problem with its `notionUrl` and `putBack`, and `actionsFor` offers an editor only what the route accepts (`deleteLocal` answers 403, `putBack` 200); N3 a wrong key in the vault stops the link with one notice, a credential of another type and a refused key answer 400 and change nothing, a second good key brings it back `active` with the "The brain is in Notion" notice refreshed and the queued edit pushed on the next tick; N4 with a 1.5 s deadline and Notion stuck on 429 with a 30 s `Retry-After`, the check answers 200 with the named brain, 200 with what it has when no page is named, 504 when `/v1/users/me` is stuck, all within 2.5 s and with no write, and two identical checks ask Notion once while another page is a 409; N5 Spotlight's sync answer is `statusAnswer` of the real view and problems, a link ask naming the root gets the card with the one key preselected and the link's status, and a pasted key-shaped text makes no request; N6 the problems list and the link read with `brain:read`, the writes stay `workflows:write`; N7 compares `urls.ts`, `lib/client/notion-brain.ts`, the nb3 `notion-brain.ts` and the nb1 and nb2 copies with `nb/`. The agent waves' joins (ag3 on) end by comparing the contract copies in the
+repository (wave ag4's: `lib/shared/agent-card.ts`, `lib/shared/tenant-catalog.ts`, `lib/shared/agent-bubbles.ts`,
+`lib/shared/agent-versions.ts`, `components/canvas/bubble-view.tsx`, `test/spotlight-scenarios/scenario.ts` and
+`test/fixtures/legacy-agent-flow.json`; wave ag3's `lib/shared/tool-target.ts` and the runbooks in
+`test/spotlight-scenarios/fixtures/runbooks/`) byte for byte with the program's contracts folder, and runs only when
+`LANDFLOW_BACKBONE_CONTRACTS` names that folder (it holds `ag3/`, `ag4/`, `ag5/`, whose `fix-autonomy.ts` is `lib/shared/fix-autonomy.ts`, and `ap1/`, whose `approval-inbox.ts` and `inbox-port.ts` are `lib/shared/approval-inbox.ts` and `lib/server/approval-inbox/port.ts`, checked by `approval-inbox-ap1`, and `nb/`, the Notion brain's `brain-store.ts`, `brain-store-port.ts`, `notion-port.ts`, `fake-notion.ts`, `notion-brain.ts`, `sync.ts`, `render-fixtures/`, `notion-urls.ts` (`lib/server/brain/notion/urls.ts`) and `notion-brain-client.ts` (`lib/client/notion-brain.ts`), checked by the nb1, nb2 and nb3 joins and NB05's, NB06's and NB07's tests; the older joins' card and scenario checks
+point at `ag4`, since wave ag4 replaced those two contracts). Wave ag3's package tests are `agent-gate-ag3`, `tool-proof-ag3`, `tool-proof-ui-ag3`,
+`agent-knowledge-ag3` and `agent-connections-ag3` (`apps/web/test/`; `agent-node-band-ag3` went with the band), and
+`packages/sdk/test/stream-target.test.ts`; wave ag4's are `agent-bubbles-ag4`, `agent-layout-ag4` and
+`agent-connections-draft-ag4` (AG16), `agent-overrides-ag4` and `agent-ops-ag4` (AG17), `tenant-catalog-ag4` and
+`tenant-mcp-ag4` (AG18), `agent-reuse-ag4` and `agent-reuse-card-ag4` (AG19), `run-log-ag4` and `session-fix-ag4` (AG20),
+`agent-versions-ag4` and `agent-updates-ag4` (AG21). Wave ag5's are `gate-same-cases-ag5` and `agent-change-quality-ag5` (AG24), `spotlight-approvals-ag5` and
+`unattended-approvals-ag5` (AG23), `flow-saved-agent-ag5` and `flow-saved-agent-ag5-editor` (AG25), `fix-autonomy-ag5`,
+`session-auto-ag5` and `session-stable-ag5` (AG22); its joins (`fix-path-ag5-joins`) drive the real editor stores and the
+route handlers together (each browser `api` call goes to the `route.ts` its path names) with a fake Anthropic, a scripted
+agent model and judge, a strict receiver and a fake SMTP server. Wave ap1's package tests are `approval-inbox-ap1`, `approval-inbox-nudge-ap1` and `approval-inbox-postgres-order-ap1` (AP01; the last runs a Postgres-mode `Database` over a fake Postgres, no server needed; and `approval-inbox-cluster-ap1` under `LANDFLOW_INTEGRATION=queue`), `inbox-run-ap1`, `inbox-restart-ap1` and `inbox-lines-ap1` (AP02), and `approval-inbox-ui-ap1` (AP03); the integrator's joins are `approval-inbox-ap1-joins`.
+
+Combined wave 4a's package tests: `mfa-totp`, `mfa-signin`, `mfa-enrolment`, `mfa-reset`, `mfa-ui` and `mfa-webauthn` (with the software authenticator `test/fake-authenticator.ts`) for C16; `ip-allow`, `api-keys-hardening` and `api-keys-ui` for C17; the Single Use and preset cases of C18 (`webhook-jwt-claims` and the credential dialog tests); `chunk-diff`, `vector-store-upsert`, and the C20 cases in `rag`, `agent-knowledge-ag3` (folder re-index) and `notion-knowledge-nb06` (chunk reuse) for C20; `event-outbox-core`, `event-outbox`, `event-subscriptions-routes` and `event-subscriptions-ui` for C19 (`runtime.test.ts` lists the new `event outbox` leader service after `notion brain`); `collection-access`, `vector-store-access`, `agent-knowledge-access`, `collection-adoption`, `collection-routes` and `collection-transfer` for C21. The browser check of passkeys uses Chrome's virtual authenticator (DevTools Protocol `WebAuthn.addVirtualAuthenticator`) on `http://localhost:<port>` with `LANDFLOW_PUBLIC_URL` set to that origin.
+
+C35's package tests (access requests, docs/access-requests.md): `access-store`, `access-actions` (against the fake GitHub and Google plugins in `test/fixtures/fake-access-plugins.ts`), `access-catalog`, `confirm-choices` (Ask a Person's Answer Choices and People Only), `access-requests`, `access-grants` (the run's record stood in for, to try every forged answer), `access-flow` (end to end: the installed flow, a decision, the grant in the fake, removal by the service), `access-sweeper`, `access-chat` (a fake model) and `access-routes`; C36's `access-outside-identity` (links, sessions, settings, Block, the seams with the request library), `access-outside-identity-google` (the fake Google OpenID Connect server), `access-outside-identity.postgres` (`LANDFLOW_INTEGRATION=postgres`, run alone: it trips the regular-mode guard beside `access.postgres`), `access-outside-requests` (A's modules mocked), `access-outside-requests-chat` (limits mocked, a fake model), `access-outside-ui` and, in the browser tier, `e2e/access-outside.spec.ts` (its own host with a loopback SMTP sink, the fake Google and `LANDFLOW_ACCESS_OUTSIDE_DEV_OIDC=true`); `test/fixtures/access-world.ts` builds their users, credentials and installed flows. Combined wave 4b's package tests: `combobox`, `data-grid`, `field-diff` (it also holds the Apply diff's markup snapshot, `test/__snapshots__/change-diff.html`), `credential-combobox` and `agent-version-compare` for C23; `@landflow/test-fakes`' own tests and the node-state tests of the messaging and GitHub plugins for C24; `llms-route.test.ts` and `scripts/llms.test.mjs` (in `pnpm test:scripts`) for C25: `pnpm docs:llms` writes `docs/llms.txt` and `docs/llms-full.txt` from `docs/published.json` (`llms-full.txt` is built, never committed), `pnpm check:docs` is in `pnpm check` after `check:history`, and the host image's build stage runs `node scripts/llms.mjs --write` and copies the two files to `apps/web/llms/`; `trust-canonical` (canonical form, the pure change list, the store on SQLite and a Postgres-mode `Database` over a fake sink), `trust-mcp-hold` (a real MCP server whose tools the test edits: the hold, the switch, the snapshot at publish), `trust-routes` (review routes, access, Needs you), `trust-marketplace` (the staging, hash and confirm; the supervisor is stubbed) and `trust-ui` (happy-dom: banner, sheet, Needs you row, the switch, the drawer's confirm) for C27: run `marketplace.test.ts` and `trust-marketplace.test.ts` one at a time; the knowledge-sources suites for C22 (`@landflow/test-fakes/s3`, `/site` and `/drive`; `LANDFLOW_INTEGRATION=queue` runs `knowledge-sources.postgres.test.ts`, where one claim of thirty wins across two processes, and `LANDFLOW_INTEGRATION=aws` runs `knowledge-sources-localstack.test.ts`, S3 against LocalStack, which now starts the `s3` service in `deploy/compose.infra.yml`); and, for C26 secret routes, `cd apps/web && npx vitest run test/kagent-routes.test.ts test/kagent-routes-deploy.test.ts test/kagent-route-refresh.test.ts test/kagent-routes-ui.test.ts` (rules, vault and objects, deploy and status against a fake Kubernetes API, the refresh timer, the editor; the header-recording upstream is `@landflow/test-fakes/upstream`).
+
+Combined wave 5's package tests: `pnpm --filter @landflow/plugin-deck test` for C33 (a fake `dot-agent-deck` script on PATH through `LANDFLOW_DECK_BIN`; no deck, no container); `custom-roles` (shared rules and the store), `custom-roles-routes`, `custom-roles-scim` and `custom-roles-ui` for C32 (`LANDFLOW_INTEGRATION=postgres` also runs `custom-roles.postgres.test.ts`, migration 2931 and the join; `LANDFLOW_INTEGRATION=browser` runs `e2e/roles.spec.ts`); `project-keys` (the key store and the vault with a resolver), `project-keys-move`, `project-keys-rotate` (10,000 credentials rotate in under 5 s; migrate killed half-way; revert) and `project-keys-routes` for C31 (`LANDFLOW_INTEGRATION=queue` also runs `project-keys.postgres.test.ts`, two processes on one Postgres); `cd apps/web && npx vitest run test/memory-dates.test.ts test/memory-sample.test.ts test/memory-extract.test.ts test/memory-extract-node.test.ts` for C28 (the Ollama fake and a scripted model); `secret-leases` (table, rotation, the fake, the provider, the lease store), `secret-leases-run`, `secret-leases-sweeper` and `secret-leases-routes`, `e2e/secret-leases.spec.ts` (browser tier), `secret-leases.postgres.test.ts` (`LANDFLOW_INTEGRATION=postgres`) and `secret-leases-openbao.integration.test.ts` (`LANDFLOW_INTEGRATION=secrets,postgres`, with `deploy/scripts/openbao-db-engine.sh` applied to the infra OpenBao at `http://127.0.0.1:58200`) for C30; `networks-store`, `networks-calls`, `networks-http-node`, `networks-routes` and `networks-ui`, `networks.postgres.test.ts` (`LANDFLOW_INTEGRATION=postgres`), `e2e/networks.spec.ts` and the runner's own suite (`pnpm --filter @landflow/network-runner test`, node built-ins only, part of `pnpm test`) for C29.
 
 `cluster-runtime.test.ts` always runs: a main and workers through the runner on the in-process coordinator.
 
@@ -195,6 +409,118 @@ Mailpit answers, and `mcp-gateway-two-issuers.test.ts` runs its gateway checks w
 The databases plugin has its own: `cd plugins/databases && LANDFLOW_INTEGRATION=postgres,redis go test -count=1 -run
 Integration -v .` (`all` adds MySQL); see
 [deployment.md, "Integration tests (databases plugin)"](deployment.md#integration-tests-databases-plugin).
+
+### Fakes (`@landflow/test-fakes`)
+
+A node that writes to an outside service is tested against a fake of it that keeps what it was sent, so the test asserts
+on the outcome (`slack.state().channels['#ops'].messages[0].text`) and not on the request's shape. `packages/test-fakes`
+(private, node built-ins only, TypeScript source like the other packages) holds the contract and the fakes; every fake
+binds `127.0.0.1` on a free port, and no vendor token is real.
+
+```ts
+import { fakeSlack } from '@landflow/test-fakes/slack';
+const slack = fakeSlack();                        // fakeGitHub() from '@landflow/test-fakes/github', or defineFake(…)
+beforeAll(() => slack.start());                   // one instance per test file: a free port each, so files never share state
+afterAll(() => slack.stop());
+beforeEach(() => slack.reset());                  // the seed again, an empty log, no scripts
+// a credential whose base URL is slack.url and whose token is slack.token; run the node; then:
+expect(slack.state().channels['#ops'].messages.map((m) => m.text)).toEqual(['hello']);
+```
+
+The contract (`Fake<S>`): `start()` binds and returns the base URL, `url` and `token`, `state()` is a deep copy of what
+the fake holds (change it and nothing changes), `requests()` is the log (method, path, query, parsed body, `status`,
+`refused` for a missing or wrong token, `scripted`), `script({ status, retryAfter?, delayMs?, body?, times = 1, match? })`
+answers the next `times` matching calls with a failure (`retryAfter` is sent as `Retry-After`; `match` limits it to
+calls it accepts), `reset()` and `stop()`. A request without the fake's token is refused and logged, so a credential
+wiring bug is a 401 the test sees (Slack answers its own way: HTTP 200 `{ ok: false, error: 'invalid_auth' }`). A script
+is answered before the token is checked, like a rate limiter in front of the service.
+
+Write a new fake with `defineFake<State>({ name, token, initial, routes, auth?, refusal? })`: `initial()` is the seed
+(called again by `reset()`), `routes(state, request)` edits the live state and answers `{ status?, body?, headers? }`
+(a thrown error is a 500), `auth(request, token)` replaces the default `Authorization: Bearer <token>` check (a header
+key, say) and `refusal(request)` the default 401. Put the new fake in `packages/test-fakes/src/<name>.ts`, export it as a
+subpath in the package's `exports`, test it in `packages/test-fakes/test/<name>.test.ts` (start, one route that changes
+state, the 401, a bad input), and add `@landflow/test-fakes: workspace:*` to the package that uses it. The package may
+import `node:*` and nothing else (a test checks).
+
+What exists: **Slack** (`chat.postMessage` with `thread_ts`, `chat.update`, `chat.delete`, `conversations.list`, `info`,
+`history` (newest first, paged) and `replies`, `users.list`; state: messages per `#channel`, with threads), **GitHub**
+(repositories with blobs, trees, commits and refs, `contents` GET and PUT, branches, pull requests, issues and
+comments, also under `/api/v3`; state: the files each branch holds, pulls, comments) and the **Notion** fake, which
+stays `apps/web/test/fake-notion.ts` and is on the contract through `startFakeNotion().asFake()` (its other methods and
+its twelve users are unchanged; `fake-notion-contract.test.ts` runs the generic checks; `script({ delayMs })` is the one
+thing it does not do) and **System One** (`@landflow/test-fakes/systemone`: a decision model's `POST /v1/systemone` with Choice, Yes/No and Score answers by keyword, Ollama's `/api/tags` and its model-not-found 404, `oldServer` for an Ollama before 0.40, `key` for a Bearer key; used by `apps/web/test/decide-node.test.ts`) and **Google OpenID Connect** (`@landflow/test-fakes/google-oidc`, for C36's "Sign in with Google": discovery, an authorization page with a button per seeded account (`login_hint` + `auto=1` skips the click), a token endpoint that checks the client (Basic or post), a single-use short-lived code and the PKCE verifier and returns an RS256 id_token, the JWKS and userinfo; `POST /_fake/accounts` seeds an account, `POST /_fake/next-error` makes the next token call fail or carry one bad claim (`token_error`, `server_error`, `wrong_aud`, `wrong_iss`, `expired`, `bad_signature`, `missing_nonce`, `email_unverified`, `other_hd`) and `GET /_fake/log` is the flow; register the callback with `fakeGoogleOidc({ redirectUris })`). Node-state tests that use them: `plugins/messaging/test/slack-state.test.ts`,
+`plugins/github/test/github-state.test.ts`. The plugins' older `fake-slack.ts` and `fake-github.ts` serve their
+existing request-shape tests and move to the package when they are next touched. A retry ("Retry on fail") belongs to
+the host's engine, so a plugin-level test that wants one runs the node again after the scripted failure.
+
+### Browser tests
+
+`apps/web/e2e` is a small Playwright suite that drives the real UI on a scratch host, in Chrome, at two sizes. It is a
+tier of its own: opt-in, never part of `pnpm test`, the host's vitest run or `pnpm check`.
+
+```bash
+LANDFLOW_INTEGRATION=browser pnpm test:browser                          # headless; about 1.5 to 2 minutes
+LANDFLOW_INTEGRATION=browser LANDFLOW_E2E_HEADED=1 pnpm test:browser    # a visible Chrome, for a person's check
+LANDFLOW_INTEGRATION=browser pnpm test:browser --project=phone api-keys # one spec at one size (its setup projects run first)
+```
+
+- **The flag.** `playwright.config.ts` throws "set LANDFLOW_INTEGRATION=browser" without it (`test/e2e-gate.test.ts`).
+- **The host.** `global-setup.ts` starts `next dev` from `apps/web`, bound to `127.0.0.1` on a free port, with a new data directory under the
+  system temp directory, the development profile, no owner (the first flow is the setup page), the registry, the startup
+  scan, the gateway and plugins off, only a handful of variables from your shell and the Content Security Policy
+  enforced. It refuses to start while `apps/web` holds a `.env*` file (Next would load its keys and database URL into the
+  host). The host process reaches nothing beyond loopback either: `NODE_USE_ENV_PROXY=1` with `HTTP_PROXY` and
+  `HTTPS_PROXY` set to `http://127.0.0.1:9` (a port that refuses) and `NO_PROXY=localhost,127.0.0.1,::1`, so an outside
+  fetch from a node fails at once (`outside-guard.spec.ts` runs an HTTP Request at a TEST-NET address and checks it).
+  The host runs in its own process group, killed on stop and when the runner exits, so Next's worker is not left behind.
+  Teardown stops it, deletes the directory and fails when `apps/web/.data` changed meanwhile. It cannot
+  run beside `pnpm dev` in the same checkout (`next dev` allows one server per directory): stop that one first. Never
+  point it at `apps/web/.data` (`scratch-host.ts` refuses).
+- **Chrome.** The tier uses this machine's Chrome (`channel: 'chrome'`) and never downloads a browser. Without Chrome set
+  `LANDFLOW_E2E_CHANNEL=chromium` after `npx playwright install chromium` (the one command that downloads).
+- **Two sizes.** 1440 × 900 (`desktop`) and 390 × 844 with touch (`phone`). The owner-setup flow runs first at each
+  (projects `desktop-setup`, `desktop`, `phone-setup`, `phone`, in that order): the desktop run creates the owner, the
+  phone run finds it and checks that `/setup` now sends a visitor to sign in.
+- **The flows.** `owner-setup` (the setup page, sign out, sign in), `workflow-run` (New workflow, Manual Trigger and Edit
+  Fields from the node creator, Execute workflow, the output), `run-trace` (a seeded run, its Run Trace page and Trace
+  tab), `api-keys` (create a key, shown once, revoke), `csp-smoke` (the workflow list and an editor with the policy
+  enforced and no `securitypolicyviolation`; with `LANDFLOW_E2E_PROD=1` after `pnpm --filter @landflow/web build` it also
+  runs on `next start` in the production profile, in a context of its own). `credential-picker` (an HTTP Request node's header-auth credential created from the node
+  panel with the combobox's `Create “name”` option, cleared with ×, picked again from the list, then run against the
+  `upstream` fake, which answers 200 only to a call carrying the credential's `x-api-key`).
+- **Loopback only.** The `fixtures.ts` guard aborts any request from the page to a host but `localhost` / `127.0.0.1` and
+  fails the test that made it (a spec with `test.fail()` shows it does); the host process is held to loopback by the proxy
+  settings above. A test's outside service is a fake from `@landflow/test-fakes`, started per worker (`upstream`).
+- **Writing a spec.** `import { test, expect, open } from './fixtures'`; take `signedIn` for a page signed in as the
+  owner; `open(page, path)` waits until the page hydrated (a form filled before the scripts run is reset by React and
+  submits empty). Name controls by role or label and keep a flow the same at both sizes; where the phone differs
+  (`isMobile`), say why in a comment. A spec makes what it needs through the API (`seedWorkflow`) unless the flow is the
+  thing under test.
+- **When one fails.** A screenshot and a trace are kept in `apps/web/e2e/test-results/` (ignored by git); open a trace
+  with `npx playwright show-trace <trace.zip>`, the HTML report is in `apps/web/e2e/report/`.
+- **No baselines, no CI.** There are no visual-diff baselines and nothing runs the tier on its own; a person runs it.
+
+### The Notion fake
+
+Every test of the Notion brain talks to `apps/web/test/fake-notion.ts`, an in-memory Notion on a local port (its header lists
+every endpoint and behaviour; no test calls `api.notion.com` or holds a real key). Start it with `startFakeNotion()` (`.asFake()` gives the [`@landflow/test-fakes`](#fakes-landflowtest-fakes) contract over it) and register
+a stand-in credential type before creating a credential that points at it. The push and the first copy have their own package tests, `notion-push-nb04.test.ts` and `notion-copy-nb04.test.ts`:
+
+```ts
+registry.registerBuiltin(definePlugin({ info: { id: 'productivity', name: 'Productivity (stand-in)', version: '0.0.0', language: 'typescript' },
+  credentialTypes: [defineCredentialType({ name: 'notionApi', displayName: 'Notion API', properties: [
+    { name: 'apiKey', displayName: 'Key', type: 'string', required: true, typeOptions: { password: true } },
+    { name: 'baseUrl', displayName: 'API Base URL', type: 'string', default: 'https://api.notion.com' }] })], nodes: [] }));
+const fake = await startFakeNotion();
+const { id } = credentials.create({ name: 'Notion', type: 'productivity.notionApi', data: { apiKey: FAKE_NOTION_TOKEN, baseUrl: fake.url } });
+```
+
+`fake.state.requests` records every request (assert on headers' effects, counts and paths), `setRateLimit` and `failNext`
+script 429, 529 and 5xx. Pass `now` and `sleep` to `notionClient` to drive the limiter with a fake clock, and call
+`resetLimiters()` between tests. `LANDFLOW_NOTION_WRITE_LOG=<file>` records one id-only line per write.
+
+The company's pages as knowledge ([notion-brain.md](features/notion-brain.md#your-companys-pages-as-knowledge)) is `notion-knowledge-nb06.test.ts`: the real client over the fake (`editTimes: 'exact'`), the knowledge walk called as the sync step with a seeded link, BM25 with `LANDFLOW_BRAIN_EMBEDDINGS=off`, Ask with a scripted model, a scripted agent run, the reserved collections and `brain_search_knowledge` over the in-memory MCP transport. With `LANDFLOW_BACKBONE_CONTRACTS` set it also compares `sync.ts` with the contract.
 
 ### Checking a change live
 
@@ -218,13 +544,28 @@ LANDFLOW_OWNER_EMAIL=<from deploy/.env.example> LANDFLOW_OWNER_PASSWORD=<from de
   ([triage.md](triage.md#install)). Outside services are fakes: `pnpm fake-landfall` ([triage.md](triage.md#trying-it-locally)),
   and the messaging plugin's fakes ([plugins/messaging](../plugins/messaging/README.md)). Nothing reaches a real
   service.
+- **Under the production CSP**, build (`npx next build`, then restore `next-env.d.ts`) and start with `next start`,
+  `LANDFLOW_PROFILE=production` and `LANDFLOW_CSP=enforce` on a free port. Production refuses calls to local fakes
+  and runs Code nodes only in a runner: add `LANDFLOW_OUTBOUND_BLOCK_PRIVATE=false` (or list the fakes in
+  `LANDFLOW_OUTBOUND_ALLOW`) and `LANDFLOW_CODE_RUNNER_URL` (or `LANDFLOW_CODE_IN_PROCESS=true`) when the check needs them. Sign in, load the pages with a
+  `securitypolicyviolation` listener installed before load, and check that the page source has no script without a
+  nonce. The console is not enough: Chrome reports blocked sources as violations the console tool may not capture. Use
+  a separate headed Chrome (`playwright-core` with `channel: 'chrome'`), not the Claude in Chrome extension: the
+  extension bypasses the page's CSP in its tabs, so a violation there never fires.
 - **In the browser**, open `http://localhost:3100`, not `127.0.0.1`. `next dev` blocks its dev resources (`/_next/hmr`)
   for any origin other than `localhost` unless `allowedDevOrigins` lists it, so hot reload doesn't connect. Use a tab of
   your own and keep the console open: a check passes with no errors there.
 - **Restart after changing a singleton.** Server objects made with `singleton()` (`lib/server/singleton.ts`: the
   registry, broker connections and others) live on `globalThis` so that hot reload doesn't duplicate them. A reload
   therefore keeps the old instance, and a method you add to its class isn't on it ("registry.compositeTypes is not a
-  function"). Stop the dev server and start it again; installed node plugins start again with it.
+  function"). Stop the dev server and start it again; installed node plugins start again with it. Tests that need a
+  fresh one call `resetSingleton(key)` (the old `forgetSingleton` is the same function); keys used by more than one
+  file are in `singletonKeys`, and nothing else touches `globalThis.__landflow` (`test/singletons.test.ts` checks).
+  Tests that assert on insights, usage or retention after `store.saveExecution` call `ensureExecutionReactions()`
+  first, because the store only emits the event. The same goes for those reactions under `pnpm dev`: the listeners
+  `execution-reactions.ts` registered at boot keep the insights, usage ledger and settings code of the graph that
+  booted, so an edit to `insights.ts`, `usage/ledger.ts` or `retentionTick` takes effect on the save path only after
+  a restart.
 - **Through the API**, a script that signs in with the development owner (`POST /api/auth/login`, then the session
   cookie) can add the marketplace and install plugins. A node plugin's install answers `409` with what it will run until
   it is sent again with `{ "confirm": true }`. The script can then post alerts to a workflow's webhook and read

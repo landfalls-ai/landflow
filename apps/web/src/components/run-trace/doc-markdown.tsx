@@ -54,10 +54,15 @@ const components: Components = {
   input: ({ checked }) => <input type="checkbox" checked={checked} disabled readOnly className="mr-1.5 align-middle" />,
 };
 
-export function Markdown({ text, className }: { text: string; className?: string }) {
+/** In a chat reply a heading is a bold line, not a document's title. */
+const chatHeading = ({ children }: { children?: ReactNode }) => <p className="mt-2 break-words font-semibold text-t1 first:mt-0">{children}</p>;
+const chatComponents: Components = { ...components, h1: chatHeading, h2: chatHeading, h3: chatHeading, h4: chatHeading };
+
+/** `chat`: a chat reply (components/ui/chat.tsx): 13 px, headings as bold lines. */
+export function Markdown({ text, className, chat }: { text: string; className?: string; chat?: boolean }) {
   return (
-    <div className={cn('min-w-0 text-[13.5px] leading-relaxed text-t1', className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} skipHtml urlTransform={safeUrl} components={components}>
+    <div className={cn('min-w-0 leading-relaxed text-t1', chat ? 'text-[13px]' : 'text-[13.5px]', className)}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} skipHtml urlTransform={safeUrl} components={chat ? chatComponents : components}>
         {text}
       </ReactMarkdown>
     </div>

@@ -160,6 +160,59 @@ describe.each(['in-process', 'http', 'grpc'] as const)('Slack Trigger (%s)', (na
     expect((await method('checkExists', {})).exists ?? false).toBe(false);
   });
 
+  it('turns a signed button press (Interactivity, a form-encoded payload) into one item, once per press', async () => {
+    const staticData = (await method('create', {})).staticData!;
+    const press = {
+      type: 'block_actions',
+      team: { id: 'T1', domain: 'acme' },
+      api_app_id: 'A1',
+      user: { id: 'U7', username: 'dana', name: 'dana', team_id: 'T1' },
+      container: { type: 'message', message_ts: '1760000000.000900', channel_id: 'D7', is_ephemeral: false },
+      channel: { id: 'D7', name: 'directmessage' },
+      message: { ts: '1760000000.000900', text: 'R-12 needs you' },
+      trigger_id: '1234.5678.abcd',
+      response_url: 'https://hooks.slack.com/actions/T1/1/x',
+      actions: [{ type: 'button', action_id: 'landledger_approve', block_id: 'decide', value: '{"requestId":"req_1","step":1}', action_ts: '1760000001.1' }],
+    };
+    const form = `payload=${encodeURIComponent(JSON.stringify(press))}`;
+    const formHeaders = { 'content-type': 'application/x-www-form-urlencoded' };
+    const withPress = { ...PARAMETERS, events: ['message', 'block_actions'] };
+    const received = await deliver(staticData, form, { headers: formHeaders, parameters: withPress });
+    expect(received.error).toBeUndefined();
+    expect(received.idempotencyKey).toBe('block_actions:1234.5678.abcd');
+    expect(received.items).toHaveLength(1);
+    expect(received.items![0].json).toMatchObject({
+      type: 'block_actions',
+      teamId: 'T1',
+      user: 'U7',
+      userName: 'dana',
+      channel: 'D7',
+      messageTs: '1760000000.000900',
+      actionId: 'landledger_approve',
+      blockId: 'decide',
+      value: '{"requestId":"req_1","step":1}',
+      responseUrl: 'https://hooks.slack.com/actions/T1/1/x',
+      triggerId: '1234.5678.abcd',
+      text: 'R-12 needs you',
+      userTeamId: 'T1',
+    });
+    // The press as Slack signed it, for a service that checks Slack's signature itself (Landledger's relays).
+    const json = received.items![0].json as JsonObject;
+    expect(json.rawBody).toBe(form);
+    const headers = json.headers as JsonObject;
+    expect(Object.keys(headers).sort()).toEqual(['x-slack-request-timestamp', 'x-slack-signature']);
+    expect(headers['x-slack-signature']).toMatch(/^v0=[0-9a-f]{64}$/);
+    expect(slackSignature(SIGNING_SECRET, String(json.rawBody), Number(headers['x-slack-request-timestamp']))).toBe(headers['x-slack-signature']);
+    // Not selected (Any Event is the Events API only): acknowledged, no run.
+    const skipped = await deliver(staticData, form, { headers: formHeaders, parameters: { ...PARAMETERS, events: ['*'] } });
+    expect(skipped.items).toBeUndefined();
+    expect(body(skipped)).toEqual({ ignored: 'block_actions' });
+    // A forged press is refused like any unsigned call.
+    const forged = await deliver(staticData, form, { headers: formHeaders, parameters: withPress, signature: slackSignature('wrong-secret', form, Math.floor(Date.now() / 1000)) });
+    expect(forged.response?.status).toBe(401);
+    expect(forged.items).toBeUndefined();
+  });
+
   it('rejects calls without a valid signature (401), including stale and replayed ones', async () => {
     const staticData = (await method('create', {})).staticData!;
     const payload = callback({ type: 'message', channel: 'C1', user: 'U1', text: 'x', ts: '1.1' });
@@ -275,7 +328,7 @@ describe('Slack Trigger node', () => {
     const properties = Object.fromEntries(SlackTrigger.description.properties.map((p) => [p.name, p]));
     expect(properties.notice.displayName).toContain('Request URL');
     expect(properties.events.options?.map((o) => o.value)).toEqual([
-      '*', 'app_home_opened', 'app_mention', 'channel_created', 'channel_rename', 'file_public', 'file_shared', 'link_shared',
+      '*', 'app_home_opened', 'app_mention', 'block_actions', 'channel_created', 'channel_rename', 'file_public', 'file_shared', 'link_shared',
       'member_joined_channel', 'message', 'reaction_added', 'reaction_removed', 'team_join', 'user_change',
     ]);
     expect([properties.ignoreBots.default, properties.ignoreEdits.default, properties.watchWorkspace.default]).toEqual([true, true, true]);

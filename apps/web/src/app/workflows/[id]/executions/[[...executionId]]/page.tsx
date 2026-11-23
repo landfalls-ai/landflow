@@ -1,7 +1,16 @@
-import { ExecutionPreview } from '@/components/executions/execution-preview';
+import { redirect } from 'next/navigation';
 
-/** /workflows/:id/executions opens the newest execution; /workflows/:id/executions/:executionId a given one. */
-export default async function WorkflowExecutionPage({ params }: { params: Promise<{ id: string; executionId?: string[] }> }) {
+/** The old /workflows/:id/executions[/:executionId] link: the run list is /workflows/:id/runs now. The query string is kept. */
+export default async function LegacyExecutionsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string; executionId?: string[] }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id, executionId } = await params;
-  return <ExecutionPreview workflowId={id} executionId={executionId?.[0]} />;
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value]) query.append(key, v);
+  const search = query.size ? `?${query}` : '';
+  redirect(`/workflows/${encodeURIComponent(id)}/runs${executionId?.[0] ? `/${encodeURIComponent(executionId[0])}` : ''}${search}`);
 }

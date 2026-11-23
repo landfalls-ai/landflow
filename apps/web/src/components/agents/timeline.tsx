@@ -1,8 +1,8 @@
 'use client';
 /** A session's timeline: chat bubbles, expandable tool calls, approvals, errors. Shared by the test chat and the Sessions tab. */
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { Ban, Bot, Check, ChevronRight, Copy, ExternalLink, Hand, Info, Loader2, RadioTower, ShieldAlert, ThumbsDown, ThumbsUp, TriangleAlert, User, Waypoints, X } from 'lucide-react';
+import { Ban, Bot, Check, ChevronRight, Clock, Copy, ExternalLink, Hand, Info, Loader2, RadioTower, ShieldAlert, ThumbsDown, ThumbsUp, TriangleAlert, User, Waypoints, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { duration } from '@/lib/client/format';
@@ -10,10 +10,15 @@ import { nodeColor, tint } from '@/lib/client/node-style';
 import type { RemoteRun, TimelineEntry, ToolKind } from '@/lib/shared/agents';
 import type { ChatFeedback, FeedbackRating } from '@/lib/shared/chat-feedback';
 import { Button } from '../ui/button';
+import { AssistantRow, ChatError, ChatMarkdown, ReplyMeta, UserBubble, type ReplyInfo } from '../ui/chat';
+import { ActivityTrace } from '../ui/activity-trace';
+import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import { NodeIcon } from '../ui/icon';
 import { JsonView } from '../ui/json-view';
 import { shortArg, snippetOf } from '@/lib/client/node-progress';
 import { useNodeTypes } from './use-agent-data';
+import { Passages, passagesFor, ViaLine } from '../run-trace/passages'; // AG14:
+import { targetLine } from '@/lib/shared/tool-target'; // ag3 carryover:
 
 export type ToolEntry = Extract<TimelineEntry, { type: 'tool' }>;
 
@@ -50,6 +55,70 @@ export function TraceChip({ traceId, url }: { traceId: string; url?: string }) {
       </button>
     </span>
   );
+}
+
+
+const STEP_KIND: Record<ToolKind, ActivityKind> = { node: 'tool', workflow: 'run', agent: 'tool', skill: 'read', memory: 'think', a2a: 'tool', flow: 'run', notebook: 'write' };
+
+/** A tool row as a step of the activity trace: what it is called, how it ended, how long it took, a line of what came back. */
+export function toolStep(entry: ToolEntry): ActivityStep {
+  const status: ActivityStep['status'] = entry.status === 'success' ? 'ok' : entry.status === 'error' || entry.status === 'denied' ? 'failed' : 'running';
+  const detail = entry.error ?? (entry.status === 'denied' ? 'Denied' : snippetOf(entry.output, 300));
+  return { id: entry.id, label: entry.label, kind: STEP_KIND[entry.kind] ?? 'tool', status, ...(entry.durationMs !== undefined && { durationMs: entry.durationMs }), ...(detail && { detail }), ...(entry.target && { via: targetLine(entry.target) }) /* ag3 carryover: the Test chat's steps say where each call went */ };
+}
+
+/**
+ * What the footer under the reply at `index` says: the model, how long the turn took (from what the person said to the
+ * reply), the tool calls of the turn as steps, tokens and cost. Parts that are not known are left out.
+ */
+export function replyInfo(entries: TimelineEntry[], index: number): ReplyInfo {
+  const reply = entries[index];
+  if (reply?.type !== 'assistant') return {};
+  let start = index - 1;
+  while (start >= 0 && entries[start].type !== 'user') start--;
+  const asked = start >= 0 ? Date.parse(entries[start].at) : NaN;
+  const answered = Date.parse(reply.at);
+  const durationMs = Number.isFinite(asked) && Number.isFinite(answered) && answered >= asked ? answered - asked : undefined;
+  const steps = entries.slice(start + 1, index).filter((e) => e.type === 'tool').length;
+  return {
+    ...(reply.model && { model: reply.model, ...(reply.model.startsWith('ollama/') && { local: true }) }),
+    ...(durationMs !== undefined && { durationMs }),
+    ...(steps > 0 && { steps }),
+    ...(reply.usage && { inputTokens: reply.usage.inputTokens, outputTokens: reply.usage.outputTokens }),
+    ...(reply.usage?.costUsd !== undefined && { costUsd: reply.usage.costUsd }),
+  };
+}
+
+/** The steps of a run of tool calls, and the time they took together when every call says how long it took. */
+export function traceOf(tools: ToolEntry[]): { steps: ActivityStep[]; durationMs?: number } {
+  const steps = tools.map(toolStep);
+  const known = steps.filter((s) => s.durationMs !== undefined);
+  return { steps, ...(known.length === steps.length && steps.length > 0 && { durationMs: known.reduce((n, s) => n + (s.durationMs ?? 0), 0) }) };
+}
+
+export interface TimelineProps {
+  entries: TimelineEntry[];
+  /** A running tool call's live steps from elsewhere (the execution view: a sub-node's `node.progress`). */
+  liveSteps?: (entry: ToolEntry) => RemoteRun | undefined;
+  childHref?: (entry: ToolEntry) => string | undefined;
+  onDecide?: (callId: string, approved: boolean) => void;
+  deciding?: boolean;
+  /** AG05: what was already decided on the waiting calls (their buttons go; the row reads Approved or Denied). */
+  decisions?: Record<string, 'approved' | 'denied'>;
+  /** AG05: with two or more calls waiting, one Approve all (n) and Deny all above them. */
+  onDecideAll?: (callIds: string[], approved: boolean) => void;
+  /** Wider bubbles, for the Sessions tab. */
+  wide?: boolean;
+  /** Ratings by assistant entry id, and the handler that rates a reply (null takes it back); both given: thumbs under each reply. */
+  feedback?: Record<string, ChatFeedback>;
+  onRate?: (entryId: string, rating: FeedbackRating | null) => void;
+  /**
+   * The chat kit's look: a run of tool calls is one activity line that opens into its steps (a call waiting for approval
+   * stays a full row). `running` while the run is live; `traceUrl` becomes the last line's "Open trace".
+   */
+  trace?: { running: boolean; traceUrl?: string };
+  /** AP03: the session belongs to a workflow run whose calls wait in the approval inbox: no buttons here, a link to Needs you instead. */
+  inboxHref?: string;
 }
 
 const KIND_ICON: Record<ToolKind, string> = {
@@ -170,9 +239,15 @@ function ToolRow({
   childHref,
   onDecide,
   deciding,
+  decision,
   live,
+  inboxHref,
 }: {
   entry: ToolEntry;
+  /** AP03: the call waits in Needs you (a workflow's run nobody watches). */
+  inboxHref?: string;
+  /** AG05: this call was decided already. */
+  decision?: 'approved' | 'denied';
   /** The tool is a workflow sub-node reporting progress (no `remote` of its own): its steps so far. */
   live?: RemoteRun;
   childHref?: (entry: ToolEntry) => string | undefined;
@@ -198,9 +273,11 @@ function ToolRow({
           {entry.label !== entry.tool && <span className="ml-1.5 font-mono text-[11px] font-normal text-t3">{entry.tool}</span>}
         </span>
         {entry.status === 'denied' && <span className="text-[11px] text-t3">Denied</span>}
+        {waiting && decision && entry.status !== 'denied' && <span className="text-[11px] text-t3">{decision === 'approved' ? 'Approved' : 'Denied'}</span>}{/* AG05: */}
         {entry.durationMs !== undefined && <span className="font-mono text-[11px] text-t3">{duration(entry.durationMs)}</span>}
         <ToolStatusIcon status={entry.status} />
       </button>
+      {entry.target && <ViaLine target={entry.target} className="px-3 pb-1.5 pl-[38px] text-[11px]" />}{/* AG14: where the call went, under its name */}
       {(entry.remote ?? (entry.status === 'running' ? live : undefined)) && <RemoteSteps remote={(entry.remote ?? live)!} />}
       {waiting && (
         <div className="border-t border-warnbd bg-warndim px-3 py-2.5">
@@ -230,12 +307,27 @@ function ToolRow({
                   <JsonView value={step.args} />
                 </div>
               ))}
-          {onDecide && (
+          {/* AG05: a decided call keeps no buttons; it reads what it was decided as. */}
+          {decision && (
+            <p className="mt-2 text-[12px] font-semibold text-t2" data-testid="tool-decision">
+              {decision === 'approved' ? 'Approved' : 'Denied'}
+              <span className="font-normal text-t3"> · it goes on once every call this turn is decided</span>
+            </p>
+          )}
+          {inboxHref && waiting && (
+            <p className="mt-2 flex items-center gap-1.5 text-[12px] font-semibold text-t2" data-testid="waiting-in-needs-you">
+              <Clock className="size-3.5 shrink-0" aria-hidden /> Waiting in Needs you
+              <Link href={inboxHref} className="font-normal text-ac hover:underline">
+                Open it
+              </Link>
+            </p>
+          )}
+          {onDecide && !decision && (
             <div className="mt-2.5 flex gap-2">
-              <Button size="sm" variant="primary" loading={deciding} onClick={() => onDecide(entry.callId, true)}>
+              <Button size="sm" variant="primary" className="max-md:min-h-11" loading={deciding} onClick={() => onDecide(entry.callId, true)}>
                 {!deciding && <Check className="size-3.5" />} Approve
               </Button>
-              <Button size="sm" variant="outline" disabled={deciding} onClick={() => onDecide(entry.callId, false)}>
+              <Button size="sm" variant="outline" className="max-md:min-h-11" disabled={deciding} onClick={() => onDecide(entry.callId, false)}>
                 <Ban className="size-3.5" /> Deny
               </Button>
             </div>
@@ -257,6 +349,11 @@ function ToolRow({
                 {entry.error}
               </div>
             </div>
+          ) : entry.output !== undefined && passagesFor(entry.output).length > 0 ? (
+            <div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Passages</div>
+              <Passages output={entry.output} />
+            </div>
           ) : entry.output !== undefined ? (
             <div>
               <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">Output</div>
@@ -275,12 +372,12 @@ function ToolRow({
                 <Link
                   href={
                     entry.workflowId
-                      ? `/workflows/${encodeURIComponent(entry.workflowId)}/executions/${encodeURIComponent(entry.executionId)}`
-                      : `/executions?id=${encodeURIComponent(entry.executionId)}`
+                      ? `/workflows/${encodeURIComponent(entry.workflowId)}/runs/${encodeURIComponent(entry.executionId)}`
+                      : `/runs/${encodeURIComponent(entry.executionId)}`
                   }
                   className="inline-flex items-center gap-1 text-ac hover:underline"
                 >
-                  <ExternalLink className="size-3" /> Open execution
+                  <ExternalLink className="size-3" /> Open run
                 </Link>
               )}
               {entry.childSessionId &&
@@ -301,150 +398,132 @@ function ToolRow({
   );
 }
 
-function Avatar({ role }: { role: 'user' | 'assistant' | 'error' }) {
-  return (
-    <div
-      className={cn(
-        'grid size-[26px] shrink-0 place-items-center rounded-full border',
-        role === 'user' ? 'border-hair bg-wl text-t2' : role === 'error' ? 'border-rdbd bg-rddim text-rd' : 'border-acbd bg-acdim text-ac',
-      )}
-    >
-      {role === 'user' ? <User className="size-3.5" /> : role === 'error' ? <TriangleAlert className="size-3.5" /> : <Bot className="size-3.5" />}
-    </div>
-  );
+/** The timeline as keyed items, for a list that animates each one (ChatList) or a plain stack (TimelineView). */
+export function timelineItems({ entries, childHref, onDecide, deciding, decisions, onDecideAll, wide, feedback, onRate, liveSteps, trace, inboxHref /* AP03: */ }: TimelineProps): ReactNode[] {
+  // The Sessions tab is wide: a reply keeps a readable line length.
+  const measure = wide ? 'max-w-[680px]' : undefined;
+  const items: ReactNode[] = [];
+  // AG05: the calls still waiting for a person's yes or no (not decided yet), in order.
+  const undecided = entries.flatMap((e) => (e.type === 'tool' && e.status === 'awaiting_approval' && !decisions?.[e.callId] ? [e.callId] : []));
+  let group: ToolEntry[] = [];
+  const flush = (last: boolean) => {
+    if (!group.length) return;
+    const { steps, durationMs } = traceOf(group);
+    const live = !!trace?.running && last;
+    items.push(
+      <div key={`trace-${group[0].id}`} className={cn('pl-7', measure)}>
+        <ActivityTrace steps={steps} live={live} durationMs={durationMs} {...(last && trace?.traceUrl && { traceUrl: trace.traceUrl })} />
+      </div>,
+    );
+    group = [];
+  };
+  entries.forEach((entry, index) => {
+    if (trace && entry.type === 'tool' && entry.status !== 'awaiting_approval') {
+      group.push(entry);
+      return;
+    }
+    flush(false);
+    switch (entry.type) {
+      case 'user':
+        items.push(
+          <UserBubble key={entry.id} from={entry.from && entry.from !== 'you' ? entry.from : undefined}>
+            {entry.text}
+          </UserBubble>,
+        );
+        break;
+      case 'assistant':
+        items.push(
+          <AssistantRow key={entry.id} mark={<Bot className="size-3.5" />} className={measure}>
+            <ChatMarkdown text={entry.text} />
+            <ReplyMeta info={replyInfo(entries, index)} copy={entry.text}>
+              {onRate && (
+                <span className="flex items-center gap-0.5 font-sans">
+                  {(['up', 'down'] as const).map((rating) => {
+                    const on = feedback?.[entry.id]?.rating === rating;
+                    const Icon = rating === 'up' ? ThumbsUp : ThumbsDown;
+                    return (
+                      <button
+                        key={rating}
+                        onClick={() => onRate(entry.id, on ? null : rating)}
+                        aria-pressed={on}
+                        aria-label={rating === 'up' ? 'Good reply' : 'Bad reply'}
+                        title={rating === 'up' ? 'Good reply' : 'Bad reply'}
+                        className={cn('grid size-6 place-items-center rounded-full transition-colors hover:bg-wl max-md:size-11', on ? (rating === 'up' ? 'text-gn' : 'text-rd') : 'text-t3 hover:text-t1')}
+                      >
+                        <Icon className="size-3" />
+                      </button>
+                    );
+                  })}
+                  {feedback?.[entry.id]?.comment && <span className="truncate text-[11px] text-t3" title={feedback[entry.id].comment}>“{feedback[entry.id].comment}”</span>}
+                </span>
+              )}
+            </ReplyMeta>
+          </AssistantRow>,
+        );
+        break;
+      case 'tool':
+        // AG05: one bar above the first of two or more waiting calls.
+        if (!inboxHref /* AP03: */ && onDecide && onDecideAll && undecided.length >= 2 && undecided[0] === entry.callId) {
+          items.push(
+            <div key={`all-${entry.id}`} className={cn('flex items-center gap-2 pl-7', !wide && 'pr-1', measure)} data-testid="decide-all">
+              <Button size="sm" variant="primary" className="max-md:min-h-11" loading={deciding} onClick={() => onDecideAll(undecided, true)}>
+                {!deciding && <Check className="size-3.5" />} Approve all ({undecided.length})
+              </Button>
+              <Button size="sm" variant="outline" className="max-md:min-h-11" disabled={deciding} onClick={() => onDecideAll(undecided, false)}>
+                <Ban className="size-3.5" /> Deny all
+              </Button>
+            </div>,
+          );
+        }
+        items.push(
+          <div key={entry.id} className={cn('pl-7', !wide && 'pr-1', measure)}>
+            <ToolRow entry={entry} childHref={childHref} onDecide={inboxHref ? undefined : onDecide} inboxHref={inboxHref} deciding={deciding} decision={decisions?.[entry.callId]} live={liveSteps?.(entry)} />
+          </div>,
+        );
+        break;
+      case 'error':
+        items.push(
+          <div key={entry.id} className={cn('pl-7', measure)}>
+            <ChatError message={entry.message} />
+          </div>,
+        );
+        break;
+      case 'guardrail':
+        items.push(
+          <div key={entry.id} className={cn('pl-7', !wide && 'pr-1', measure)}>
+            <div className="animate-in rounded-xl border border-warnbd bg-warndim px-3 py-2 text-[12.5px] leading-snug text-t1">
+              <div className="flex items-center gap-1.5 font-semibold">
+                <ShieldAlert className="size-3.5 shrink-0 text-warn" />
+                {entry.stage === 'input' ? 'Input' : entry.stage === 'tool' ? 'Tool result' : 'Output'} guardrail {entry.action}
+              </div>
+              <ul className="mt-1 space-y-0.5 text-t2">
+                {entry.violations.map((v, i) => (
+                  <li key={i} className="[overflow-wrap:anywhere]">
+                    <span className="font-mono text-[11.5px]">{v.check}</span> · {v.type}
+                    {v.match ? <span className="font-mono text-[11.5px]"> {v.match}</span> : null}
+                    {v.confidence !== undefined ? ` (${Math.round(v.confidence * 100)}%)` : ''}
+                    {v.reason ? ` — ${v.reason}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>,
+        );
+        break;
+      case 'notice':
+        items.push(
+          <div key={entry.id} className="flex animate-in items-center justify-center gap-1.5 px-6 text-center text-[12px] text-t3">
+            <Info className="size-3 shrink-0" />
+            {entry.message}
+          </div>,
+        );
+        break;
+    }
+  });
+  flush(true);
+  return items;
 }
 
-export function TimelineView({
-  entries,
-  childHref,
-  onDecide,
-  deciding,
-  wide,
-  feedback,
-  onRate,
-  liveSteps,
-}: {
-  entries: TimelineEntry[];
-  /** A running tool call's live steps from elsewhere (the execution view: a sub-node's `node.progress`). */
-  liveSteps?: (entry: ToolEntry) => RemoteRun | undefined;
-  childHref?: (entry: ToolEntry) => string | undefined;
-  onDecide?: (callId: string, approved: boolean) => void;
-  deciding?: boolean;
-  /** Wider bubbles, for the Sessions tab. */
-  wide?: boolean;
-  /** Ratings by assistant entry id, and the handler that rates a reply (null takes it back); both given: thumbs under each reply. */
-  feedback?: Record<string, ChatFeedback>;
-  onRate?: (entryId: string, rating: FeedbackRating | null) => void;
-}) {
-  const bubble = wide ? 'max-w-[min(640px,85%)]' : 'max-w-[290px]';
-  return (
-    <div className="space-y-3">
-      {entries.map((entry) => {
-        switch (entry.type) {
-          case 'user':
-            return (
-              <div key={entry.id} className="flex animate-in flex-row-reverse gap-2.5">
-                <Avatar role="user" />
-                <div className={cn('min-w-0', bubble)}>
-                  {entry.from && entry.from !== 'you' && <div className="mb-0.5 text-right text-[11px] text-t3">{entry.from}</div>}
-                  <div className="whitespace-pre-wrap rounded-xl bg-ac2 px-3 py-2 text-[13px] leading-relaxed text-on-ac [overflow-wrap:anywhere]">
-                    {entry.text}
-                  </div>
-                </div>
-              </div>
-            );
-          case 'assistant':
-            return (
-              <div key={entry.id} className="flex animate-in gap-2.5">
-                <Avatar role="assistant" />
-                <div className={cn('min-w-0', bubble)}>
-                  <div className="whitespace-pre-wrap rounded-xl border border-hair bg-wl px-3 py-2 text-[13px] leading-relaxed text-t1 [overflow-wrap:anywhere]">
-                    {entry.text}
-                  </div>
-                  {onRate && (
-                    <div className="mt-1 flex items-center gap-1">
-                      {(['up', 'down'] as const).map((rating) => {
-                        const on = feedback?.[entry.id]?.rating === rating;
-                        const Icon = rating === 'up' ? ThumbsUp : ThumbsDown;
-                        return (
-                          <button
-                            key={rating}
-                            onClick={() => onRate(entry.id, on ? null : rating)}
-                            aria-pressed={on}
-                            aria-label={rating === 'up' ? 'Good reply' : 'Bad reply'}
-                            title={rating === 'up' ? 'Good reply' : 'Bad reply'}
-                            className={cn('rounded-md p-1 transition-colors hover:bg-wl', on ? (rating === 'up' ? 'text-gn' : 'text-rd') : 'text-t3 hover:text-t1')}
-                          >
-                            <Icon className="size-3" />
-                          </button>
-                        );
-                      })}
-                      {feedback?.[entry.id]?.comment && <span className="truncate text-[11px] text-t3" title={feedback[entry.id].comment}>“{feedback[entry.id].comment}”</span>}
-                    </div>
-                  )}
-                  {(entry.model || entry.usage) && (
-                    <div className="mt-1 flex gap-2 font-mono text-[10px] text-t3">
-                      {entry.model && <span>{entry.model}</span>}
-                      {entry.usage && (
-                        <span title="Input / output tokens">
-                          {entry.usage.inputTokens.toLocaleString()} in · {entry.usage.outputTokens.toLocaleString()} out
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          case 'tool':
-            return (
-              <div key={entry.id} className={cn('pl-[34px]', !wide && 'pr-1')}>
-                <ToolRow entry={entry} childHref={childHref} onDecide={onDecide} deciding={deciding} live={liveSteps?.(entry)} />
-              </div>
-            );
-          case 'error':
-            return (
-              <div key={entry.id} className="flex animate-in gap-2.5">
-                <Avatar role="error" />
-                <div
-                  className={cn(
-                    'min-w-0 whitespace-pre-wrap rounded-xl border border-rdbd bg-rddim px-3 py-2 text-[13px] leading-relaxed text-rd [overflow-wrap:anywhere]',
-                    bubble,
-                  )}
-                >
-                  {entry.message}
-                </div>
-              </div>
-            );
-          case 'guardrail':
-            return (
-              <div key={entry.id} className={cn('pl-[34px]', !wide && 'pr-1')}>
-                <div className="animate-in rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12.5px] leading-snug text-t1">
-                  <div className="flex items-center gap-1.5 font-semibold">
-                    <ShieldAlert className="size-3.5 shrink-0 text-amber-600" />
-                    {entry.stage === 'input' ? 'Input' : entry.stage === 'tool' ? 'Tool result' : 'Output'} guardrail {entry.action}
-                  </div>
-                  <ul className="mt-1 space-y-0.5 text-t2">
-                    {entry.violations.map((v, i) => (
-                      <li key={i} className="[overflow-wrap:anywhere]">
-                        <span className="font-mono text-[11.5px]">{v.check}</span> · {v.type}
-                        {v.match ? <span className="font-mono text-[11.5px]"> {v.match}</span> : null}
-                        {v.confidence !== undefined ? ` (${Math.round(v.confidence * 100)}%)` : ''}
-                        {v.reason ? ` — ${v.reason}` : ''}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            );
-          case 'notice':
-            return (
-              <div key={entry.id} className="flex animate-in items-center justify-center gap-1.5 px-6 text-center text-[12px] text-t3">
-                <Info className="size-3 shrink-0" />
-                {entry.message}
-              </div>
-            );
-        }
-      })}
-    </div>
-  );
+export function TimelineView(props: TimelineProps) {
+  return <div className="space-y-3">{timelineItems(props)}</div>;
 }

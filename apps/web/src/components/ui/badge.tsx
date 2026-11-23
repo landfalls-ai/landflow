@@ -32,6 +32,43 @@ export function Chip({ children, tone = 'muted', className, mono }: { children: 
   );
 }
 
+/**
+ * A filter you turn on and off (a category, a source), in a row of them (docs/ui-review.md#controls). `sm` for a long row
+ * of categories; on a phone, where they sit in the Filters sheet, 40 px either way.
+ */
+export function FilterChip({
+  active,
+  onClick,
+  children,
+  size = 'md',
+  title,
+  className,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+  size?: 'sm' | 'md';
+  title?: string;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={title}
+      className={cn(
+        'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border transition-colors max-md:h-10 max-md:px-3.5 max-md:text-[14px]',
+        size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-8 px-3.5 text-[13px]',
+        active ? 'border-ac bg-acdim font-semibold text-ac' : 'border-hair bg-sf text-t2 hover:border-ac hover:text-t1',
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function TransportBadge({ transport, className }: { transport: Transport; className?: string }) {
   return (
     <Badge tone="muted" className={cn('font-mono font-medium', className)}>
@@ -53,7 +90,7 @@ export function LanguageBadge({ language, className }: { language: string; class
 const STATUS_TONE: Record<string, string> = {
   online: 'bg-gn',
   success: 'bg-gn',
-  running: 'bg-ac',
+  running: 'bg-warn',
   paused: 'bg-warn',
   offline: 'bg-t3',
   error: 'bg-rd',
@@ -65,5 +102,5 @@ export function StatusDot({ status, pulse, className }: { status: PluginStatus |
 }
 
 export function executionTone(status: ExecutionState | 'paused'): Tone {
-  return status === 'success' ? 'success' : status === 'error' ? 'danger' : status === 'paused' ? 'warning' : status === 'running' ? 'accent' : 'muted';
+  return status === 'success' ? 'success' : status === 'error' ? 'danger' : status === 'paused' || status === 'running' ? 'warning' : 'muted';
 }

@@ -33,11 +33,12 @@ import type { TeamMoment } from '@/lib/shared/team-progress';
 import { faceOf } from './faces';
 import { ConsultLines } from './consult-lines';
 import { newId } from './util';
+import { GoalPicker } from '../goals/goal-picker';
+import { memberOptions, optionLabel, type AvailableAgent } from './member-options';
 import { MemberCards } from './member-cards';
 import { modelLabel, useLastTeamRun, type LastTeamRun } from './team-run-data';
 import { RunTimelineLive } from '../run-trace/run-timeline-card';
 import { RunLines } from '../run-trace/run-line';
-import { useNewLook } from '../shell/look-toggle';
 
 export { modelLabel };
 
@@ -57,7 +58,6 @@ function below(config: AgentTeamConfig, id: string): Set<string> {
 export function TeamBuilder({ teamId }: { teamId: string }) {
   const router = useRouter();
   const agents = useAgentList();
-  const newLook = useNewLook();
   const lastRun = useLastTeamRun(teamId);
   const [team, setTeam] = useState<AgentTeam>();
   const [draft, setDraft] = useState<AgentTeamConfig>();
@@ -79,6 +79,20 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
     router.replace(q.size ? `?${q}` : `/agents/teams/${teamId}`, { scroll: false });
   };
   const [noteTotal, setNoteTotal] = useState<number>();
+  // The agents available in the team's project (docs/agent-teams.md#picking-members); undefined on an error or without a project: the picker lists every agent.
+  const homeProject = team?.projectId;
+  const [available, setAvailable] = useState<AvailableAgent[]>();
+  useEffect(() => {
+    setAvailable(undefined);
+    if (!homeProject) return;
+    let live = true;
+    api<{ agents: AvailableAgent[] }>(`/api/agents?availableIn=${encodeURIComponent(homeProject)}`)
+      .then((r) => live && Array.isArray(r.agents) && setAvailable(r.agents))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [homeProject]);
   useEffect(() => {
     api<{ counts: { total: number } }>(`/api/agent-teams/${teamId}/notes?scope=team`)
       .then((r) => setNoteTotal(r.counts.total))
@@ -300,10 +314,11 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
           <Field id="team-goal" label="Goal" hint="What the team is for: every request inside it carries this.">
             <Textarea id="team-goal" rows={2} value={draft.goal ?? ''} onChange={(e) => update((c) => ({ ...c, goal: e.target.value }))} placeholder="Build approved plugins on a branch, tested and reviewed" />
           </Field>
+          <TeamGoalField value={draft.goalId} projectId={homeProject} onChange={(goalId) => update((c) => ({ ...c, goalId }))} />
 
-          {newLook && lastRun?.live && <RunTimelineLive executionId={lastRun.executionId} name={lastRun.workflowName} />}
-          {newLook && lastRun && !lastRun.live && <RunLines runs={[{ id: lastRun.executionId, href: `/runs/${lastRun.executionId}`, name: lastRun.workflowName, startedAt: lastRun.startedAt }]} />}
-          {newLook && <MemberCards config={draft} teamName={draft.name} agents={agents ?? []} run={lastRun} />}
+          {lastRun?.live && <RunTimelineLive executionId={lastRun.executionId} name={lastRun.workflowName} />}
+          {lastRun && !lastRun.live && <RunLines runs={[{ id: lastRun.executionId, href: `/runs/${lastRun.executionId}`, name: lastRun.workflowName, startedAt: lastRun.startedAt, ...(lastRun.workflowId && { workflowId: lastRun.workflowId }) }]} />}
+          <MemberCards config={draft} teamName={draft.name} agents={agents ?? []} run={lastRun} />
 
           <section aria-label="Org chart">
             <div className="mb-1.5 flex items-center justify-between">
@@ -420,6 +435,7 @@ export function TeamBuilder({ teamId }: { teamId: string }) {
           member={editing.member}
           reportsTo={editing.reportsTo}
           agents={agents ?? []}
+          available={available}
           onSave={(m) => {
             saveMember(m);
             setEditing(undefined);
@@ -557,11 +573,21 @@ function TeamModelField({ value, agentModel, onChange }: { value?: AgentModel; a
   );
 }
 
+/** Which of the project's goals this team serves (docs/projects-and-goals.md); empty: the project's own goal. */
+export function TeamGoalField({ value, projectId, onChange, goals }: { value?: string; projectId?: string; onChange: (id: string | undefined) => void; goals?: Parameters<typeof GoalPicker>[0]['goals'] }) {
+  return (
+    <Field label="Project goal" hint="Which of the project’s goals this team serves. Empty: the project’s goal.">
+      <GoalPicker value={value} onChange={onChange} projectId={projectId} allowNone noneLabel="The project's goal" goals={goals} ariaLabel="Project goal" />
+    </Field>
+  );
+}
+
 function MemberDialog({
   config,
   member,
   reportsTo,
   agents,
+  available,
   onSave,
   onRemove,
   onClose,
@@ -571,6 +597,8 @@ function MemberDialog({
   /** A new member's manager. */
   reportsTo?: string;
   agents: AgentSummary[];
+  /** The agents available in the team's project; absent: every agent is offered. */
+  available?: AvailableAgent[];
   onSave: (member: TeamMember) => void;
   onRemove?: () => void;
   onClose: () => void;
@@ -650,10 +678,9 @@ function MemberDialog({
           <Field id="member-agent" label="Agent" required>
             <Select id="member-agent" value={value.agentId} onChange={(e) => pickAgent(e.target.value)}>
               <option value="">Choose an agent</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                  {a.role ? `, ${a.role}` : ''}
+              {memberOptions(agents, available, [...config.members.flatMap((m) => (m.kind === 'agent' ? [m.agentId] : [])), value.kind === 'agent' ? value.agentId : '']).map((o) => (
+                <option key={o.id} value={o.id}>
+                  {optionLabel(o)}
                 </option>
               ))}
             </Select>
@@ -695,7 +722,7 @@ function MemberDialog({
                       type="checkbox"
                       checked={on}
                       onChange={() => set({ reviews: on ? (value.reviews ?? []).filter((r) => r !== m.id) : [...(value.reviews ?? []), m.id] })}
-                      className="size-4 accent-[var(--ac)]"
+                      className="size-4"
                     />
                     {m.title || 'Untitled'}
                     {on && <Check className="ml-auto size-3.5 text-ac" />}
@@ -718,7 +745,7 @@ function MemberDialog({
                       type="checkbox"
                       checked={on}
                       onChange={() => set({ consults: on ? (value.consults ?? []).filter((r) => r !== m.id) : [...(value.consults ?? []), m.id] })}
-                      className="size-4 accent-[var(--ac)]"
+                      className="size-4"
                     />
                     {m.title || 'Untitled'}
                     {on && <Check className="ml-auto size-3.5 text-ac" />}

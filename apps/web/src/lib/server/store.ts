@@ -15,13 +15,12 @@ import type { CheckpointState, NodeRun, Workflow } from '@landflow/engine';
 import type { ExecutionRecord, ExecutionState, ExecutionSummary, WorkflowSummary } from '../shared/types';
 import { currentActorId } from './auth/context';
 import { database, dataDir, type Database } from './db';
+import { promoteExecution, readExecutionData, readRows } from './db/reads';
 import { executionRow, parse, pollRow, summarize, trimRunData, workflowRow } from './db/rows';
-import { recordExecutionInsights } from './insights';
-import { recordExecutionUsage } from './usage/ledger';
-import { pruneExecutions } from './settings';
-import { singleton } from './singleton';
+import { backtestScope } from './brain/backtest-scope';
+import { guardWorkflowSave, singleton } from './singleton';
 import { syncPublication } from './publications';
-import { recordVersion, versionFor } from './versions';
+import { recordVersion, versionFor, versionHash } from './versions';
 
 /** Write JSON through a temp file and a rename, so readers never see half a file. */
 export function atomicWrite(path: string, data: unknown) {
@@ -58,6 +57,49 @@ export interface StoredCheckpoint {
   baseSteps: number;
   /** `$('Node')` outputs when the running segment started (later ones come from the node runs). */
   baseOutputs?: Record<string, NodeItem[][]>;
+}
+
+/** What a finished execution tells its listeners (the record as saved, its summary, and its workflow if known). */
+export interface FinishedExecution {
+  record: ExecutionRecord;
+  summary: ExecutionSummary;
+  workflow: Workflow | undefined;
+}
+
+type FinishedListener = (finished: FinishedExecution) => void;
+const finishedListeners = () => singleton('store-execution-finished', () => [] as FinishedListener[]);
+
+/**
+ * Run `listener` after every execution that finished saving: not one still running or queued, and not a backtest's run
+ * (brain/backtest.ts), exactly the saves that count. Held in `singleton()`, so every module graph shares the list.
+ * Returns the unsubscribe.
+ */
+export function onExecutionFinished(listener: FinishedListener): () => void {
+  const listeners = finishedListeners();
+  listeners.push(listener);
+  return () => {
+    const at = listeners.indexOf(listener);
+    if (at >= 0) listeners.splice(at, 1);
+  };
+}
+
+/** What runs in the transaction of a save: gets the record and a way to read the status the execution had before this save. */
+type SavingListener = (record: ExecutionRecord, previousStatus: () => ExecutionState | undefined) => void;
+const savingListeners = () => singleton('store-execution-saving', () => [] as SavingListener[]);
+
+/**
+ * Run `listener` inside the transaction that saves an execution (every save, not a backtest's run), before the row is
+ * written, so `previousStatus()` still reads the status the execution had. What it writes (the event outbox rows,
+ * outbox/events.ts) commits or rolls back with the execution; a listener that throws stops the save, so it must catch
+ * its own errors. Returns the unsubscribe.
+ */
+export function onExecutionSaving(listener: SavingListener): () => void {
+  const listeners = savingListeners();
+  listeners.push(listener);
+  return () => {
+    const at = listeners.indexOf(listener);
+    if (at >= 0) listeners.splice(at, 1);
+  };
 }
 
 /** Statuses that were never shown in the history before they finished: left out of stats(). */
@@ -119,15 +161,30 @@ class Store {
     return this.cache.get(id);
   }
 
-  saveWorkflow(workflow: Workflow): Workflow {
+  /**
+   * Save a workflow. `autosave`: the editor's timed save, which folds into the newest autosave's version
+   * (lib/server/versions.ts). `actor`: who saves it (null: nobody); omitted, the signed-in user of the current request.
+   * `versionAuthor`: who a new version is credited to when that isn't the actor (a restore credits the restored
+   * version's author; null: nobody); omitted, the actor.
+   *
+   * Who made and last changed a workflow come only from the actor, never from the saved body. A save with no actor
+   * that changes the graph (anything versionHash counts) or its pin data records nobody as `updatedBy`, and the version
+   * it makes has no author.
+   */
+  saveWorkflow(workflow: Workflow, options: { autosave?: boolean; actor?: string | null; versionAuthor?: string | null } = {}): Workflow {
     const now = new Date().toISOString();
-    // Who: the signed-in user of the request saving it (none for system saves, which keep the last one).
-    const actor = currentActorId();
+    const actor = options.actor !== undefined ? (options.actor ?? undefined) : currentActorId();
+    // The installed access flows decide who gets access: whoever saves them, by whatever route, must be an instance admin (a save with no
+    // actor is the server's own).
+    if (actor) guardWorkflowSave(workflow.id, actor);
     const existing = this.cache.get(workflow.id);
-    const createdBy = existing ? existing.createdBy : (workflow.createdBy ?? actor);
-    const updatedBy = actor ?? workflow.updatedBy;
+    const { createdBy: _createdBy, updatedBy: _updatedBy, ...body } = workflow;
+    const createdBy = existing ? existing.createdBy : actor;
+    const unchanged = Boolean(existing) && versionHash(existing!) === versionHash(workflow) && JSON.stringify(existing!.pinData ?? null) === JSON.stringify(workflow.pinData ?? null);
+    const updatedBy = actor ?? (unchanged ? existing!.updatedBy : undefined);
+    const author = options.versionAuthor !== undefined ? (options.versionAuthor ?? undefined) : actor;
     const saved: Workflow = {
-      ...workflow,
+      ...body,
       createdAt: existing?.createdAt ?? workflow.createdAt ?? now,
       updatedAt: now,
       ...(createdBy && { createdBy }),
@@ -136,16 +193,25 @@ class Store {
     this.db.transaction(() => {
       this.db.upsert('workflows', workflowRow(saved));
       // A save is a draft; turning `active` on or off (older clients) publishes it or unpublishes.
-      syncPublication(saved, (recordVersion(saved) ?? versionFor(saved))?.id);
+      const version = recordVersion(saved, { ...(options.autosave && { autosave: { by: actor ?? '' } }), ...(author && { author }) }) ?? versionFor(saved);
+      syncPublication(saved, version?.id, actor);
     });
     this.cache.set(saved.id, saved);
     this.listeners.forEach((listener) => listener());
     return saved;
   }
 
-  deleteWorkflow(id: string): boolean {
+  /**
+   * Delete a workflow. `alsoDelete` runs in the same transaction (its versions, publications, project rows and policy:
+   * the route passes them, this module doesn't import them), so a failure leaves everything in place; the cache and
+   * the listeners change after the commit.
+   */
+  deleteWorkflow(id: string, alsoDelete?: () => void): boolean {
     if (!this.cache.has(id)) return false;
-    this.db.delete('workflows', { id });
+    this.db.transaction(() => {
+      this.db.delete('workflows', { id });
+      alsoDelete?.();
+    });
     this.cache.delete(id);
     this.listeners.forEach((listener) => listener());
     return true;
@@ -154,15 +220,23 @@ class Store {
   // ---- executions ---------------------------------------------------------
 
   saveExecution(record: ExecutionRecord) {
-    this.db.upsert('executions', executionRow(trimRunData(record)));
+    const saving = backtestScope() ? [] : [...savingListeners()];
+    if (!saving.length) this.db.upsert('executions', executionRow(trimRunData(record)));
+    else {
+      this.db.transaction(() => {
+        const previousStatus = () => this.db.get<{ status: ExecutionState }>('SELECT status FROM executions WHERE id = ?', record.executionId)?.status;
+        for (const listener of saving) listener(record, previousStatus);
+        this.db.upsert('executions', executionRow(trimRunData(record)));
+      });
+    }
     if (IN_FLIGHT.has(record.status)) return;
+    // A backtest's run of a detector flow (brain/backtest.ts) is deleted afterwards and counts nowhere.
+    if (backtestScope()) return;
     const summary = summarize(record);
-    // Insights first: its rollup keeps the run's counts after retention deletes the execution.
-    recordExecutionInsights(summary);
-    // The usage ledger too (docs/second-brain.md): what ran, failed and was slow, without the items.
-    recordExecutionUsage(record, record.workflow ?? this.getWorkflow(record.workflowId));
-    // Retention (Settings → General): count and age; running and waiting executions are never pruned.
-    pruneExecutions();
+    // The store does not call up into features: insights, the usage ledger and retention subscribe at boot
+    // (execution-reactions.ts), in registration order.
+    const finished: FinishedExecution = { record, summary, workflow: record.workflow ?? this.getWorkflow(record.workflowId) };
+    for (const listener of [...finishedListeners()]) listener(finished);
   }
 
   /** Change fields of a saved execution (links between retries, a scheduled retry) without counting it again. */
@@ -185,17 +259,38 @@ class Store {
     return this.db.all<{ summary: string }>(sql, ...params).flatMap((row) => parse<ExecutionSummary>(row.summary) ?? []);
   }
 
+  /**
+   * A saved execution, synchronously. For runs in flight only (running, waiting, queued) and for the runner's own
+   * bookkeeping: once Postgres serves run data on demand (db/reads.ts) a finished run is not here to be read
+   * synchronously. Use `loadExecution` for anything that may have finished.
+   */
   getExecution(id: string): ExecutionRecord | undefined {
     if (!/^[\w-]+$/.test(id)) return undefined;
     return parse<ExecutionRecord>(this.db.get<{ data: string }>('SELECT data FROM executions WHERE id = ?', id)?.data);
   }
 
-  /** The newest finished or waiting executions whose saved record contains `text` (a team id in a flow's snapshot), newest first. */
-  executionsMentioning(text: string, limit = 5): ExecutionRecord[] {
+  /** A saved execution through the async read seam (db/reads.ts): the reader for any run that may have finished. */
+  async loadExecution(id: string): Promise<ExecutionRecord | undefined> {
+    if (!/^[\w-]+$/.test(id)) return undefined;
+    return parse<ExecutionRecord>(await readExecutionData(id));
+  }
+
+  /**
+   * Make a run writable before re-running, retrying or answering it (db/reads.ts `promoteExecution`): in Postgres mode a
+   * cold run's data and journal are loaded back into the in-memory copy. Nothing to do for a hot run or on SQLite.
+   */
+  async promoteExecution(id: string): Promise<void> {
+    await promoteExecution(id);
+  }
+
+  /**
+   * The newest finished or waiting executions whose saved record contains `text` (a team id in a flow's snapshot), newest
+   * first, through the async read seam (in Postgres mode a scan of the whole history there).
+   */
+  async executionsMentioningAsync(text: string, limit = 5): Promise<ExecutionRecord[]> {
     const pattern = `%${text.replace(/[%_\\]/g, '\\$&')}%`;
-    return this.db
-      .all<{ data: string }>("SELECT data FROM executions WHERE status <> 'running' AND data LIKE ? ESCAPE '\\' ORDER BY started_at DESC, id DESC LIMIT ?", pattern, Math.max(1, Math.floor(limit)))
-      .flatMap((row) => parse<ExecutionRecord>(row.data) ?? []);
+    const rows = await readRows<{ data: string }>("SELECT data FROM executions WHERE status <> 'running' AND data LIKE ? ESCAPE '\\' ORDER BY started_at DESC, id DESC LIMIT ?", pattern, Math.max(1, Math.floor(limit)));
+    return rows.flatMap((row) => parse<ExecutionRecord>(row.data) ?? []);
   }
 
   /** Saved executions in one state, oldest first. */
@@ -218,8 +313,17 @@ class Store {
     return this.executionsWithStatus('waiting').reverse();
   }
 
-  deleteExecution(id: string): boolean {
+  /**
+   * Delete an execution and what hangs on it. `ending` is the finished record of a run that is not kept (a workflow that
+   * saves no successful or failed runs): the saving listeners see it first, in this transaction, so its end event is
+   * written exactly when its row is deleted (the event outbox, outbox/events.ts).
+   */
+  deleteExecution(id: string, ending?: ExecutionRecord): boolean {
     const deleted = this.db.transaction(() => {
+      if (ending && !backtestScope()) {
+        const previousStatus = () => this.db.get<{ status: ExecutionState }>('SELECT status FROM executions WHERE id = ?', id)?.status;
+        for (const listener of [...savingListeners()]) listener(ending, previousStatus);
+      }
       const deleted = this.db.delete('executions', { id }) > 0;
       this.db.delete('execution_steps', { execution_id: id });
       this.db.delete('execution_checkpoints', { execution_id: id });

@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { CredentialError, credentials } from '@/lib/server/credentials/vault';
+import { recordAudit } from '@/lib/server/audit';
+import { credentials } from '@/lib/server/credentials/vault';
 import { registry } from '@/lib/server/plugins/registry';
-import { error, handler, json, parseBody } from '@/lib/server/http';
+import { handler, json, parseBody } from '@/lib/server/http';
 import { redactValue, resolveCredentialData, SecretsError } from '@/lib/server/secrets';
 import { requireResource } from '@/lib/server/projects';
 import { routeActor } from '@/lib/server/projects/http';
@@ -20,10 +21,19 @@ export const POST = handler(async (request: Request) => {
     if (body.data.id) await credentials.refreshOAuth2(body.data.id);
     // `$secrets` in the fields resolve like they do for a node; the plugin's answer is redacted.
     const data = await resolveCredentialData(credentials.testData(body.data.type, body.data.data, body.data.id));
-    const result = redactValue(await registry.testCredentials(body.data.type, data));
+    const audit = (ok: boolean, extra: Record<string, unknown> = {}) =>
+      recordAudit({ action: 'credential.test', outcome: ok ? 'success' : 'failure', target: { type: 'credential', ...(body.data.id && { id: body.data.id }), name: body.data.type }, summary: `Tested a ${body.data.type} credential`, details: { type: body.data.type, ...(body.data.id && { credentialId: body.data.id }), ok, ...extra } });
+    // From here the secrets were sent to the plugin: a test that throws is recorded too (its message is not).
+    let result;
+    try {
+      result = redactValue(await registry.testCredentials(body.data.type, data));
+    } catch (caught) {
+      audit(false, { error: caught instanceof Error ? caught.name : 'error' });
+      throw caught;
+    }
+    audit(result.ok !== false);
     return json({ ...result, durationMs: Date.now() - started });
   } catch (caught) {
-    if (caught instanceof CredentialError) return error(caught.message, caught.status);
     if (caught instanceof SecretsError) return json({ ok: false, message: caught.message });
     throw caught;
   }

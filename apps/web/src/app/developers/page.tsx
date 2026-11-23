@@ -1,11 +1,14 @@
 'use client';
-import { Fragment, useState } from 'react';
+import { Segmented } from '@/components/ui/segmented';
+import { Fragment, useEffect, useState } from 'react';
 import { Check, Copy, FileCode2, Radio, Server, Workflow } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { languageMeta } from '@/lib/client/format';
+import { DevOnly } from '@/lib/client/developer-details';
 import { Card, PageBody, PageHeader } from '@/components/shell/page-header';
 import { TransportBadge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ApiDocs } from '@/components/settings/api-docs';
 
 const SAMPLES = {
   typescript: {
@@ -272,9 +275,9 @@ service RegistryService {           // hosted by Landflow on :7070
 
 const codeBlock = 'rounded-[10px] border border-hair bg-wl font-mono text-[12px] leading-[1.6] text-t1';
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, id, children }: { title: string; id?: string; children: React.ReactNode }) {
   return (
-    <section>
+    <section id={id} className="scroll-mt-4">
       <h2 className="mb-3 text-[15px] font-semibold text-t1">{title}</h2>
       {children}
     </section>
@@ -285,15 +288,27 @@ function Mono({ children }: { children: React.ReactNode }) {
   return <code className="rounded border border-hair bg-wl px-1 font-mono text-[12px] text-t1">{children}</code>;
 }
 
+/** Brings the API reference's heading to the top when the address asks for it. */
+function toReference() {
+  if (window.location.hash === '#api-reference') document.getElementById('api-reference')?.scrollIntoView({ block: 'start' });
+}
+
 export default function DevelopersPage() {
   const [lang, setLang] = useState<Lang>('typescript');
   const [copied, setCopied] = useState(false);
   const sample = SAMPLES[lang];
 
+  // A link to #api-reference (Settings used to hold it) lands with the heading at the top: once the page has laid out,
+  // and again when the OpenAPI document has loaded, since until then the page may be too short to bring it to the top.
+  useEffect(() => {
+    const t = window.setTimeout(toReference, 150);
+    return () => window.clearTimeout(t);
+  }, []);
+
   return (
     <>
-      <PageHeader title="Build a plugin" meta={<span>SDKs for TypeScript, Python and Go</span>} />
-      <PageBody className="flex max-w-[960px] flex-col gap-8">
+      <PageHeader title="Developers" meta={<span>Build a plugin with the TypeScript, Python and Go SDKs · the API reference</span>} />
+      <PageBody width="narrow" className="flex flex-col gap-8">
         <p className="max-w-[72ch] text-[13px] leading-relaxed text-t2">
           Implement one interface, serve it, and you&apos;re done. Landflow discovers your plugin, renders its parameters, runs it in workflows and lets AI agents use it as a tool.
         </p>
@@ -317,23 +332,10 @@ export default function DevelopersPage() {
 
         <Section title="Implement a node">
           <div className="mb-2.5 flex flex-wrap items-center gap-3">
-            <div role="tablist" aria-label="SDK language" className="inline-flex rounded-lg border border-hair bg-wl p-0.5">
-              {(Object.keys(SAMPLES) as Lang[]).map((key) => {
-                const active = lang === key;
-                return (
-                  <button
-                    key={key}
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setLang(key)}
-                    className={cn('rounded-md border px-3 py-1 text-[13px] transition-colors duration-[120ms]', active ? 'border-bd bg-sf font-semibold text-t1' : 'border-transparent text-t2 hover:text-t1')}
-                  >
-                    {languageMeta(key).label}
-                  </button>
-                );
-              })}
-            </div>
-            <span className="truncate font-mono text-[12px] text-t3">{sample.file}</span>
+            <Segmented label="SDK language" value={lang} onChange={setLang} options={(Object.keys(SAMPLES) as Lang[]).map((key) => ({ value: key, label: languageMeta(key).label }))} />
+            <DevOnly>
+              <span className="truncate font-mono text-[12px] text-t3">{sample.file}</span>
+            </DevOnly>
             <Button
               variant="ghost"
               size="icon-sm"
@@ -357,7 +359,7 @@ export default function DevelopersPage() {
         </Section>
 
         <Section title="Credentials, polling triggers and observability">
-          <p className="mb-3 max-w-[80ch] text-[13px] leading-relaxed text-t2">
+          <p className="mb-3 max-w-[80ch] text-[13px] leading-relaxed text-t2 [overflow-wrap:anywhere]">
             Declare credential types and the host stores them encrypted, renders their form and sends the values only to the node that uses them. A trigger with{' '}
             <Mono>triggerSource: &apos;poll&apos;</Mono> is called on schedule with the state it returned last time. Every SDK continues the host&apos;s trace (W3C{' '}
             <Mono>traceparent</Mono> over HTTP headers or gRPC metadata), writes JSON logs with trace ids and serves <Mono>/metrics</Mono>; spans, metrics and a traced HTTP
@@ -395,10 +397,14 @@ export default function DevelopersPage() {
         </Section>
 
         <Section title="Built-in nodes">
-          <p className="max-w-[80ch] text-[13px] leading-relaxed text-t2">
+          <p className="max-w-[80ch] text-[13px] leading-relaxed text-t2 [overflow-wrap:anywhere]">
             The host&apos;s own built-in nodes implement the same <Mono>INodeType</Mono> interface; they are simply registered in-process. The full spec lives in <Mono>docs/protocol.md</Mono>, the contract in{' '}
             <Mono>packages/protocol/proto/landflow/plugin/v1/plugin.proto</Mono>, and JSON Schemas in <Mono>packages/protocol/schema/</Mono>.
           </p>
+        </Section>
+
+        <Section title="API reference" id="api-reference">
+          <ApiDocs onLoaded={() => requestAnimationFrame(toReference)} />
         </Section>
       </PageBody>
     </>

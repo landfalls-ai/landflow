@@ -32,10 +32,29 @@ import {
 } from './oauth2';
 import { prepareMcpAuthorization } from '../mcp/oauth';
 import { mcpUrlBlocked } from '../governance/policy';
-import { CredentialError, credentials, resolveOAuth2Secrets } from './vault';
+import { CredentialError, credentials, resolveOAuth2Secrets, type CredentialChange } from './vault';
+import { publicUrl, publicUrlConfigured } from '../config';
 
 const stateKey = () => credentials.deriveKey('oauth2.state');
 const pkceKey = () => credentials.deriveKey('oauth2.pkce');
+
+/**
+ * A state signed by any key the ring derives (a flow started before a rotation or the HKDF upgrade, for one release),
+ * with the PKCE key of the same position. A state no key accepts fails with the first key's message.
+ */
+function verifyAnyState(state: string | null): { payload: ReturnType<typeof verifyState>; pkce: Buffer } {
+  const states = credentials.deriveKeys('oauth2.state');
+  const pkces = credentials.deriveKeys('oauth2.pkce');
+  let first: unknown;
+  for (const [index, key] of states.entries()) {
+    try {
+      return { payload: verifyState(key, state), pkce: pkces[index]! };
+    } catch (error) {
+      first ??= error;
+    }
+  }
+  throw first;
+}
 
 /**
  * The redirect URL to register with providers: LANDFLOW_OAUTH2_REDIRECT_URL, else LANDFLOW_PUBLIC_URL's callback,
@@ -44,7 +63,7 @@ const pkceKey = () => credentials.deriveKey('oauth2.pkce');
 export function oauth2RedirectUrl(request?: Request): string {
   const configured = process.env.LANDFLOW_OAUTH2_REDIRECT_URL?.trim();
   if (configured) return configured;
-  const base = process.env.LANDFLOW_PUBLIC_URL?.trim() || (request ? new URL(request.url).origin : `http://localhost:${process.env.PORT ?? 3000}`);
+  const base = publicUrlConfigured() || !request ? publicUrl() : new URL(request.url).origin;
   return `${base.replace(/\/+$/, '')}${OAUTH2_CALLBACK_PATH}`;
 }
 
@@ -58,7 +77,7 @@ function cookie(name: string, value: string, maxAge: number, request: Request): 
  * Start a Connect flow: where to send the browser, and the cookie that ties the callback to it. The client fields may
  * read `$secrets` (here, at the code exchange, refreshes and client credentials grants: `resolveOAuth2Secrets`).
  */
-export async function startAuthorization(credentialId: string, request: Request, now = Date.now(), fetchImpl: typeof fetch = fetch): Promise<{ url: string; cookie: string }> {
+export async function startAuthorization(credentialId: string, request: Request, by: CredentialChange, now = Date.now(), fetchImpl: typeof fetch = fetch): Promise<{ url: string; cookie: string }> {
   const redirectUri = oauth2RedirectUrl(request);
   // An MCP server's credential: find the authorization server and a client first (RFC 9728, 8414, 7591: lib/server/mcp/oauth.ts).
   const mcp = credentials.mcpOAuth(credentialId);
@@ -71,7 +90,7 @@ export async function startAuthorization(credentialId: string, request: Request,
   }
   const config = await resolveOAuth2Secrets(credentials.oauth2(credentialId).config);
   const nonce = newNonce();
-  const state = signState(stateKey(), { c: credentialId, n: nonce, r: redirectUri, e: now + STATE_TTL_MS });
+  const state = signState(stateKey(), { c: credentialId, n: nonce, r: redirectUri, e: now + STATE_TTL_MS, ...(by.actor && { u: by.actor }) });
   const codeChallenge = config.grantType === 'pkce' ? pkceChallenge(pkceVerifier(pkceKey(), nonce)) : undefined;
   return { url: authorizationUrl(config, { redirectUri, state, ...(codeChallenge && { codeChallenge }) }), cookie: cookie(stateCookieName(nonce), '1', STATE_TTL_MS / 1000, request) };
 }
@@ -96,7 +115,7 @@ export async function completeAuthorization(request: Request, fetchImpl?: typeof
   let credentialId: string | undefined;
   let clearCookie: string | undefined;
   try {
-    const state = verifyState(stateKey(), params.get('state'));
+    const { payload: state, pkce } = verifyAnyState(params.get('state'));
     credentialId = state.c;
     const name = stateCookieName(state.n);
     if (readCookie(request, name) !== '1') {
@@ -112,11 +131,11 @@ export async function completeAuthorization(request: Request, fetchImpl?: typeof
     if (!code) throw new OAuth2Error('The provider sent no authorization code');
     const { config: saved, token: previous } = credentials.oauth2(credentialId);
     const config = await resolveOAuth2Secrets(saved);
-    const codeVerifier = config.grantType === 'pkce' ? pkceVerifier(pkceKey(), state.n) : undefined;
+    const codeVerifier = config.grantType === 'pkce' ? pkceVerifier(pkce, state.n) : undefined;
     const response = await exchangeCode(config, { code, redirectUri: state.r, ...(codeVerifier && { codeVerifier }) }, fetchImpl);
     const token = toStoredToken(response, previous);
     const account = accountOf(token, jwtClaims(token.id_token) ? undefined : await fetchUserInfo(config, token.access_token, fetchImpl));
-    credentials.saveOAuth2Token(credentialId, token, account);
+    credentials.saveOAuth2Token(credentialId, token, account, { actor: typeof state.u === 'string' ? state.u : undefined });
     logger.info('OAuth2 credential connected', { 'landflow.credential.id': credentialId, 'oauth2.grant': config.grantType });
     return { message: { source: OAUTH2_MESSAGE_CHANNEL, credentialId, ok: true, message: account ? `Connected as ${account}` : 'Connected', ...(account && { account }) }, clearCookie };
   } catch (error) {
@@ -135,9 +154,10 @@ export async function completeAuthorization(request: Request, fetchImpl?: typeof
 
 /**
  * "Get token" / "Refresh now": a client credentials grant, or a refresh with the stored refresh token. Returns the
- * credential with its new status; a failure is recorded on the credential and thrown as a CredentialError.
+ * credential with its new status; a failure is recorded on the credential and thrown as a CredentialError. `by` is recorded
+ * as a token operation (it never makes the credential trusted: vault.ts tokenChangedBy).
  */
-export async function requestTokenNow(credentialId: string, fetchImpl?: typeof fetch): Promise<CredentialDetail> {
+export async function requestTokenNow(credentialId: string, by: CredentialChange, fetchImpl?: typeof fetch): Promise<CredentialDetail> {
   const { config: saved, token } = credentials.oauth2(credentialId);
   if (saved.grantType === 'clientCredentials') {
     let response: JsonObject;
@@ -148,7 +168,7 @@ export async function requestTokenNow(credentialId: string, fetchImpl?: typeof f
       throw new CredentialError(redactText((error as Error).message));
     }
     const stored = toStoredToken(response, token);
-    return credentials.saveOAuth2Token(credentialId, stored, accountOf(stored));
+    return credentials.saveOAuth2Token(credentialId, stored, accountOf(stored), by);
   }
   if (!token) throw new CredentialError('Not connected yet: use Connect to sign in with the provider');
   try {
@@ -158,6 +178,7 @@ export async function requestTokenNow(credentialId: string, fetchImpl?: typeof f
   } catch (error) {
     throw error instanceof CredentialError ? error : new CredentialError((error as Error).message);
   }
+  credentials.noteTokenOperation(credentialId, by);
   return credentials.get(credentialId)!;
 }
 

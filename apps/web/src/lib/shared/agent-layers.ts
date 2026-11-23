@@ -13,8 +13,8 @@ export interface Layer {
   state: LayerState;
   /** One line: what is set, or why it matters. */
   detail: string;
-  /** The builder tab and the element to scroll to when fixing it. */
-  fix: { tab: 'persona' | 'abilities' | 'safety' | 'evaluations'; section?: string };
+  /** The builder tab (`BUILDER_TABS` in components/agents/tabs.ts), the element to scroll to and the Activity view when fixing it. */
+  fix: { tab: 'persona' | 'abilities' | 'activity'; section?: string; view?: 'sessions' | 'evaluations' };
 }
 
 export interface LayerFacts {
@@ -54,7 +54,7 @@ export function agentLayers(config: AgentConfig, facts: LayerFacts): Layer[] {
       detail: !hasTools ? 'No tools to restrict.' : rules ? `${rules} rule${rules === 1 ? '' : 's'}.` : 'Every caller may use every tool. Add rules for the tools that change things.',
       fix: { tab: 'abilities', section: 'section-access' },
     },
-    { id: 'guardrails', label: 'Guardrails', state: guarded ? 'done' : 'todo', detail: guarded ? 'Checks run on messages in or answers out.' : 'Check for personal data, secrets and prompt injection before and after the model.', fix: { tab: 'safety', section: 'section-guardrails' } },
+    { id: 'guardrails', label: 'Guardrails', state: guarded ? 'done' : 'todo', detail: guarded ? 'Checks run on messages in or answers out.' : 'Check for personal data, secrets and prompt injection before and after the model.', fix: { tab: 'abilities', section: 'section-guardrails' } },
     {
       id: 'router',
       label: 'Model router',
@@ -73,8 +73,8 @@ export function agentLayers(config: AgentConfig, facts: LayerFacts): Layer[] {
           : `Answer repeated questions without a model call.${provider === 'anthropic' ? ' The prompt cache is already on.' : ''}`,
       fix: { tab: 'abilities', section: 'section-cache' },
     },
-    { id: 'evals', label: 'Evals', state: facts.evalCases > 0 ? 'done' : 'todo', detail: facts.evalCases > 0 ? `${facts.evalCases} test case${facts.evalCases === 1 ? '' : 's'} guard each publish.` : 'Add test questions so a bad edit is caught before it goes live.', fix: { tab: 'evaluations' } },
-    { id: 'traces', label: 'Traces', state: 'done', detail: 'Every run is traced in Run Trace and exported over OTLP.', fix: { tab: 'evaluations' } },
+    { id: 'evals', label: 'Evals', state: facts.evalCases > 0 ? 'done' : 'todo', detail: facts.evalCases > 0 ? `${facts.evalCases} test case${facts.evalCases === 1 ? '' : 's'} guard each publish.` : 'Add test questions so a bad edit is caught before it goes live.', fix: { tab: 'activity', view: 'evaluations' } },
+    { id: 'traces', label: 'Traces', state: 'done', detail: 'Every run is traced in the Run trace and exported over OTLP.', fix: { tab: 'activity', view: 'evaluations' } },
   ];
 }
 

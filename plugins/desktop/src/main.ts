@@ -3,7 +3,7 @@
  *
  *   pnpm --filter @landflow/plugin-desktop start
  *
- * Serves HTTP on :7117 (MCP face at /mcp) and gRPC on :7217, then announces both to the host. Needs the local Docker engine
+ * Serves HTTP on :7124 (MCP face at /mcp) and gRPC on :7224, then announces both to the host. Needs the local Docker engine
  * (`docker` on PATH, or LANDFLOW_DESKTOP_DOCKER_BIN) and the image landflow/desktop-sandbox:dev
  * (`docker buildx build --load -t landflow/desktop-sandbox:dev services/desktop-sandbox`).
  *
@@ -42,8 +42,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   await sweep();
   setInterval(sweep, 60_000).unref();
   await serve(plugin, {
-    http: 7117,
-    grpc: 7217,
+    http: 7124,
+    grpc: 7224,
     host: process.env.LANDFLOW_HOST ?? (process.env.LANDFLOW_ADVERTISE_HOST ? '0.0.0.0' : '127.0.0.1'),
     maxConcurrency: DEFAULT_MAX_CONCURRENCY,
     mcp: { token: process.env.LANDFLOW_MCP_TOKEN },

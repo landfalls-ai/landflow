@@ -31,7 +31,7 @@ function Bubble({ children, human }: { children: ReactNode; human?: boolean }) {
   return (
     <div
       className={cn(
-        'mt-1 whitespace-pre-wrap break-words rounded-2xl rounded-tl-md border px-3 py-2 text-[13.5px] leading-snug text-t1',
+        'mt-1 whitespace-pre-wrap break-words rounded-2xl rounded-tl-md border px-3 py-2 text-[13px] leading-relaxed text-t1',
         human ? 'border-acbd bg-acdim' : 'border-hair bg-sf',
       )}
     >
@@ -240,7 +240,8 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
           <Head at={entry.at}>
             {who(s.caller ?? model.run?.actor)}
             <span>{running ? 'is waiting for' : 'waited for'}</span>
-            {who(s.actor)}
+            {/* Mid-sentence, the generic person is "a person", not a name. */}
+            {s.actor.name === 'A person' ? <b className="font-semibold text-t1">a person</b> : who(s.actor)}
           </Head>
           <Bubble>{preview(textOf(s.input, 400) || s.name, 240)}</Bubble>
           {running ? (
@@ -250,6 +251,12 @@ function Entry({ entry, model, open }: { entry: StoryEntry; model: RunModel; ope
               <Badge tone="neutral">waited {fmtMs(s.ms)}</Badge>
               <ResultChip span={s} />
             </div>
+          )}
+          {/* AP03: an approval nobody answered in time says so in the inbox's words (when, and that it did not run). */}
+          {!running && s.attrs.expired === true && typeof s.attrs.settled === 'string' && (
+            <p className="mt-1 text-[12px] text-warn" data-testid="wait-expired">
+              {s.attrs.settled}
+            </p>
           )}
         </Ev>
       );
@@ -360,7 +367,8 @@ function Headlines({ items, model }: { items: Headline[]; model: RunModel }) {
   );
 }
 
-export function Story({ model, open }: { model: RunModel; open: (o: Open) => void }) {
+/** `top` is the run's summary and `bottom` the facts behind it (run-trace-view passes them: the Report is part of the Story). */
+export function Story({ model, open, top, bottom }: { model: RunModel; open: (o: Open) => void; top?: ReactNode; bottom?: ReactNode }) {
   const headlines = useMemo(() => (model.empty ? [] : headlinesOf(model)), [model]);
   const marked = useMemo(() => {
     const map = new Map<string, TeamMoment[]>();
@@ -370,6 +378,7 @@ export function Story({ model, open }: { model: RunModel; open: (o: Open) => voi
   if (model.empty) return <EmptyState compact title="Nothing recorded yet" hint="The story appears as the run starts." />;
   return (
     <div className="flex flex-col gap-1">
+      {top}
       <Headlines items={headlines} model={model} />
       {model.story.map((entry) => {
         const marks = marked.get(entry.key);
@@ -391,18 +400,12 @@ export function Story({ model, open }: { model: RunModel; open: (o: Open) => voi
           </div>
         );
       })}
-      <p className="mt-3 flex items-center justify-center gap-2 text-center text-[12px] text-t3">
-        {model.live ? (
-          <>
-            <span className="size-1.5 rounded-full bg-warn animate-pulse-soft" /> Live at {clock(model.foldedAt)}
-          </>
-        ) : (
-          <>
-            Run {model.status === 'success' ? 'finished' : model.status === 'waiting' ? 'is waiting' : model.status} at {clock(model.endedAt ?? model.foldedAt)}{' '}
-            · {fmtMs(model.t1 - model.t0)}
-          </>
-        )}
-      </p>
+      {model.live && (
+        <p className="mt-3 flex items-center justify-center gap-2 text-center text-[12px] text-t3">
+          <span className="size-1.5 rounded-full bg-warn animate-pulse-soft" /> Live at {clock(model.foldedAt)}
+        </p>
+      )}
+      {bottom}
     </div>
   );
 }

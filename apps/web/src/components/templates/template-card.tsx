@@ -41,13 +41,30 @@ export function TemplateNodeIcons({ nodeTypes, types, size = 'sm' }: { nodeTypes
   );
 }
 
+/** The plugins a template is missing, by id (`github.issue` needs `github`), each once. */
+export function missingPlugins(problems: TemplateSummary['problems']): string[] {
+  return [...new Set(problems.filter((p) => p.kind === 'missing').map((p) => (p.nodeType.includes('.') ? p.nodeType.slice(0, p.nodeType.indexOf('.')) : p.nodeType)))];
+}
+
+/** "Needs github", "Needs github, slack", "Needs github +2". */
+export function needsLabel(problems: TemplateSummary['problems']): string {
+  const plugins = missingPlugins(problems);
+  if (plugins.length === 0) return 'Needs a plugin';
+  return plugins.length <= 2 ? `Needs ${plugins.join(', ')}` : `Needs ${plugins[0]} +${plugins.length - 1}`;
+}
+
+/** Templates that can be used first, the rest after them; each group keeps its order. */
+export function sortTemplates<T extends Pick<TemplateSummary, 'usable'>>(templates: readonly T[]): T[] {
+  return [...templates.filter((t) => t.usable), ...templates.filter((t) => !t.usable)];
+}
+
 /** Why a template can't be used, as one badge. */
 export function ProblemBadge({ template }: { template: Pick<TemplateSummary, 'usable' | 'problems'> }) {
   if (template.usable) return null;
   const blocked = template.problems.some((p) => p.kind === 'blocked');
   return (
     <Badge tone={blocked ? 'danger' : 'warning'} title={template.problems.map((p) => p.message).join('\n')}>
-      {blocked ? <Ban className="size-3" /> : <PackageX className="size-3" />} {blocked ? 'Blocked here' : 'Needs a plugin'}
+      {blocked ? <Ban className="size-3" /> : <PackageX className="size-3" />} <span className="max-w-[140px] truncate">{blocked ? 'Blocked here' : needsLabel(template.problems)}</span>
     </Badge>
   );
 }
@@ -92,7 +109,7 @@ function TeamCard({ template, index, href, folderId, projectId }: { template: Te
     <div
       style={{ animationDelay: `${Math.min(index, 18) * 15}ms` }}
       data-testid="team-template-card"
-      className={cn('group relative flex min-h-[172px] flex-col gap-2.5 rounded-2xl border border-hair bg-sf px-4 py-3.5 text-left transition-colors animate-fade-up hover:border-ac', !template.usable && 'bg-sf2')}
+      className={cn('group relative flex min-h-[172px] flex-col gap-2.5 rounded-2xl border border-hair bg-sf px-4 py-3.5 text-left transition-colors animate-fade-up hover:border-ac', !template.usable && 'bg-sf2 opacity-60 hover:opacity-100')}
     >
       <div className="flex items-center gap-2">
         <div className="flex items-center" aria-label={`Members: ${team.faces.map((f) => f.name).join(', ')}`}>
@@ -150,7 +167,7 @@ export function TemplateCard({ template, types, index, href, remoteLabel, folder
       style={{ animationDelay: `${Math.min(index, 18) * 15}ms` }}
       className={cn(
         'group flex min-h-[172px] flex-col gap-2.5 rounded-2xl border border-hair bg-sf px-4 py-3.5 text-left transition-colors animate-fade-up hover:border-ac focus-visible:border-ac focus-visible:outline-none',
-        !template.usable && 'bg-sf2',
+        !template.usable && 'bg-sf2 opacity-60 hover:opacity-100 focus-visible:opacity-100',
       )}
     >
       <div className="flex items-start gap-2">

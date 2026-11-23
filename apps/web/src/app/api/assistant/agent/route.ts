@@ -1,17 +1,20 @@
 /**
  * One chat message to the Agent architect (docs/agents.md#agent-architect). The reply streams as SSE, one event per
- * step: `text`, `tool` (activity), `draft` (a whole agent to review), then `done`, or `error`. The architect proposes
- * agents; creating one is POST /api/agents/import with the draft.
+ * step: `step.start`, `text`, `tool` (timed activity), `draft` (a whole agent to review), then `done`, or `error`. The
+ * architect proposes agents; creating one is POST /api/agents/import with the draft.
  */
 import { z } from 'zod';
+import { agentResources } from '@/lib/server/assistant/agent-resources';
 import type { AgentConfig } from '@/lib/shared/agents';
-import type { ArchitectEvent } from '@/lib/shared/agent-architect';
-import { runArchitect } from '@/lib/server/assistant/architect';
+import { runArchitect, type ArchitectState, type ArchitectStreamEvent } from '@/lib/server/assistant/architect';
+import { takeCheckpoint } from '@/lib/server/assistant/checkpoints';
 import { errorText } from '@/lib/server/assistant/model';
+import { resolveSpotlightModel } from '@/lib/server/assistant/models-list'; // SB19:
 import { allowedTypes } from '@/lib/server/assistant/scope';
 import { currentPrincipal } from '@/lib/server/auth/guard';
-import { handler, parseBody, sseHeaders } from '@/lib/server/http';
-import { routeActor } from '@/lib/server/projects/http';
+import { error, handler, parseBody } from '@/lib/server/http'; // SB19: error
+import { sseResponse } from '@/lib/server/sse';
+import { requireProject, routeActor } from '@/lib/server/projects/http';
 import { traceparentHeader } from '@/lib/server/telemetry';
 import { recordUsage } from '@/lib/server/usage/ledger';
 
@@ -25,43 +28,49 @@ const Body = z.object({
     .refine((messages) => messages.at(-1)?.role === 'user', 'The last message must be from the user'),
   draft: z.record(z.string(), z.unknown()).optional(),
   model: z.string().max(100).optional(),
+  /** The project the agent is built for (PC10): its goals reach the architect as data. */
+  projectId: z.string().max(200).optional(),
+  /** Continue a reply that failed after some steps, from the checkpoint its `error` event gave. */
+  resume: z.object({ checkpoint: z.string().max(64) }).optional(),
 });
 
 export const POST = handler(async (request: Request) => {
   const parsed = await parseBody(request, Body);
   if (!parsed.ok) return parsed.response;
-  const { messages, model } = parsed.data;
+  const { messages, resume, projectId } = parsed.data;
+  const picked = await resolveSpotlightModel(parsed.data.model); // SB19: a model this server offers, else the Settings default
+  if ('error' in picked) return error(picked.error, 400); // SB19:
+  const model = picked.model; // SB19:
   const draft = parsed.data.draft as Partial<AgentConfig> | undefined;
   const actor = routeActor();
+  if (projectId) requireProject(actor, projectId, 'read'); // PC10: 404 without a role
   const types = allowedTypes(undefined, actor);
-  const encoder = new TextEncoder();
+  // The models and knowledge bases the draft can use: a local model by default (docs/agents.md#agent-architect).
+  const resources = await agentResources(actor);
   const abort = new AbortController();
   request.signal.addEventListener('abort', () => abort.abort());
   const actorId = currentPrincipal()?.user?.id;
+  // An unknown, expired or another user's checkpoint answers 409 before the stream starts.
+  const resumed = resume ? takeCheckpoint<ArchitectState>(actor.id, resume.checkpoint, 'architect') : undefined;
   let drafts = 0;
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (event: ArchitectEvent) => {
+  return sseResponse(
+    request,
+    async (write, close) => {
+      const send = (event: ArchitectStreamEvent) => {
         if (event.type === 'draft') drafts++;
-        try {
-          controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
-        } catch {
-          // client went away
-        }
+        write(event, { event: event.type });
       };
       try {
-        await runArchitect({ messages, ...(draft && { draft }), ...(model && { model }), types, actor, signal: abort.signal, onEvent: send });
+        await runArchitect({ messages, ...(draft && { draft }), ...(model && { model }), types, actor, resources, ...(projectId && { projectId }), signal: abort.signal, onEvent: send, trace: true, ...(resumed && { resume: resumed }) });
       } catch (caught) {
-        if (!abort.signal.aborted) send({ type: 'error', message: errorText(caught) });
+        if (!abort.signal.aborted) send({ type: 'error', kind: 'internal', message: errorText(caught) });
       } finally {
         // What people ask agents for, and whether a draft came of it (`proposals`, as Spotlight's: the brain's "unmet demand").
         recordUsage({ kind: 'spotlight.asked', actorId, message: messages.at(-1)?.content, attrs: { architect: true, proposals: drafts, turn: messages.length } });
-        try {
-          controller.close();
-        } catch {}
+        close();
       }
     },
-  });
-  return new Response(stream, { headers: { ...sseHeaders, ...traceparentHeader() } });
+    { route: '/api/assistant/agent', headers: traceparentHeader() },
+  );
 });

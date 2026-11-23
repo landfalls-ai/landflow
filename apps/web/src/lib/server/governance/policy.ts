@@ -18,15 +18,17 @@
  * Below the instance, a workflow's project and the workflow itself can narrow the node list further (./scopes.ts):
  * every check here that takes a workflow also applies those lists (`scopedNodeBlocked`).
  */
-import { splitType } from '@landflow/protocol';
+import { nodeMatcherSchema, splitType } from '@landflow/protocol';
 import type { ExecuteResponse } from '@landflow/protocol';
 import type { ResolvedNodeType, Workflow, WorkflowNode } from '@landflow/engine';
 import { z } from 'zod';
 import { DEFAULT_GOVERNANCE_POLICY, type GovernancePolicy, type PolicyViolation } from '../../shared/governance';
 import { database } from '../db';
 import { parse } from '../db/rows';
+import { safeFetch } from '../net/safe-fetch';
 import { singleton } from '../singleton';
 import { policyScope, scopeActive, type PolicyScope, type ScopeTarget } from './scopes';
+import { HttpError } from '../errors';
 
 export const GOVERNANCE_SETTINGS_KEY = 'governance';
 
@@ -35,18 +37,30 @@ export const CODE_NODE_NAMES = new Set(['code', 'function', 'functionItem', 'exe
 export const HTTP_REQUEST_TYPE = 'core.httpRequest';
 export const MCP_NODE_TYPES = new Set(['core.mcpClient', 'core.mcpClientTool']);
 
-export class PolicyError extends Error {
+export class PolicyError extends HttpError {
+  static readonly errorName: string = 'PolicyError';
   constructor(
     message: string,
     readonly violations: PolicyViolation[] = [],
-    readonly status = 422,
+    status = 422,
   ) {
-    super(message);
+    super(message, status, { expose: true, ...(violations.length && { details: { violations } }) });
   }
 }
 
 const pattern = z.string().trim().min(1).max(300);
 const list = z.array(pattern).max(500);
+
+const compositeRuleSchema = z.strictObject({
+  id: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(200),
+  kind: z.enum(['require-inside', 'forbid-inside']),
+  match: nodeMatcherSchema,
+  composite: nodeMatcherSchema,
+  nested: z.boolean().optional(),
+  severity: z.enum(['error', 'warn']),
+  message: z.string().max(500).optional(),
+});
 
 export const governanceSchema = z.strictObject({
   nodes: z.strictObject({ mode: z.enum(['off', 'allow', 'block']), types: list, plugins: list, blockCode: z.boolean() }),
@@ -59,6 +73,7 @@ export const governanceSchema = z.strictObject({
     notifyEmail: z.boolean(),
     channelIds: z.array(z.string().min(1).max(100)).max(50),
   }),
+  compositeRules: z.array(compositeRuleSchema).max(50),
 });
 
 export const governancePatchSchema = z.strictObject({
@@ -66,6 +81,7 @@ export const governancePatchSchema = z.strictObject({
   http: governanceSchema.shape.http.partial().optional(),
   mcp: governanceSchema.shape.mcp.partial().optional(),
   fourEyes: governanceSchema.shape.fourEyes.partial().optional(),
+  compositeRules: governanceSchema.shape.compositeRules.optional(),
 });
 
 const CACHE_MS = 1_000;
@@ -86,6 +102,7 @@ export function getGovernancePolicy(): GovernancePolicy {
         http: { ...policy.http, ...saved.http },
         mcp: { ...policy.mcp, ...saved.mcp },
         fourEyes: { ...policy.fourEyes, ...saved.fourEyes },
+        compositeRules: saved.compositeRules ?? [],
       };
       const parsed = governanceSchema.safeParse(merged);
       if (parsed.success) policy = { ...parsed.data, ...(saved.updatedAt && { updatedAt: saved.updatedAt }), ...(saved.updatedBy && { updatedBy: saved.updatedBy }) };
@@ -106,6 +123,7 @@ export function updateGovernancePolicy(patch: z.infer<typeof governancePatchSche
     http: { ...current.http, ...patch.http },
     mcp: { ...current.mcp, ...patch.mcp },
     fourEyes: { ...current.fourEyes, ...patch.fourEyes },
+    compositeRules: patch.compositeRules ?? current.compositeRules,
   });
   const tidy = (items: string[]) => [...new Set(items.map((item) => item.trim()).filter(Boolean))];
   const saved: GovernancePolicy = {
@@ -356,8 +374,26 @@ export function nodeViolations(node: Pick<WorkflowNode, 'id' | 'name' | 'type' |
  * for a saved workflow (by its id) or the given `scope`, its project's and its own allow-lists.
  */
 export function workflowViolations(workflow: Pick<Workflow, 'nodes'> & { id?: string }, policy = getGovernancePolicy(), scope: PolicyScope = scopeOf(workflow)): PolicyViolation[] {
-  if (!rulesActive(policy) && !scopeActive(scope)) return [];
-  return (workflow.nodes ?? []).filter((node) => !node.disabled).flatMap((node) => nodeViolations(node, policy, scope));
+  const placed = policy.compositeRules.length ? [...workflowRuleChecks.values()].flatMap((check) => check(workflow as Pick<Workflow, 'nodes' | 'groups'>, policy)) : [];
+  if (!rulesActive(policy) && !scopeActive(scope)) return placed;
+  return [...(workflow.nodes ?? []).filter((node) => !node.disabled).flatMap((node) => nodeViolations(node, policy, scope)), ...placed];
+}
+
+type WorkflowRuleCheck = (workflow: Pick<Workflow, 'nodes' | 'groups'>, policy: GovernancePolicy) => PolicyViolation[];
+/** One process-wide list keyed by name: a production build bundles this module once per layer, and each copy registers. */
+export const WORKFLOW_RULE_CHECKS_KEY = 'governance-workflow-rule-checks';
+const workflowRuleChecks = singleton(WORKFLOW_RULE_CHECKS_KEY, () => new Map<string, WorkflowRuleCheck>());
+
+/**
+ * Plug in a check that reads the whole workflow, not one node (the composite rules, ./composite-rules.ts). It lives
+ * outside this file because it needs the plugin registry, which imports this module. Registering a name again
+ * replaces its check.
+ */
+export function registerWorkflowRule(name: string, check: WorkflowRuleCheck): () => void {
+  workflowRuleChecks.set(name, check);
+  return () => {
+    if (workflowRuleChecks.get(name) === check) workflowRuleChecks.delete(name);
+  };
 }
 
 export function violationsMessage(violations: PolicyViolation[]): string {
@@ -367,13 +403,13 @@ export function violationsMessage(violations: PolicyViolation[]): string {
 
 /** Why `workflow` can't be published (nodes the policy, its project or its own policy don't allow), or undefined when it can. */
 export function publishBlockedReason(workflow: Pick<Workflow, 'nodes'> & { id?: string }): string | undefined {
-  const violations = workflowViolations(workflow);
+  const violations = workflowViolations(workflow).filter((v) => v.severity !== 'warn');
   return violations.length ? `This version uses nodes the governance policy doesn’t allow, so it can’t be published: ${violationsMessage(violations)}` : undefined;
 }
 
 /** Publishing gate: throws a PolicyError (422) listing the nodes the policy doesn't allow. */
 export function assertPublishable(workflow: Pick<Workflow, 'nodes'> & { id?: string }) {
-  const violations = workflowViolations(workflow);
+  const violations = workflowViolations(workflow).filter((v) => v.severity !== 'warn');
   if (violations.length) throw new PolicyError(publishBlockedReason(workflow)!, violations);
 }
 
@@ -393,10 +429,20 @@ function requestUrls(request: { parameters?: Record<string, unknown>; itemParame
 }
 
 /**
+ * The fetch behind `ctx.http` for in-process nodes: safeFetch (the outbound address policy, net/safe-fetch.ts), plus
+ * the host list on every redirect hop for the HTTP Request node. ctx.http adds the span, so safeFetch adds none.
+ */
+function guardedFetch(httpNode: boolean): typeof fetch {
+  const hostCheck = httpNode ? (url: URL) => httpUrlBlocked(url.href) : undefined;
+  return ((input, init) => safeFetch(input as Request, init, { span: false, ...(hostCheck && { hostCheck }) })) as typeof fetch;
+}
+
+/**
  * The registry's run-time gate (plugins/registry.ts `resolve`): a node type the policy blocks fails every call with
  * a clear error on the node (and its app webhooks don't register); the HTTP Request node checks each call's URLs.
  * The request's workflow brings its project's and its own allow-lists (`agent:<id>`: the agent's project).
- * Policies off: the node type is returned as is.
+ * With policies off nothing is refused here, but every execute and supplyData call still gets the guarded fetch
+ * (safeFetch's outbound address policy behind `ctx.http`).
  */
 export function withGovernance(resolved: ResolvedNodeType): ResolvedNodeType {
   const blockedNow = (workflowId?: string) => {
@@ -415,13 +461,13 @@ export function withGovernance(resolved: ResolvedNodeType): ResolvedNodeType {
           if (message) return refusal(message);
         }
       }
-      return resolved.execute(request, extras);
+      return resolved.execute(request, { ...extras, fetch: guardedFetch(http) });
     },
     ...(resolved.supplyData && {
       supplyData: async (request, extras) => {
         const blocked = blockedNow((request as { workflowId?: string }).workflowId);
         if (blocked) throw new PolicyError(`Blocked by policy: ${blocked.message}`);
-        return resolved.supplyData!(request, extras);
+        return resolved.supplyData!(request, { ...extras, fetch: guardedFetch(http) });
       },
     }),
     ...(resolved.webhookMethod && {

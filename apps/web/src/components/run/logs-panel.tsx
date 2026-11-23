@@ -12,12 +12,13 @@ import { duration } from '@/lib/client/format';
 import { nodeColor, tint } from '@/lib/client/node-style';
 import { remoteRunOfProgress, stepsOf, type NodeProgress } from '@/lib/client/node-progress';
 import { runsInOrder, type RunEntry } from '@/lib/client/run-data';
-import type { LogEntry } from '@landflow/protocol';
+import { expandPorts, type LogEntry } from '@landflow/protocol';
 import type { NodeRun, NodeTypeInfo } from '@/lib/shared/types';
 import { RemoteSteps } from '../agents/timeline';
-import { NodeIcon } from '../ui/icon';
+import { NodeIcon, isImageIcon } from '../ui/icon';
 import { DataView } from './data-view';
 import { RUN_STATE, RunStateIcon, statusText, useNow, type RunState } from './run-status';
+import { Segmented as SharedSegmented } from '../ui/segmented';
 
 export interface LogsSelection {
   nodeId: string;
@@ -28,6 +29,8 @@ export interface LogsSelection {
 export interface LogsNode {
   name: string;
   type?: string;
+  /** For nodes whose outputs follow their parameters (Decide). */
+  parameters?: Record<string, unknown>;
 }
 
 /** Nodes that started but haven't finished (or where the debugger is holding the run). */
@@ -146,6 +149,8 @@ function itemCount(items: NodeRun['outputs']) {
 
 function NodeBadge({ info, size = 22 }: { info?: NodeTypeInfo; size?: number }) {
   const color = nodeColor(info);
+  // An app's own icon (its real mark) brings its tile: shown whole.
+  if (isImageIcon(info?.descriptor.icon)) return <NodeIcon icon={info?.descriptor.icon} size={size} className="shrink-0" />;
   return (
     <span className="grid shrink-0 place-items-center rounded-[7px]" style={{ width: size, height: size, background: tint(color, 14), color }}>
       <NodeIcon icon={info?.descriptor.icon} size={Math.round(size * 0.6)} strokeWidth={1.9} />
@@ -155,26 +160,6 @@ function NodeBadge({ info, size = 22 }: { info?: NodeTypeInfo; size?: number }) 
 
 const LOG_LEVEL: Record<LogEntry['level'], string> = { debug: 'text-t3', info: 'text-t2', warn: 'text-warn', error: 'text-rd' };
 
-function Segmented<T extends string>({ value, options, onChange }: { value: T; options: Array<{ value: T; label: ReactNode }>; onChange: (v: T) => void }) {
-  return (
-    <div role="tablist" className="flex items-center gap-0.5 rounded-full border border-hair bg-sf2 p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          role="tab"
-          aria-selected={value === o.value}
-          onClick={() => onChange(o.value)}
-          className={cn(
-            'flex h-6 items-center gap-1 rounded-full px-2.5 text-[12px] text-t2 transition-all duration-200 hover:text-t1',
-            value === o.value && 'bg-sf font-semibold text-t1 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_0_0_1px_var(--hair)]',
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function RunDetail({ row, nodes, nodeTypes, actions }: { row: Row; nodes: Record<string, LogsNode>; nodeTypes: Record<string, NodeTypeInfo>; actions?: (entry: RunEntry) => ReactNode }) {
   const { run, nodeId, runIndex } = row;
@@ -185,7 +170,7 @@ function RunDetail({ row, nodes, nodeTypes, actions }: { row: Row; nodes: Record
   const [logsOpen, setLogsOpen] = useState(false);
   const branches = side === 'output' ? run.outputs : run.inputs;
   const index = Math.min(branch, Math.max(0, branches.length - 1));
-  const ports = (side === 'output' ? info?.descriptor.outputs : info?.descriptor.inputs)?.filter((p) => p.type === 'main') ?? [];
+  const ports = (side === 'output' ? info && expandPorts(info.descriptor.outputs, node?.parameters ?? {}) : info?.descriptor.inputs)?.filter((p) => p.type === 'main') ?? [];
   const state: RunState = run.status;
   // The tool calls an agent made (A2A Agent, Run an Agent): a list, not only raw JSON.
   const first = run.outputs[0]?.[0]?.json;
@@ -397,7 +382,7 @@ export function LogsPanel(props: LogsPanelProps) {
       {status ? (
         <span className={cn('flex items-center gap-1.5 text-[13px] font-semibold tabular-nums', RUN_STATE[status].text)}>
           <RunStateIcon state={status} />
-          {status === 'success' ? `Success in ${duration(elapsed)}` : statusText(status, elapsed)}
+          {statusText(status, elapsed)}
         </span>
       ) : (
         <span className="text-[13px] text-t3">No run yet</span>
@@ -530,4 +515,9 @@ export function LogsPanel(props: LogsPanelProps) {
       )}
     </section>
   );
+}
+
+/** The logs panel's switches: the shared pill switch, at its small size. */
+function Segmented<T extends string>({ value, options, onChange, label = 'View' }: { value: T; options: Array<{ value: T; label: ReactNode }>; onChange: (v: T) => void; label?: string }) {
+  return <SharedSegmented size="sm" label={label} value={value} options={options} onChange={onChange} />;
 }

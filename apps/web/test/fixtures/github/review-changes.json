@@ -1,0 +1,39 @@
+{
+  "event": "pull_request_review",
+  "action": "submitted",
+  "deliveryId": "d-review-changes",
+  "body": {
+    "action": "submitted",
+    "review": {
+      "id": 9002,
+      "state": "changes_requested",
+      "body": "Please rename this variable, it is confusing.",
+      "html_url": "https://github.com/acme-demo/widgets/pull/42#pullrequestreview-9002",
+      "submitted_at": "2026-11-10T13:00:00Z",
+      "user": {
+        "login": "octo-lead"
+      }
+    },
+    "pull_request": {
+      "number": 42,
+      "title": "Retry the sync job",
+      "html_url": "https://github.com/acme-demo/widgets/pull/42",
+      "body": "Adds a retry. Contact dev@example.com. x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x ",
+      "user": {
+        "login": "octo-dev"
+      },
+      "created_at": "2026-11-10T09:00:00Z",
+      "updated_at": "2026-11-10T09:00:00Z",
+      "merged": false
+    },
+    "repository": {
+      "full_name": "acme-demo/widgets"
+    },
+    "sender": {
+      "login": "octo-lead"
+    }
+  },
+  "headers": {
+    "x-github-event": "pull_request_review"
+  }
+}

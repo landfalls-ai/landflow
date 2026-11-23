@@ -1,5 +1,5 @@
 /**
- * The public API as an OpenAPI 3.1 document (GET /api/openapi.json, Settings → API): workflows (and running them),
+ * The public API as an OpenAPI 3.1 document (GET /api/openapi.json, Developers → API reference): workflows (and running them),
  * executions, data tables, variables, templates and your account and API keys, plus the trigger URLs (webhooks, forms,
  * MCP Server Triggers and their test URLs: public, `security: []`, each checked by its trigger's own auth). Request
  * bodies of the workflow and row filter come from the routes' own zod schemas, so they can't drift; every other
@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { API_KEY_SCOPES } from '../shared/auth';
 import { SESSION_COOKIE } from '../shared/auth-paths';
 import { TEMPLATE_CATEGORIES } from '../shared/templates';
+import { MENTION_LIMITS, MENTION_TYPES } from '../shared/mentions';
 import { rowFilterSchema } from './datatables/http';
 import { routePolicy } from './auth/policy';
 import { workflowSchema } from './schemas';
@@ -40,12 +41,14 @@ function fromZod(schema: z.ZodType): Json {
 const samplePath = (path: string) => path.replace(/\{[^}]+\}/g, 'sample');
 
 interface Operation {
-  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks';
+  tag: 'Workflows' | 'Executions' | 'Data tables' | 'Variables' | 'Templates' | 'Audit' | 'Account' | 'Settings' | 'Triggers' | 'Plugins' | 'MCP' | 'Second brain' | 'Agents' | 'Agent teams' | 'Runbooks' | 'Conversations' | 'Goals' | 'Practices' | 'Projects' | 'Insights' | 'Access'; // SP09, SP11: Insights; C35: Access
   id: string;
   summary: string;
   description?: string;
   /** A trigger URL: no API key or session (lib/shared/auth-paths.ts), the trigger checks its callers itself. */
   public?: boolean;
+  /** What replaces the trigger sentence on a public route that is not a trigger (sign-in steps). */
+  publicNote?: string;
   /** Descriptions of path parameters. */
   pathParams?: Record<string, string>;
   query?: Array<{ name: string; description: string; schema: Json; required?: boolean }>;
@@ -57,7 +60,7 @@ interface Operation {
 function scopeText(scope: string, sessionOnly?: boolean, action?: string): string {
   if (sessionOnly) return 'Needs a session: API keys are refused.';
   const key = scope === 'any' ? 'Any API key (or a session).' : `API keys need the \`${scope}\` scope.`;
-  return action ? `${key} Owners and admins only (\`${action}\`).` : key;
+  return action ? `${key} Owners and admins only (\`${action}\`), or a member whose custom role grants it.` : key;
 }
 
 const PUBLIC_TEXT = 'Public: no API key or session. The trigger’s own authentication (and IP allow-list) applies.';
@@ -73,7 +76,7 @@ function operation(method: Method, path: string, spec: Operation): Json {
       operationId: spec.id,
       tags: [spec.tag],
       summary: spec.summary,
-      description: [spec.description, PUBLIC_TEXT].filter(Boolean).join('\n\n'),
+      description: [spec.description, spec.publicNote ?? PUBLIC_TEXT].filter(Boolean).join('\n\n'),
       security: [],
       'x-landflow-public': true,
       ...(parameters.length && { parameters }),
@@ -209,7 +212,7 @@ const schemas: Record<string, Json> = {
       executionOrder: array({ type: 'string' }),
       lastNodeId: { type: 'string' },
       error: object({ message: { type: 'string' } }, ['message'], { additionalProperties: true }),
-      startedBy: { type: 'string', description: 'User id of who started a manual run' },
+      startedBy: { type: 'string', description: 'User id of who started the run, when a person did (a manual, chat, MCP or tool run, a re-run, a retry they asked for)' },
     },
     ['executionId', 'workflowId', 'status', 'startedAt'],
     { additionalProperties: true },
@@ -355,6 +358,47 @@ const schemas: Record<string, Json> = {
     ['server', '_meta'],
   ),
   McpServerList: object({ servers: array(ref('McpServerResponse')), metadata: object({ count: { type: 'integer' }, nextCursor: { type: 'string' } }, ['count']) }, ['servers', 'metadata']),
+  CustomRole: object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string', maxLength: 40 },
+      description: { type: 'string', maxLength: 200 },
+      rules: array(object({ action: { type: 'string', description: 'One of the role-gated actions, such as `plugins:manage`; never `projects:manage`' }, effect: { type: 'string', const: 'allow' } }, ['action', 'effect'])),
+      holders: { type: 'integer', description: 'Members who hold it' },
+      createdAt: { type: 'string' },
+      updatedAt: { type: 'string' },
+    },
+    ['id', 'name', 'rules', 'holders', 'createdAt', 'updatedAt'],
+  ),
+  // C29: networks and runners (docs/network-runners.md; lib/shared/networks.ts).
+  NetworkRunner: object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      hint: { type: 'string', description: 'The last four characters of the token; the token is never shown again' },
+      status: { type: 'string', enum: ['online', 'offline', 'revoked'], description: 'Online: seen in the last 30 seconds' },
+      allowedIps: { ...array({ type: 'string' }), description: 'Addresses and CIDR ranges the runner may connect from; empty: any' },
+      version: { type: 'string' },
+      address: { type: 'string', description: 'Where its last poll came from' },
+      lastSeenAt: { type: 'string' },
+      createdAt: { type: 'string' },
+      revokedAt: { type: 'string' },
+    },
+    ['id', 'name', 'hint', 'status', 'allowedIps', 'createdAt'],
+  ),
+  Network: object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      description: { type: 'string' },
+      projectId: { type: 'string', description: 'Set: only this project’s workflows may run in the network' },
+      projectName: { type: 'string' },
+      runners: array(ref('NetworkRunner')),
+      workflows: { ...array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])), description: 'The workflows with an HTTP Request node that runs in it (only the ones the caller may see)' },
+      createdAt: { type: 'string' },
+    },
+    ['id', 'name', 'runners', 'workflows', 'createdAt'],
+  ),
   ApiKey: object(
     {
       id: { type: 'string' },
@@ -364,6 +408,11 @@ const schemas: Record<string, Json> = {
       createdAt: { type: 'string' },
       expiresAt: { type: 'string' },
       lastUsedAt: { type: 'string' },
+      lastUsedIp: { type: 'string', description: 'The address of the last use (up to a minute behind): personal data, shown to the key’s owner only' },
+      allowedIps: { ...array({ type: 'string' }), description: 'Fixed at creation: the key only works from these addresses and CIDR ranges' },
+      maxUses: { type: 'integer', description: 'Fixed at creation: the key stops after this many uses' },
+      uses: { type: 'integer', description: 'Uses so far (with `maxUses`)' },
+      usedUp: { type: 'boolean', description: '`uses` reached `maxUses`; the key stays listed until deleted' },
     },
     ['id', 'label', 'hint', 'scopes', 'createdAt'],
   ),
@@ -598,18 +647,93 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Executions',
     id: 'listExecutions',
     summary: 'List executions',
-    description: 'Running executions first, then saved ones, newest first.',
+    description: 'Running executions first (on the first page only), then saved ones, newest first; a running execution’s saved row is left out of every page. Page with `cursor`: pass the previous page’s `nextCursor` until it is absent.',
     query: [
       { name: 'workflowId', description: 'Only this workflow’s', schema: { type: 'string' } },
-      { name: 'limit', description: 'At most this many (default 100)', schema: { type: 'integer', minimum: 1, default: 100 } },
+      { name: 'limit', description: 'At most this many saved executions per page (default 100, at most 500)', schema: { type: 'integer', minimum: 1, maximum: 500, default: 100 } },
+      { name: 'cursor', description: 'Opaque; the previous page’s nextCursor', schema: { type: 'string' } },
     ],
-    responses: { 200: reply('The executions', object({ executions: array(ref('ExecutionSummary')) }, ['executions'])) },
+    responses: {
+      200: reply('The executions', object({ executions: array(ref('ExecutionSummary')), nextCursor: { type: 'string' } }, ['executions'])),
+      400: invalid,
+    },
   });
   add('get', '/api/executions/{id}', {
     tag: 'Executions',
     id: 'getExecution',
     summary: 'Get an execution with its run data',
+    description: '`execution.versions` (AG21) says which workflow version ran and which agent version each bound node used (`pinned`, `draft` for an editor run, or `published`): "workflow v4 \u00b7 Alert triager v2".',
     responses: { 200: reply('The execution (and a trace link when LANDFLOW_TRACE_URL is set)', object({ execution: ref('ExecutionRecord'), traceUrl: { type: 'string' } }, ['execution'])), 404: notFound },
+  });
+  add('get', '/api/executions/{id}/spend', {
+    tag: 'Executions',
+    id: 'getExecutionSpend',
+    summary: 'Read what a run spent on model calls',
+    description: 'Totals, slices (purpose, model, node, agent, loop step), the prompt cache line and up to 500 calls, newest last, over the run and the sub-runs you may open; the ones you may not are counted in `hidden`. Numbers, names and hashes only, never prompt text.',
+    pathParams: { id: 'The execution id' },
+    responses: { 200: reply('The run’s spend', { type: 'object', additionalProperties: true }), 404: notFound },
+  });
+  add('get', '/api/ai-calls/{id}', {
+    tag: 'Executions',
+    id: 'getAiCall',
+    summary: 'Read one model call',
+    description: 'One call of `ai_usage`: tokens, cost, cache, its prompt split in tokens (`parts`, with who made the split), what changed against the call before it and a link to its run. Never prompt text. A call you can’t open answers 404.',
+    pathParams: { id: 'The call id (`ai_usage.id`)' },
+    responses: { 200: reply('The call', { type: 'object', additionalProperties: true }), 404: notFound },
+  });
+  // SP09:
+  add('get', '/api/insights/ai/runs', {
+    tag: 'Insights',
+    id: 'getAiSpendRuns',
+    summary: 'List the runs behind a spend number',
+    description: 'Runs (an execution, else an agent session) behind one row of the AI page, costliest or newest first, with their tokens, cost and a link to each run’s Spend tab. `group` and `key` pick one row of the AI page’s report (`other` is not a row: 400; `shared` lists nothing and counts everything as hidden); the report’s period and filters narrow it; `order` is `cost` or `recent`; `cursor` pages (50 a page); `format=csv` answers `text/csv` with the same columns, at most 10,000 rows. Only what the caller may open is listed; the rest is counted in `hidden` (runs, calls, cost: no names, no ids). Never prompt text. A filter or key the caller can’t read answers 404.',
+    query: [
+      { name: 'group', description: 'project, goal, agent, workflow, person, model, source, credential, surface or purpose', schema: { type: 'string' }, required: true },
+      { name: 'key', description: 'The row’s key (an id, `provider/model`, `none` or `shared`)', schema: { type: 'string' }, required: true },
+      { name: 'period', description: '24h, 7d (default), 30d, 90d or custom (custom needs `from` and `to`)', schema: { type: 'string' } },
+      { name: 'from', description: 'First day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'to', description: 'Last day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Filter by project', schema: { type: 'string' } },
+      { name: 'agentId', description: 'Filter by agent', schema: { type: 'string' } },
+      { name: 'workflowId', description: 'Filter by workflow', schema: { type: 'string' } },
+      { name: 'userId', description: 'Filter by person', schema: { type: 'string' } },
+      { name: 'credentialId', description: 'Filter by credential', schema: { type: 'string' } },
+      { name: 'model', description: 'Filter by model name', schema: { type: 'string' } },
+      { name: 'purpose', description: 'Filter by call purpose (or `none`)', schema: { type: 'string' } },
+      { name: 'source', description: 'Filter by source key', schema: { type: 'string' } },
+      { name: 'surface', description: 'Filter by surface', schema: { type: 'string' } },
+      { name: 'order', description: '`cost` or `recent`', schema: { type: 'string' } },
+      { name: 'cursor', description: 'The previous page’s `next`', schema: { type: 'string' } },
+      { name: 'format', description: '`json` (default) or `csv`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('List the runs behind a spend number', { type: 'object', additionalProperties: true }), 400: invalid, 404: notFound },
+  });
+  // SP09:
+  add('get', '/api/insights/ai/calls', {
+    tag: 'Insights',
+    id: 'getAiSpendCalls',
+    summary: 'List the model calls behind a spend number',
+    description: 'Model calls behind one row of the AI page, newest first (or dearest first), each opening with `GET /api/ai-calls/{id}`. `group` and `key` pick one row of the AI page’s report (`other` is not a row: 400; `shared` lists nothing and counts everything as hidden); the report’s period and filters narrow it; `order` is `cost` or `recent`; `cursor` pages (50 a page); `format=csv` answers `text/csv` with the same columns, at most 10,000 rows. Only what the caller may open is listed; the rest is counted in `hidden` (runs, calls, cost: no names, no ids). Never prompt text. A filter or key the caller can’t read answers 404.',
+    query: [
+      { name: 'group', description: 'project, goal, agent, workflow, person, model, source, credential, surface or purpose', schema: { type: 'string' }, required: true },
+      { name: 'key', description: 'The row’s key (an id, `provider/model`, `none` or `shared`)', schema: { type: 'string' }, required: true },
+      { name: 'period', description: '24h, 7d (default), 30d, 90d or custom (custom needs `from` and `to`)', schema: { type: 'string' } },
+      { name: 'from', description: 'First day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'to', description: 'Last day of a custom range, YYYY-MM-DD', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Filter by project', schema: { type: 'string' } },
+      { name: 'agentId', description: 'Filter by agent', schema: { type: 'string' } },
+      { name: 'workflowId', description: 'Filter by workflow', schema: { type: 'string' } },
+      { name: 'userId', description: 'Filter by person', schema: { type: 'string' } },
+      { name: 'credentialId', description: 'Filter by credential', schema: { type: 'string' } },
+      { name: 'model', description: 'Filter by model name', schema: { type: 'string' } },
+      { name: 'purpose', description: 'Filter by call purpose (or `none`)', schema: { type: 'string' } },
+      { name: 'source', description: 'Filter by source key', schema: { type: 'string' } },
+      { name: 'surface', description: 'Filter by surface', schema: { type: 'string' } },
+      { name: 'order', description: '`cost` or `recent`', schema: { type: 'string' } },
+      { name: 'cursor', description: 'The previous page’s `next`', schema: { type: 'string' } },
+      { name: 'format', description: '`json` (default) or `csv`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('List the model calls behind a spend number', { type: 'object', additionalProperties: true }), 400: invalid, 404: notFound },
   });
   add('get', '/api/executions/{id}/events', {
     tag: 'Executions',
@@ -668,16 +792,112 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Executions',
     id: 'decideExecutionApproval',
     summary: 'Approve or reject one waiting tool call, optionally with an edited input',
-    description: 'Streams `decision` (`{ status: \'waiting\' | \'resumed\', approval }`), then, once every call has a decision, the resumed run’s `execution` events and a `result`. `input` (only with `approved: true`) is the tool’s input as a person changed it: the tool runs with it instead of the call’s own, and the run’s journal marks the wait `edited` (`editedBy`) and says “Approved … with changes”. It must be a JSON object (up to 200 KB). Errors before anything is decided are JSON: 400 (a bad edit), 404, 409 (already decided, or nothing to approve).',
+    description: 'Streams `decision` (`{ status: \'waiting\' | \'resumed\', approval }`), then, once every call has a decision, the resumed run’s `execution` events and a `result`. `input` (only with `approved: true`) is the tool’s input as a person changed it: the tool runs with it instead of the call’s own, and the run’s journal marks the wait `edited` (`editedBy`) and says “Approved … with changes”. It must be a JSON object (up to 200 KB). An Ask a Person node’s request (`approval.confirm`, call id `confirm`) takes `text` (with `approved: true`, only when the node allows editing) and `comment` instead. With People Only (an Ask a Person option) an API key or an MCP caller is refused with 403 “A person answers this request”. Errors before anything is decided are JSON: 400 (a bad edit or choice), 403 (not one of the people who may answer, editing is not allowed, or the caller is not a person), 404, 409 (already decided, or nothing to approve).',
     pathParams: { id: 'The execution id' },
-    body: jsonBody(object({ callId: { type: 'string' }, approved: { type: 'boolean' }, input: { type: 'object', additionalProperties: true, description: 'The tool’s input as edited; replaces the call’s own input. Approvals only.' } }, ['callId', 'approved'])),
-    responses: { 200: reply('The decision, then the resumed run', { type: 'string', description: '`event: <name>` and `data: <JSON>` lines' }, 'text/event-stream'), 400: invalid, 404: notFound, 409: errorRef('Already decided, or the run is not waiting for a tool approval') },
+    body: jsonBody(object({ callId: { type: 'string' }, approved: { type: 'boolean' }, input: { type: 'object', additionalProperties: true, description: 'The tool’s input as edited; replaces the call’s own input. Approvals only.' }, text: { type: 'string', description: 'Ask a Person: the draft as edited. Approvals only.' }, comment: { type: 'string', description: 'Ask a Person: a note left with the decision' }, choice: { type: 'string', description: 'Ask a Person with Answer Choices: one of the node’s values (the first when none is named). Approvals only; 400 for a value that is not one of them.' } }, ['callId', 'approved'])),
+    responses: { 200: reply('The decision, then the resumed run', { type: 'string', description: '`event: <name>` and `data: <JSON>` lines' }, 'text/event-stream'), 400: invalid, 403: errorRef('Not one of the people who may answer'), 404: notFound, 409: errorRef('Already decided, or the run is not waiting for a tool approval') },
   });
+  // C35: access requests (docs/access-requests.md). Every route is session-only: an API key never asks, decides or edits the catalog.
+  const accessTarget = object({ key: { type: 'string' }, type: { type: 'string' }, label: { type: 'string' }, config: { type: 'object', additionalProperties: { type: 'string' } } }, ['key', 'type', 'label', 'config']);
+  const accessEntry = object({ id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, system: { type: 'string', enum: ['github-team', 'github-org', 'github-repo', 'github-project', 'google-group', 'manual'] }, target: accessTarget, durations: array({ type: ['integer', 'null'], description: 'Minutes (1 to 129,600); null is unlimited' }), approverNames: array({ type: 'string' }), owners: array({ type: 'string' }), eligibleUserIds: array({ type: 'string' }), enabled: { type: 'boolean' }, outsideMayAsk: { type: 'boolean', description: 'Open to people without a Landflow account (an instance admin sets it)' }, credentialId: { type: 'string', description: 'Only for those who edit the entry' }, canEdit: { type: 'boolean' }, version: { type: 'integer' } }, ['id', 'name', 'system', 'target', 'durations', 'enabled', 'outsideMayAsk', 'canEdit', 'version']);
+  const accessPerson = object({ id: { type: 'string' }, name: { type: 'string' }, kind: { type: 'string', enum: ['user', 'outside'] }, email: { type: 'string', description: 'An outside requester’s verified address' }, verifiedBy: { type: 'string', enum: ['link', 'google'], description: 'How an outside requester’s email was proven' } }, ['id', 'name', 'kind']);
+  const accessGrant = object({ id: { type: 'string' }, requestId: { type: 'string' }, entryId: { type: 'string' }, entryName: { type: 'string' }, holder: accessPerson, system: { type: 'string' }, targetLabel: { type: 'string' }, status: { type: 'string', enum: ['pending', 'active', 'removing', 'expired', 'revoked', 'failed', 'revoke_failed', 'drift'] }, since: { type: 'string' }, until: { type: ['string', 'null'] }, alreadyHad: { type: 'boolean' }, canRevoke: { type: 'boolean' }, canMarkDone: { type: 'boolean' }, canRetry: { type: 'boolean' } }, ['id', 'entryId', 'entryName', 'holder', 'status', 'alreadyHad', 'canRevoke', 'canMarkDone', 'canRetry'], { additionalProperties: true });
+  const accessRequest = object({ id: { type: 'string' }, entryId: { type: 'string' }, entryName: { type: 'string' }, requester: accessPerson, durationMinutes: { type: ['integer', 'null'] }, reason: { type: 'string' }, channel: { type: 'string', enum: ['form', 'chat'] }, status: { type: 'string', enum: ['pending', 'approved', 'denied', 'expired', 'cancelled', 'failed'] }, decisions: array({ type: 'object', additionalProperties: true }), approvedMinutes: { type: ['integer', 'null'] }, note: { type: 'string' }, grant: accessGrant, approverNames: array({ type: 'string' }), canDecide: { type: 'boolean' }, canCancel: { type: 'boolean' }, createdAt: { type: 'string' }, executionId: { type: 'string' } }, ['id', 'entryId', 'entryName', 'requester', 'status', 'decisions', 'approverNames', 'canDecide', 'canCancel', 'createdAt'], { additionalProperties: true });
+  const accessSetupDoc = object({ installed: { type: 'boolean' }, active: { type: 'boolean' }, workflowId: { type: 'string' }, chatWorkflowId: { type: 'string' }, projectId: { type: 'string' }, mail: { type: 'boolean' }, flowsAdminOnly: { type: 'boolean' }, lockedWorkflowIds: { type: 'array', items: { type: 'string' } } }, ['installed', 'active', 'mail', 'flowsAdminOnly', 'lockedWorkflowIds']);
+  const accessId = { id: 'The entry, request or grant id' };
+  add('get', '/api/access/setup', { tag: 'Access', id: 'getAccessSetup', summary: 'Whether access requests are set up', responses: { 200: reply('The setup', accessSetupDoc) } });
+  add('post', '/api/access/setup', { tag: 'Access', id: 'installAccessRequests', summary: 'Set up access requests (admins)', description: 'Installs and publishes the request flow and the chat flow once; a second call answers the existing setup. Only the installed request flow handles requests. Recorded as `access.setup`.', body: jsonBody(object({ projectId: { type: 'string' }, modelCredentialId: { type: 'string', description: 'The chat flow’s Anthropic credential' } }), undefined, false), responses: { 200: reply('The setup', accessSetupDoc), 403: errorRef('Not an admin') } });
+  add('get', '/api/access/entries', { tag: 'Access', id: 'listAccessEntries', summary: 'The access catalog', description: 'The enabled entries the caller may ask for; owners and admins see every entry. `people` (id and name of active users) is for those who can edit.', responses: { 200: reply('The entries', object({ items: array(accessEntry), people: array(object({ id: { type: 'string' }, name: { type: 'string' } })) }, ['items'])) } });
+  add('post', '/api/access/entries', { tag: 'Access', id: 'createAccessEntry', summary: 'Add an entry to the catalog (admins)', description: 'Durations are whole minutes from 1 to 129,600 or null for unlimited, at most 8; the credential must fit the system and be usable by the project the flow runs in. Recorded as `access.entry.create`.', body: jsonBody(object({ name: { type: 'string' }, description: { type: 'string' }, system: { type: 'string', enum: ['github-team', 'github-org', 'github-repo', 'github-project', 'google-group', 'manual'] }, target: { type: 'object', additionalProperties: true }, credentialId: { type: ['string', 'null'] }, durations: array({ type: ['integer', 'null'] }), approverIds: array({ type: 'string' }), owners: array({ type: 'string' }), eligibleUserIds: array({ type: 'string' }), enabled: { type: 'boolean' } }, ['name', 'system', 'durations', 'approverIds', 'owners'])), responses: { 201: reply('The entry', accessEntry), 400: invalid, 403: errorRef('Not an admin') } });
+  add('get', '/api/access/entries/{id}', { tag: 'Access', id: 'getAccessEntry', summary: 'One catalog entry', pathParams: accessId, responses: { 200: reply('The entry', accessEntry), 404: notFound } });
+  add('patch', '/api/access/entries/{id}', { tag: 'Access', id: 'updateAccessEntry', summary: 'Change an entry (its owners and admins)', description: '`version` is the one that was read: a stale one answers 409. Only an admin changes the system, target and credential. The last owner stays. Recorded as `access.entry.update` with what it was and what it became. `outsideMayAsk` is an instance admin’s alone.', pathParams: accessId, body: jsonBody(object({ version: { type: 'integer' }, name: { type: 'string' }, description: { type: 'string' }, system: { type: 'string' }, target: { type: 'object', additionalProperties: true }, credentialId: { type: ['string', 'null'] }, durations: array({ type: ['integer', 'null'] }), approverIds: array({ type: 'string' }), owners: array({ type: 'string' }), eligibleUserIds: array({ type: 'string' }), enabled: { type: 'boolean' }, outsideMayAsk: { type: 'boolean', description: 'Open to people without a Landflow account: instance admins only (403 for an owner)' } }, ['version'])), responses: { 200: reply('The entry', accessEntry), 400: invalid, 403: errorRef('Not an owner or admin'), 404: notFound, 409: errorRef('Someone else changed it') } });
+  add('delete', '/api/access/entries/{id}', { tag: 'Access', id: 'deleteAccessEntry', summary: 'Delete an entry (admins)', description: 'Refused (409) while access is in place or a request waits: disable it instead.', pathParams: accessId, responses: { 204: { description: 'Deleted' }, 403: errorRef('Not an admin'), 404: notFound, 409: errorRef('Access is in place or a request waits') } });
+  add('get', '/api/access/requests', { tag: 'Access', id: 'listAccessRequests', summary: 'Access requests', description: '`scope`: `mine` (default), `decide` (the waiting ones the caller decides) or `all` (what the caller may see; admins every request). Newest first, paged.', query: [{ name: 'scope', description: 'mine, decide or all', schema: { type: 'string', enum: ['mine', 'decide', 'all'] } }, { name: 'status', description: 'Only this status', schema: { type: 'string' } }, { name: 'limit', description: 'Page size', schema: { type: 'integer' } }, { name: 'cursor', description: 'From `nextCursor`', schema: { type: 'string' } }], responses: { 200: reply('The page', object({ items: array(accessRequest), nextCursor: { type: 'string' }, setup: accessSetupDoc }, ['items', 'setup'])), 400: invalid } });
+  add('post', '/api/access/requests', { tag: 'Access', id: 'createAccessRequest', summary: 'Ask for access', description: 'The requester is the signed-in user, never a field. Google access goes to the person’s Landflow email; a GitHub entry needs `account` (kept for next time). 400: a duration the entry does not offer, a reason outside 3 to 500 characters; 404: an entry the caller may not see; 409: not set up, a request or grant exists (`existingId`), or nobody but the requester can approve. Recorded as `access.request.create`.', body: jsonBody(object({ entryId: { type: 'string' }, durationMinutes: { type: ['integer', 'null'] }, reason: { type: 'string' }, account: { type: 'string' } }, ['entryId', 'durationMinutes', 'reason'])), responses: { 201: reply('The request', accessRequest), 400: invalid, 404: notFound, 409: errorRef('Not set up, a duplicate, or no approver') } });
+  add('get', '/api/access/requests/{id}', { tag: 'Access', id: 'getAccessRequest', summary: 'One access request', description: 'The requester, the entry’s approvers and owners, and admins.', pathParams: accessId, responses: { 200: reply('The request', accessRequest), 404: notFound } });
+  add('post', '/api/access/requests/{id}/cancel', { tag: 'Access', id: 'cancelAccessRequest', summary: 'Withdraw a waiting request', description: 'The requester or an admin; the waiting run stops. Recorded as `access.request.cancel`.', pathParams: accessId, responses: { 200: reply('The request', accessRequest), 404: notFound, 409: errorRef('Already decided') } });
+  add('post', '/api/access/requests/{id}/decision', { tag: 'Access', id: 'decideAccessRequest', summary: 'Approve or deny a waiting request (its approvers)', description: 'One of the request’s approvers, never the requester. Recorded as Ask a Person’s answer, so the flow’s own record is what grants. `choice` is one of the durations offered (the asked one first); the first when none is named.', pathParams: accessId, body: jsonBody(object({ approved: { type: 'boolean' }, choice: { type: 'string' }, comment: { type: 'string' } }, ['approved'])), responses: { 200: reply('The request', accessRequest), 400: invalid, 403: errorRef('Not an approver of this request'), 404: notFound, 409: errorRef('Already decided') } });
+  add('get', '/api/access/grants', { tag: 'Access', id: 'listAccessGrants', summary: 'Access grants', description: '`scope`: `mine` (default) or `all` (the holder’s own, and for owners, approvers and admins the entry’s).', query: [{ name: 'scope', description: 'mine or all', schema: { type: 'string', enum: ['mine', 'all'] } }, { name: 'status', description: 'Only this status', schema: { type: 'string' } }], responses: { 200: reply('The grants', object({ items: array(accessGrant) }, ['items'])), 400: invalid } });
+  add('post', '/api/access/grants/{id}/revoke', { tag: 'Access', id: 'revokeAccessGrant', summary: 'Give access back, or take it back', description: 'The holder, or an owner, approver or admin of the entry. An automatic grant is removed now; a manual one waits for a person’s Done. Recorded as `access.grant.revoke`.', pathParams: accessId, responses: { 200: reply('The grant', accessGrant), 404: notFound, 409: errorRef('Not in place') } });
+  add('post', '/api/access/grants/{id}/done', { tag: 'Access', id: 'doneAccessGrant', summary: 'A manual grant was done by hand', description: 'A pending manual grant becomes active from now; a removing one ends. The entry’s approvers, owners and admins, never the holder (403).', pathParams: accessId, responses: { 200: reply('The grant', accessGrant), 403: errorRef('The holder can’t'), 404: notFound, 409: errorRef('Nothing to mark done') } });
+  add('post', '/api/access/grants/{id}/retry', { tag: 'Access', id: 'retryAccessGrant', summary: 'Try a failed grant or removal again', description: 'An owner, approver or admin of the entry, never the holder (403).', pathParams: accessId, responses: { 200: reply('The grant', accessGrant), 403: errorRef('The holder can’t'), 404: notFound, 409: errorRef('Nothing to retry') } });
+  add('get', '/api/access/accounts', { tag: 'Access', id: 'getAccessAccounts', summary: 'Your accounts for access requests', responses: { 200: reply('Your accounts', object({ github: { type: 'string' }, google: { type: 'string', description: 'Your Landflow email; not editable' } })) } });
+  add('put', '/api/access/accounts', { tag: 'Access', id: 'setAccessAccounts', summary: 'Set your GitHub username', description: 'Recorded as `access.account.set`.', body: jsonBody(object({ github: { type: 'string' } }, ['github'])), responses: { 200: reply('Your accounts', object({ github: { type: 'string' }, google: { type: 'string' } })), 400: invalid } });
+  add('post', '/api/access/chat', { tag: 'Access', id: 'accessChat', summary: 'One message to the access chat', description: 'Runs the chat flow as the signed-in user. The assistant files a request only after the person confirms it in a later message; it never approves or grants. 409 until the chat is set up.', body: jsonBody(object({ message: { type: 'string' }, sessionId: { type: 'string' } }, ['message', 'sessionId'])), responses: { 200: reply('The reply', object({ reply: { type: 'string' }, requestId: { type: 'string' } }, ['reply'])), 409: errorRef('The chat is not set up') } });
+  // C36: people without a Landflow account (docs/access-requests.md#signing-in-without-an-account). The admin routes are session-only like the rest of /api/access;
+  // the page's own routes are public and every one of them but `config` answers 404 while an admin has not switched the feature on.
+  const outsideSettingsDoc = object({ enabled: { type: 'boolean' }, domains: array({ type: 'string' }), google: object({ enabled: { type: 'boolean' }, credentialId: { type: 'string' }, credentialName: { type: 'string' } }, ['enabled']), pageUrl: { type: 'string' }, redirectUrl: { type: 'string', description: 'Register this with the OpenID Connect client' }, mail: { type: 'boolean', description: 'Whether Landflow can send email (the sign-in link needs it)' } }, ['enabled', 'domains', 'google', 'pageUrl', 'redirectUrl', 'mail']);
+  const outsideRequesterDoc = object({ id: { type: 'string', description: 'Starts with `ext_`' }, email: { type: 'string' }, name: { type: ['string', 'null'] }, verifiedBy: { type: 'string', enum: ['link', 'google'] }, createdAt: { type: 'string' }, lastSeenAt: { type: ['string', 'null'] }, blocked: { type: 'boolean' }, blockedAt: { type: ['string', 'null'] }, github: { type: ['string', 'null'], description: 'The GitHub username they typed (unverified)' }, openRequests: { type: 'integer' }, liveGrants: { type: 'integer' } }, ['id', 'email', 'verifiedBy', 'blocked', 'openRequests', 'liveGrants']);
+  const requesterId = { id: 'The outside requester id (`ext_…`)' };
+  add('get', '/api/access/outside', { tag: 'Access', id: 'getAccessOutsideSettings', summary: 'Who without a Landflow account may ask (admins)', responses: { 200: reply('The settings', outsideSettingsDoc), 403: errorRef('Not an admin') } });
+  add('put', '/api/access/outside', { tag: 'Access', id: 'setAccessOutsideSettings', summary: 'Change who without a Landflow account may ask (admins)', description: 'Off by default. On needs at least one domain (lower-case host names, at most 50, no wildcards, no free mail provider); Google sign-in needs an OpenID Connect client credential the admin can use. Recorded as `access.outside.settings` with before and after.', body: jsonBody(object({ enabled: { type: 'boolean' }, domains: array({ type: 'string' }), google: object({ enabled: { type: 'boolean' }, credentialId: { type: ['string', 'null'] } }) }), undefined, false), responses: { 200: reply('The settings', outsideSettingsDoc), 400: errorRef('A refused domain or credential (`field` names it)'), 403: errorRef('Not an admin') } });
+  add('get', '/api/access/outside/requesters', { tag: 'Access', id: 'listAccessOutsideRequesters', summary: 'The people without a Landflow account who signed in (admins)', responses: { 200: reply('The requesters', object({ requesters: array(outsideRequesterDoc) }, ['requesters'])), 403: errorRef('Not an admin') } });
+  add('post', '/api/access/outside/requesters/{id}/block', { tag: 'Access', id: 'blockAccessOutsideRequester', summary: 'Block an outside requester (admins)', description: 'Ends their sessions, cancels their open requests and sends them no more sign-in links. Grants they hold stay until they end or are revoked. Recorded as `access.outside.block`.', pathParams: requesterId, responses: { 200: reply('The requester', outsideRequesterDoc), 403: errorRef('Not an admin'), 404: notFound } });
+  add('post', '/api/access/outside/requesters/{id}/unblock', { tag: 'Access', id: 'unblockAccessOutsideRequester', summary: 'Let an outside requester ask again (admins)', description: 'Recorded as `access.outside.unblock`.', pathParams: requesterId, responses: { 200: reply('The requester', outsideRequesterDoc), 403: errorRef('Not an admin'), 404: notFound } });
+  add('delete', '/api/access/outside/requesters/{id}/github', { tag: 'Access', id: 'clearAccessOutsideRequesterGithub', summary: 'Clear the GitHub username an outside requester typed (admins)', description: 'Unverified and one person’s, so an admin can free a wrong or squatted name. Recorded as `access.account.set`.', pathParams: requesterId, responses: { 200: reply('The requester', outsideRequesterDoc), 403: errorRef('Not an admin'), 404: notFound } });
+  const requesterCookie = 'Public: no API key or Landflow session; the requester session cookie `landflow_requester` (from an email link or Google sign-in) is the credential. Answers 404 while the feature is off; a write needs a same-origin `Origin` and a JSON body.';
+  const outsideSessionDoc = object({ requester: object({ email: { type: 'string' }, name: { type: ['string', 'null'] }, verifiedBy: { type: 'string', enum: ['link', 'google'] } }, ['email', 'verifiedBy']), chat: { type: 'boolean' } }, ['requester']);
+  add('get', '/request-access/api/config', { tag: 'Access', id: 'getOutsideConfig', summary: 'What the sign-in page needs (public)', description: 'Only whether asking is on, whether Google sign-in is offered and whether the email link can be sent: never a domain, entry or name.', public: true, publicNote: 'Public: no API key or session. The one route of the page that answers while the feature is off.', responses: { 200: reply('The page’s switches', object({ enabled: { type: 'boolean' }, google: { type: 'boolean' }, email: { type: 'boolean' } }, ['enabled', 'google', 'email'])) } });
+  add('post', '/request-access/api/sign-in/email', { tag: 'Access', id: 'askOutsideSignInLink', summary: 'Ask for a one-time sign-in link (public)', description: 'Answers 202 with the same sentence whatever happens: an address of a domain no one allowed, a `+tag`, a blocked person, a limit, a Landflow user (who is mailed a pointer to the Access page). The link (15 minutes, once) is mailed after the answer. 429 after 10 asks from one network address in 15 minutes; at most 3 links in 15 minutes and 10 a day per address, 200 an hour per domain.', public: true, publicNote: requesterCookie, body: jsonBody(object({ email: { type: 'string' } }, ['email'])), responses: { 202: reply('Asked', object({ ok: { type: 'boolean' }, message: { type: 'string' } }, ['ok', 'message'])), 400: invalid, 404: errorRef('Asking here is switched off'), 429: errorRef('Too many asks from this network address (`retryAfter`)') } });
+  add('post', '/request-access/api/sign-in/verify', { tag: 'Access', id: 'verifyOutsideSignInLink', summary: 'Use the sign-in link (public)', description: 'Takes the token from the link’s fragment and starts the requester session (cookie `landflow_requester`: HttpOnly, SameSite=Strict, `Path=/request-access`, 8 hours, 2 hours idle). 400 `expired` for an unknown, used or old link (one sentence for all), 409 `landflow_user` for an address that has a Landflow account (`signInUrl`), 403 `blocked` / `domain`, 429 after 20 wrong links from one network address in 15 minutes.', public: true, publicNote: requesterCookie, body: jsonBody(object({ token: { type: 'string' } }, ['token'])), responses: { 200: reply('Signed in', object({ requester: outsideSessionDoc.properties.requester }, ['requester'])), 400: errorRef('Expired or already used'), 403: errorRef('Blocked, or the domain is no longer allowed'), 404: errorRef('Asking here is switched off'), 409: errorRef('The address has a Landflow account'), 429: errorRef('Too many wrong links') } });
+  add('get', '/request-access/api/sign-in/google', { tag: 'Access', id: 'startOutsideGoogleSignIn', summary: 'Start Google sign-in (public)', description: '302 to Google (code flow with PKCE S256, state and nonce; `hd` as a hint with one allowed domain), with the state in a SameSite=Lax cookie limited to this path. 404 while Google sign-in is off or its credential is gone.', public: true, publicNote: requesterCookie, responses: { 302: { description: 'To the provider' }, 404: errorRef('Not available') } });
+  add('get', '/request-access/api/sign-in/google/callback', { tag: 'Access', id: 'finishOutsideGoogleSignIn', summary: 'Google sign-in returns here (public)', description: 'Checks the state against this browser’s cookie (once), the ID token (signature, issuer, audience, expiry, nonce), `email_verified` and an allowed `hd` equal to the address’s domain. 303 to `/request-access` with the session cookie, or to `/request-access?error=<code>` (`expired`, `failed`, `denied`, `not_verified`, `domain`, `blocked`, `landflow_user`, `subject_changed`, `limited`) with none.', public: true, publicNote: requesterCookie, responses: { 303: { description: 'Back to the page' } } });
+  add('get', '/request-access/api/session', { tag: 'Access', id: 'getOutsideSession', summary: 'Who is signed in on the page (requester session)', description: '401 `{ error: "signed_out" }` without a valid session (ended, idle for 2 hours, past 8 hours, blocked, domain removed, or the address became a Landflow user’s).', public: true, publicNote: requesterCookie, responses: { 200: reply('The requester', outsideSessionDoc), 401: errorRef('Signed out'), 404: errorRef('Asking here is switched off') } });
+  add('post', '/request-access/api/sign-out', { tag: 'Access', id: 'signOutOutside', summary: 'Sign out of the page (public)', description: 'Ends this browser’s requester session and clears the cookie; 200 even when it had ended. Recorded as `access.outside.sign_out`.', public: true, publicNote: requesterCookie, body: jsonBody(object({}), undefined, false), responses: { 200: reply('Signed out', object({ ok: { type: 'boolean' } }, ['ok'])), 403: errorRef('Cross-site request'), 404: errorRef('Asking here is switched off') } });
+  // C36: the public request page's API (docs/access-requests.md#outside-requesters-what-they-can-ask-and-see). Answered only while an admin has switched
+  // "People without a Landflow account can ask" on; the requester session is the cookie `landflow_requester` from an email link or Google sign-in.
+  const outsideNote = 'Public: no API key or Landflow session. Needs the requester session (the `landflow_requester` cookie, from an email link or Google sign-in at `/request-access`); 401 `signed_out` without it, 404 while outside requests are switched off. Writes need a same-origin JSON request. The requester session never opens any other route.';
+  const outsideGrant = object({ id: { type: 'string' }, requestId: { type: 'string' }, entryId: { type: 'string' }, entryName: { type: 'string' }, account: { type: 'string' }, system: { type: 'string' }, targetLabel: { type: 'string' }, status: { type: 'string', enum: ['pending', 'active', 'removing', 'expired', 'revoked', 'failed', 'revoke_failed', 'drift'] }, since: { type: 'string' }, until: { type: ['string', 'null'] }, endedAt: { type: 'string' }, endReason: { type: 'string' }, canGiveBack: { type: 'boolean' } }, ['id', 'entryId', 'entryName', 'system', 'targetLabel', 'status', 'canGiveBack']);
+  const outsideRequest = object({ id: { type: 'string' }, entryId: { type: 'string' }, entryName: { type: 'string' }, system: { type: 'string' }, targetLabel: { type: 'string' }, state: { type: 'string', enum: ['waiting', 'approved', 'granted', 'denied', 'expired', 'failed', 'cancelled', 'removed'] }, status: { type: 'string', enum: ['pending', 'approved', 'denied', 'expired', 'cancelled', 'failed'] }, durationMinutes: { type: ['integer', 'null'] }, approvedMinutes: { type: ['integer', 'null'] }, reason: { type: 'string' }, channel: { type: 'string', enum: ['form', 'chat'] }, account: { type: 'string' }, note: { type: 'string', description: 'The approver’s comment on a denial, or why it failed; never a name' }, grant: outsideGrant, canCancel: { type: 'boolean' }, createdAt: { type: 'string' }, updatedAt: { type: 'string' } }, ['id', 'entryId', 'entryName', 'state', 'status', 'durationMinutes', 'reason', 'channel', 'canCancel', 'createdAt', 'updatedAt']);
+  const outsideEntry = object({ id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, system: { type: 'string' }, targetLabel: { type: 'string' }, durations: array({ type: ['integer', 'null'] }), needsGithub: { type: 'boolean', description: 'A GitHub username is needed; Google access goes to the verified email' } }, ['id', 'name', 'system', 'targetLabel', 'durations', 'needsGithub']);
+  const outsideId = { id: 'The request or grant id (their own; anyone else’s is 404)' };
+  const outsideAccounts = object({ github: { type: 'string' }, google: { type: 'string', description: 'The verified email; not editable' } });
+  add('get', '/request-access/api/entries', { tag: 'Access', id: 'listOutsideAccessEntries', summary: 'The entries open to outside requesters', description: 'Name, description, target label, durations and whether a GitHub username is needed; never approvers, owners, credentials or entries that stay closed.', public: true, publicNote: outsideNote, responses: { 200: reply('The open entries', object({ items: array(outsideEntry) }, ['items'])), 401: errorRef('Signed out') } });
+  add('get', '/request-access/api/requests', { tag: 'Access', id: 'listOutsideAccessRequests', summary: 'Your access requests (outside requester)', description: 'Newest first: the state, the entry, the duration asked and approved, the reason, the denial comment or failure note, the grant and dates. Never an approver’s name, a run id or a decision’s `by`.', public: true, publicNote: outsideNote, responses: { 200: reply('Your requests', object({ items: array(outsideRequest) }, ['items'])), 401: errorRef('Signed out') } });
+  add('post', '/request-access/api/requests', { tag: 'Access', id: 'createOutsideAccessRequest', summary: 'Ask for access (outside requester)', description: 'The requester is the signed-in outsider, never a field. Google access goes to the verified email; a GitHub entry needs `account` (a username, unique across everyone, unverified). The approvers read “outside requester, email verified by link / Google sign-in”. 400: a duration the entry does not offer, a reason outside 3 to 500 characters; 404: an entry that is not open to outsiders; 409: not set up, a request or grant exists (`existingId`), or nobody but the requester can approve; 401: they no longer stand (blocked, domain removed, a Landflow account on the address). Recorded as `access.request.create`.', public: true, publicNote: outsideNote, body: jsonBody(object({ entryId: { type: 'string' }, durationMinutes: { type: ['integer', 'null'] }, reason: { type: 'string' }, account: { type: 'string' } }, ['entryId', 'durationMinutes', 'reason'])), responses: { 201: reply('Your request', outsideRequest), 400: invalid, 401: errorRef('Signed out, or no longer allowed'), 404: notFound, 409: errorRef('Not set up, a duplicate, or no approver') } });
+  add('post', '/request-access/api/requests/{id}/cancel', { tag: 'Access', id: 'cancelOutsideAccessRequest', summary: 'Withdraw your waiting request (outside requester)', description: 'Only your own, and only while it waits. Recorded as `access.request.cancel`.', public: true, publicNote: outsideNote, pathParams: outsideId, responses: { 200: reply('The request', outsideRequest), 401: errorRef('Signed out'), 404: notFound, 409: errorRef('Already decided') } });
+  add('get', '/request-access/api/grants', { tag: 'Access', id: 'listOutsideAccessGrants', summary: 'Your access grants (outside requester)', description: 'Newest first: the state, until, the account. Never an approver or an error text.', public: true, publicNote: outsideNote, responses: { 200: reply('Your grants', object({ items: array(outsideGrant) }, ['items'])), 401: errorRef('Signed out') } });
+  add('post', '/request-access/api/grants/{id}/give-back', { tag: 'Access', id: 'giveBackOutsideAccessGrant', summary: 'Give your access back (outside requester)', description: 'Only your own. An automatic grant is removed now; a manual one waits for someone’s Done. Recorded as `access.grant.revoke`.', public: true, publicNote: outsideNote, pathParams: outsideId, responses: { 200: reply('The grant', outsideGrant), 401: errorRef('Signed out'), 404: notFound, 409: errorRef('Not in place') } });
+  add('get', '/request-access/api/account', { tag: 'Access', id: 'getOutsideAccessAccount', summary: 'Your accounts for access requests (outside requester)', public: true, publicNote: outsideNote, responses: { 200: reply('Your accounts', outsideAccounts), 401: errorRef('Signed out') } });
+  add('put', '/request-access/api/account', { tag: 'Access', id: 'setOutsideAccessAccount', summary: 'Set your GitHub username (outside requester)', description: 'A username belongs to one person across users and outside requesters (409 otherwise). Recorded as `access.account.set`.', public: true, publicNote: outsideNote, body: jsonBody(object({ github: { type: 'string' } }, ['github'])), responses: { 200: reply('Your accounts', outsideAccounts), 400: invalid, 401: errorRef('Signed out'), 409: errorRef('That username is someone else’s') } });
+  add('post', '/request-access/api/chat', { tag: 'Access', id: 'outsideAccessChat', summary: 'One message to the access chat (outside requester)', description: 'Runs the chat flow as the outside requester; it files a request only after they confirm it in a later message, and offers only the open entries. At most 2,000 characters (400). Limits: 10 a minute and 100 a day each, and `LANDFLOW_ACCESS_OUTSIDE_CHAT_PER_HOUR` (default 600, `0` turns the outside chat off: 409) for all outsiders together; over one: 429 with `Retry-After`. 409 until the chat is set up.', public: true, publicNote: outsideNote, body: jsonBody(object({ message: { type: 'string' }, sessionId: { type: 'string' } }, ['message', 'sessionId'])), responses: { 200: reply('The reply', object({ reply: { type: 'string' }, requestId: { type: 'string' } }, ['reply'])), 400: invalid, 401: errorRef('Signed out'), 409: errorRef('The chat is off or not set up'), 429: errorRef('Too many messages') } });
+
+  // AP01: the approval inbox (docs/approval-inbox.md)
+  const inboxRequest = { type: 'object', additionalProperties: true, description: 'An `InboxRequestView` (lib/shared/approval-inbox.ts): id, status (waiting, approved, denied, expired, cancelled), executionId, callId, workflowId, workflowName, workflowVersion, nodeId, nodeName, agentId, agentName, agentVersion, kind (`tool`, or `judge` for an AI Judge that could not decide: `tool` is then the judge step\'s name and the agent fields are empty), evidence (a judge request only: fallbackReason, rounds, toolCalls, reason, confidence, decision, steps; masked, kept by the run\'s trace content mode), tool, params (masked; for a judge, the item it read), destination, trigger, requestedAt, expiresAt, decidedBy, decidedByName, decidedVia, decidedAt, nudged ({ email, channels }: counts only), canDecide and tickets (only when an alert rule sends the request to a ticket channel: each { system: `servicenow` or `webhook`, channel, id (absent while opening), url (http or https only), state: `opening`, `open`, `closed` or `failed` }; a ticket only notifies and links, it never decides).' };
+  add('get', '/api/approval-inbox', {
+    tag: 'Executions',
+    id: 'listApprovalInbox',
+    summary: 'The tool approvals waiting in Needs you',
+    description: 'Requests of runs nobody watches (a webhook, schedule or app trigger) that paused at a tool that asks first, newest first, for the workflows the caller can read. Parameters are masked; `canDecide` says whether the caller may approve or deny.',
+    query: [
+      { name: 'status', description: '`waiting` (default) or `all`', schema: { type: 'string', enum: ['waiting', 'all'] } },
+      { name: 'executionId', description: 'Only the requests of this run', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The requests', object({ requests: array(inboxRequest) }, ['requests'])), 400: invalid },
+  });
+  add('get', '/api/approval-inbox/{id}', {
+    tag: 'Executions',
+    id: 'getApprovalRequest',
+    summary: 'One approval request',
+    pathParams: { id: 'The request id' },
+    responses: { 200: reply('The request', object({ request: inboxRequest }, ['request'])), 404: notFound },
+  });
+  for (const decision of ['approve', 'deny'] as const) {
+    add('post', `/api/approval-inbox/{id}/${decision}`, {
+      tag: 'Executions',
+      id: decision === 'approve' ? 'approveApprovalRequest' : 'denyApprovalRequest',
+      summary: `${decision === 'approve' ? 'Approve' : 'Deny'} a waiting tool call`,
+      description: `A signed-in person with run access on the workflow decides (never an API key). The first decision wins; the run goes on in the background (${decision === 'approve' ? 'the call runs' : 'the agent hears the call was refused'}). 404: no read access or no such request; 403: an API key, or read without run access; 409: already decided by someone (or the run was cancelled); 410: the request expired.`,
+      pathParams: { id: 'The request id' },
+      body: jsonBody(object({ note: { type: 'string', maxLength: 500, description: 'Left with the decision' } })),
+      responses: { 200: reply('The settled request', object({ request: inboxRequest }, ['request'])), 403: errorRef('An API key, or no run access'), 404: notFound, 409: errorRef('Already decided, or the run was cancelled'), 410: errorRef('The request expired') },
+    });
+  }
   add('get', '/api/runs/needs-you', {
     tag: 'Executions',
     id: 'listRunsNeedingYou',
     summary: 'What waits for a person across runs',
-    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check), title, detail, actor, member (the team member a tool approval or a guard’s ask is for), spanId, since.',
+    description: 'Waiting runs that ask for an approval, a form, an answer or a Run report decision, and failed checks of the last 7 days nobody settled. Each item: executionId, workflowId, workflowName, kind (approval, form, question, gate, check, budget, spend, task), title, detail, actor, member (the team member a tool approval or a guard’s ask is for), spanId, since. A `budget` item (an open AI budget warning or stop of a project the caller administers or owns the budget of) has empty executionId, workflowId and workflowName, and projectId, incidentId, incidentKind, href, canRaise and canResume.',
     responses: { 200: reply('The items, newest first', object({ items: array({ type: 'object' }) }, ['items'])) },
   });
   add('get', '/api/runs/lines', {
@@ -807,7 +1027,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Agent teams',
     id: 'listTeamNotes',
     summary: 'The team’s notebook: notes, counts and search by meaning',
-    description: 'Notes the team’s members wrote while working (docs/team-notebook.md). Query: `scope` (run, team, project), `kind`, `status`, `run` (an execution id), `expired=1` to include expired notes, `q` to rank by meaning (`via` says whether embeddings or keywords did it). Returns `notes`, `counts` and `via`.',
+    description: 'Notes the team’s members wrote while working (docs/team-notebook.md). Query: `scope` (run, team, project), `kind`, `status`, `run` (an execution id), `expired=1` to include expired notes (a note past its expiry is otherwise out at once, with no sweep), `forgotten=1` to list the forgotten notes with their reason, `q` to rank by meaning (`via` says whether embeddings or keywords did it). Returns `notes`, `counts` and `via`.',
     responses: { 200: reply('The notes'), 404: notFound },
   });
   add('post', '/api/agent-teams/{id}/notes', {
@@ -820,8 +1040,8 @@ function paths(): Record<string, Record<string, Json>> {
   add('post', '/api/agent-teams/{id}/notes/{noteId}', {
     tag: 'Agent teams',
     id: 'actOnTeamNote',
-    summary: 'Verify, answer, reopen, dispute, resolve, promote or edit a note',
-    description: 'Body `{ action }` with `verify`; `answer` and `dispute` and `edit` (`text`); `reopen`; `resolve` (`keep`: the id of the note that holds); `promote` (`to`: team or project; a project note becomes a suggestion in the second brain’s inbox).',
+    summary: 'Verify, answer, reopen, dispute, resolve, promote, edit, forget or restore a note',
+    description: 'Body `{ action }` with `verify`; `answer` and `dispute` and `edit` (`text`); `reopen`; `resolve` (`keep`: the id of the note that holds); `promote` (`to`: team or project; a project note becomes a suggestion in the second brain’s inbox); `forget` (`reason` 1 to 500 characters, `forgetAfter` an optional ISO time a minute to five years ahead that only sets when the note expires: the note leaves every read and the prompt, stays with the reason and is never swept; audited as notebook.note_forgotten); `restore` (audited as notebook.note_restored).',
     responses: { 200: reply('The note, or the pair, or the promotion'), 201: reply('The disputing note'), 400: invalid, 404: notFound },
   });
   add('delete', '/api/agent-teams/{id}/notes/{noteId}', { tag: 'Agent teams', id: 'deleteTeamNote', summary: 'Forget a note', responses: { 200: reply('Deleted'), 404: notFound } });
@@ -839,6 +1059,113 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'A zip in Anthropic’s plugin format (docs/marketplace.md#export-agents-as-plugins): `.claude-plugin/plugin.json`, `agents/<slug>.md` (name, description, tools, model, color; the prompt as the body), `skills/<slug>/SKILL.md`, and `.landflow/agents/<slug>.json` with what only Landflow uses (persona parts, tools, avatar, model provider), which Claude Code ignores and installing the plugin in Landflow reads back. Credentials, schedules and channels are left out.',
     query: exportQuery,
     responses: { 200: zipReply, 400: invalid, 404: notFound },
+  });
+  // PC07:
+  add('get', '/api/agents/{id}/context-preview', {
+    tag: 'Agents',
+    id: 'previewAgentContext',
+    summary: 'What a chat with the agent in a project would be given',
+    description: 'The project block in the agent’s Project context mode (`text`, and the `compact` block) and the approved practices the agent would follow (`practices.text`, `practices.list` of `{ handle, version }`), built as a chat in that project would build them. Reads only: no delivery is recorded. Without `projectId`, the agent’s home project. For editors of the agent; a project the agent is not available in, or you have no role in, is 404.',
+    query: [{ name: 'projectId', description: 'The project to preview (default: the agent’s home project)', schema: { type: 'string' } }],
+    responses: { 200: reply('The preview', object({ projectId: { type: 'string' }, mode: { type: 'string', enum: ['full', 'compact', 'off'] }, text: { type: 'string' }, compact: { type: 'string' }, practices: object({ text: { type: 'string' }, list: array(object({ handle: { type: 'string' }, version: { type: 'integer' } }, ['handle', 'version'])) }, ['text', 'list']) }, ['mode', 'text', 'compact', 'practices'])), 404: notFound },
+  });
+  // AG12:
+  add('get', '/api/agents/{id}/connections', {
+    tag: 'Agents',
+    id: 'getAgentConnections',
+    summary: 'What an agent is connected to',
+    description: 'The list the Run Trace shows for the agent (model, memory, tools, knowledge bases, skills) from the version a Run an Agent node runs (the published one; the draft of an agent never published, `published: false`). `draftDiffers`: the draft’s settings differ from the published ones as data. Each connection may carry `toolId`, `asksFirst`, `credential` (a credential’s NAME, never its data; "credential missing" for a deleted one), `overriddenBy` (the wired sub-node that replaces it), `withheld` (why the project keeps it out) and `documents` (a vector knowledge base’s count). With `workflowId` and `nodeId`, the workflow’s project settings apply and the node’s wired Chat Model and Memory mark the agent’s own as overridden, its wired tools listed with `from: "flow"`. Read access is the agent’s; an agent or workflow you cannot read is 404.',
+    pathParams: { id: 'The agent id' },
+    query: [
+      { name: 'workflowId', description: 'The workflow the node is in (its project’s settings apply)', schema: { type: 'string' } },
+      { name: 'nodeId', description: 'The Run an Agent node in it (its wired sub-nodes are read)', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The agent and its connections', object({ agent: object({ id: { type: 'string' }, name: { type: 'string' }, published: { type: 'boolean' }, draftDiffers: { type: 'boolean' }, icon: { type: 'string' }, color: { type: 'string' }, avatar: { type: 'object' } }, ['id', 'name', 'published', 'draftDiffers']), connections: array({ type: 'object', description: 'kind, name, detail, nodeType, icon, from, toolId, asksFirst, credential, overriddenBy, withheld, documents' }) }, ['agent', 'connections'])), 404: notFound },
+  });
+  // AG17:
+  add('get', '/api/workflows/{id}/agent-moves', {
+    tag: 'Workflows',
+    id: 'getWorkflowAgentMoves',
+    summary: 'What moved from a workflow into its agents',
+    description: 'The record of the wired sub-nodes the flow handed to its agents’ drafts (or kept, with why), newest first; each moved item carries its `state` against the agent now (`pending`, `live`, `withdrawn`). Credentials by name only.',
+    pathParams: { id: 'The workflow id' },
+    responses: { 200: reply('The moves', object({ moves: array({ type: 'object' }) }, ['moves'])), 404: notFound },
+  });
+  add('post', '/api/workflows/{id}/agent-moves', {
+    tag: 'Workflows',
+    id: 'moveWorkflowAgentWiring',
+    summary: 'Move a flow’s wired sub-nodes into its agents’ drafts',
+    description: 'Moves every movable chat model, tool and knowledge base wired into a Run an Agent (or Run a Team) node into the agent’s draft and saves the flow without them, in one step; nothing is published. A memory node, and anything that cannot move, stays and is returned in `kept` with why. `?dryRun=1` answers the same and changes nothing. 412 when `updatedAt` is not the stored one.',
+    pathParams: { id: 'The workflow id' },
+    query: [{ name: 'dryRun', description: '`1`: answer without changing anything', schema: { type: 'string' } }],
+    body: jsonBody(object({ updatedAt: { type: 'string' }, subNodeIds: array({ type: 'string' }), resolve: { type: 'object', description: 'sub-node id → `useEverywhere`: a person’s choice for a kept item' } })),
+    responses: { 200: reply('The moves', object({ workflowId: { type: 'string' }, moved: array({ type: 'object' }), kept: array({ type: 'object' }), agents: array({ type: 'object' }), updatedAt: { type: 'string' }, dryRun: { type: 'boolean' } }, ['workflowId', 'moved', 'kept', 'agents'])), 403: errorRef('No update access to the workflow, or a protected environment'), 404: notFound, 412: errorRef('The workflow changed since it was opened (`workflow_conflict`); nothing was moved') },
+  });
+  add('get', '/api/agents/{id}/moves', {
+    tag: 'Agents',
+    id: 'getAgentMoves',
+    summary: 'What moved into an agent from workflows',
+    description: 'The wired sub-nodes of flows the caller can read that moved into this agent’s draft, newest first, with their `state`.',
+    pathParams: { id: 'The agent id' },
+    responses: { 200: reply('The moves', object({ moves: array({ type: 'object' }) }, ['moves'])), 404: notFound },
+  });
+  // AG21: workflow versions pin agent versions.
+  const agentPin = object({ nodeId: { type: 'string' }, nodeName: { type: 'string' }, agentId: { type: 'string' }, agentName: { type: 'string' }, version: { type: 'integer' } }, ['nodeId', 'agentId', 'version']);
+  const pinBlock = object({ agentId: { type: 'string' }, name: { type: 'string' }, published: { type: 'integer', description: 'Absent when the agent was never published' }, changes: array({ type: 'string' }), canPublish: { type: 'boolean', description: 'False: the caller may use the agent but not change (publish) it' } }, ['agentId', 'name', 'changes']);
+  add('post', '/api/workflows/{id}/publish', {
+    tag: 'Workflows',
+    id: 'publishWorkflow',
+    summary: 'Publish a workflow version',
+    description:
+      'Publishes `versionId` (default: the saved draft; an older version is a rollback). The version pins each bound Run an Agent / Run a Team agent at its published version and production keeps those versions until a republish. An agent whose draft differs refuses the publish (409 `agent_changes_unpublished` `{ agents }`) unless `agents` says what to do: `publish-first` (smoke test and eval gate, then publish; needs the right to change the agent, else 403 `agent_publish_forbidden`; a hold or failed smoke is 409 `agent_publish_held`) or `as-published` (pin the published versions knowingly). `update: { agents }` with `testedExecutionId` records a new version of the production graph with only those agents moved to their published versions (a passing test run is required). `at` schedules it (202 `{ scheduled }`); four-eyes publishing answers 202 `{ approvalRequired, request }`.',
+    body: jsonBody(
+      object({ versionId: { type: 'string' }, note: { type: 'string', maxLength: 2000 }, at: { type: 'string', format: 'date-time' }, agents: { type: 'string', enum: ['publish-first', 'as-published'] }, update: object({ agents: array({ type: 'string' }) }, ['agents']), testedExecutionId: { type: 'string' } }),
+      undefined,
+      false,
+    ),
+    responses: { 200: reply('The publication', { type: 'object', additionalProperties: true }), 202: reply('Scheduled, or waiting for approval', { type: 'object', additionalProperties: true }), 403: errorRef('The caller may not change an agent that `publish-first` would publish'), 404: notFound, 409: reply('An agent draft differs (`agent_changes_unpublished`, with `agents`), a hold (`agent_publish_held`) or a missing test (`not_tested`)', object({ error: { type: 'string' }, code: { type: 'string' }, agents: array(pinBlock) }, ['error'])), 422: errorRef('Nodes the governance policy does not allow, or a composite that breaks its contract') },
+  });
+  add('get', '/api/workflows/{id}/agent-updates', {
+    tag: 'Workflows',
+    id: 'listWorkflowAgentUpdates',
+    summary: 'Agents with a newer published version than production runs',
+    description: '"Alert triager v3 is available": each agent the production version pins whose published version is newer, with the nodes that use it. `offer` is the update card\u2019s data when there are updates. Read access is the workflow\u2019s.',
+    responses: { 200: reply('The updates', object({ updates: array({ type: 'object', additionalProperties: true }), offer: { type: 'object', additionalProperties: true } }, ['updates'])), 404: notFound },
+  });
+  add('post', '/api/workflows/{id}/test-update', {
+    tag: 'Workflows',
+    id: 'testWorkflowAgentUpdate',
+    summary: 'Test the production graph with newer agent versions',
+    description: 'A manual run of the production version\u2019s graph with the named agents at their latest published versions. The trigger\u2019s data is replayed from the last production run, else the trigger\u2019s pinned data, else 409 `no_input`. Recorded like any run, with both versions. Needs the right to run the workflow.',
+    body: jsonBody(object({ agents: array({ type: 'string' }) }, ['agents'])),
+    responses: { 200: reply('The run', object({ executionId: { type: 'string' }, status: { type: 'string' } }, ['executionId', 'status'])), 404: notFound, 409: errorRef('No input to replay (`no_input`) or nothing to update') },
+  });
+  add('get', '/api/workflows/{id}/versions/{versionId}/pins', {
+    tag: 'Workflows',
+    id: 'getWorkflowVersionPins',
+    summary: 'The agent versions a workflow version pins',
+    responses: { 200: reply('The pins', object({ pins: array(agentPin) }, ['pins'])), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/versions', {
+    tag: 'Agents',
+    id: 'listAgentVersions',
+    summary: 'An agent\u2019s published versions and the workflow versions that pin each',
+    description: 'Newest first; `usedBy` lists the workflow versions that pin the version (production first) and holds only workflows the caller can read. Read access is the agent\u2019s.',
+    responses: { 200: reply('The versions', object({ versions: array(object({ version: { type: 'integer' }, publishedAt: { type: 'string', format: 'date-time' }, publishedBy: { type: 'string' }, publishedByName: { type: 'string' }, usedBy: array(object({ workflowId: { type: 'string' }, name: { type: 'string' }, workflowVersion: { type: 'integer' }, production: { type: 'boolean' } }, ['workflowId', 'name', 'workflowVersion', 'production'])) }, ['version', 'publishedAt', 'usedBy'])) }, ['versions'])), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/versions/{version}', {
+    tag: 'Agents',
+    id: 'getAgentVersion',
+    summary: 'The config of one published version of an agent',
+    description: 'For comparing two versions (the history sheet). `config` is the agent\u2019s config as published, credentials as `{ id, name }` references, never data; `publishedByName` is the person who published it when known. A draft is not a version: an unknown version, or an agent the caller cannot read, is 404.',
+    responses: { 200: reply('The version', object({ version: { type: 'integer' }, publishedAt: { type: ['string', 'null'], format: 'date-time' }, publishedBy: { type: 'string' }, publishedByName: { type: 'string' }, config: { type: 'object', additionalProperties: true } }, ['version', 'config'])), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/versions/{version}/connections', {
+    tag: 'Agents',
+    id: 'getAgentVersionConnections',
+    summary: 'What one published version of an agent is connected to',
+    description: 'As `/api/agents/{id}/connections`, for that version\u2019s config (the bubbles of a version view, read-only). Credentials come as names, never data.',
+    responses: { 200: reply('The version and its connections', object({ agent: { type: 'object', additionalProperties: true }, version: { type: 'integer' }, connections: array({ type: 'object', additionalProperties: true }) }, ['agent', 'version', 'connections'])), 404: notFound },
   });
   add('get', '/api/agent-teams/{id}/export', {
     tag: 'Agent teams',
@@ -1146,21 +1473,266 @@ function paths(): Record<string, Record<string, Json>> {
     timezone: { type: 'string' },
     executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }),
     jsonRender: { type: 'boolean', description: 'Saved json-render choice; absent while the LANDFLOW_JSON_RENDER default applies' },
+    // PC01:
+    company: object({ name: { type: 'string' }, mission: { type: 'string' } }),
   });
   add('get', '/api/settings', {
     tag: 'Settings',
     id: 'getSettings',
     summary: 'Get the instance settings',
     description: '`jsonRender` is the json-render flag as it stands: the saved choice, else the `LANDFLOW_JSON_RENDER` default.',
-    responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' }, hostTimezone: { type: 'string' }, executions: object({ stored: { type: 'integer' }, prunable: { type: 'integer' } }) })) },
+    responses: { 200: reply('The settings', object({ settings: settingsDoc, company: object({ name: { type: 'string' }, mission: { type: 'string' } }), jsonRender: { type: 'boolean' }, hostTimezone: { type: 'string' }, executions: object({ stored: { type: 'integer' }, prunable: { type: 'integer' } }) })) },
   });
   add('patch', '/api/settings', {
     tag: 'Settings',
     id: 'updateSettings',
     summary: 'Change the instance settings',
     description: 'Any subset. `jsonRender` (`true`, `false`, or `null` for the environment default) is the owner’s: an admin gets 403.',
-    body: jsonBody(object({ timezone: { type: 'string' }, executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }), jsonRender: { type: ['boolean', 'null'] } })),
+    body: jsonBody(object({ timezone: { type: 'string' }, executions: object({ maxCount: { type: 'integer' }, maxAgeDays: { type: 'integer' } }), jsonRender: { type: ['boolean', 'null'] }, company: object({ name: { type: ['string', 'null'], maxLength: 120 }, mission: { type: ['string', 'null'], maxLength: 500 } }) })),
     responses: { 200: reply('The settings', object({ settings: settingsDoc, jsonRender: { type: 'boolean' } })), 400: invalid, 403: errorRef('Not the owner (json-render)') },
+  });
+
+  // C31: project keys (docs/features/secrets-and-environments.md#project-keys). Owner only, session only.
+  const reseal = { resealed: { type: 'integer' }, current: { type: 'integer' }, failed: array({ type: 'string' }), skipped: { type: 'integer' }, pending: array({ type: 'string' }) };
+  add('get', '/api/settings/encryption/project-keys', {
+    tag: 'Settings',
+    id: 'getProjectKeys',
+    summary: 'Project keys: versions and what is sealed with them',
+    description: 'Owner only, session only (an API key gets 403). Per project its active version, its retired versions and how many credentials are sealed with it; `onRing` counts credentials still sealed with a key ring key; `unreadable` lists `<projectId>:<version>` of keys this process can’t unwrap (the ring lacks the key that wrapped them).',
+    responses: {
+      200: reply(
+        'Where the project keys stand',
+        object({ projects: array(object({ projectId: { type: 'string' }, name: { type: 'string' }, active: { type: 'integer' }, retired: array({ type: 'integer' }), credentials: { type: 'integer' } }, ['projectId', 'retired', 'credentials'])), onRing: { type: 'integer' }, unreadable: array({ type: 'string' }) }, ['projects', 'onRing', 'unreadable']),
+      ),
+      403: errorRef('Not the owner'),
+    },
+  });
+  add('post', '/api/settings/encryption/project-keys', {
+    tag: 'Settings',
+    id: 'moveCredentialsBetweenKeys',
+    summary: 'Migrate credentials onto project keys, or revert them to the ring',
+    description:
+      'Owner only, session only. `migrate` seals every credential with its project’s active key, one at a time, and sweeps: keys retired for 15 minutes that no credential names are deleted (keys of projects that are gone are retired first); `revert` seals every credential with the ring’s primary key as a version 2 value (run it before a downgrade to a build without project keys, and check `onProjectKeys` is 0). Both are idempotent: run again while `done` is false. Audited fail-closed as `encryption.project_key.migrated` / `.reverted`: 503 when the event can’t be stored under `LANDFLOW_AUDIT_FAIL_CLOSED`.',
+    body: jsonBody(object({ action: { type: 'string', enum: ['migrate', 'revert'] } }, ['action'])),
+    responses: {
+      200: reply('What moved', object({ ...reseal, destroyed: array({ type: 'string' }), onProjectKeys: { type: 'integer' }, done: { type: 'boolean' } }, ['resealed', 'current', 'failed', 'done'])),
+      400: invalid,
+      403: errorRef('Not the owner'),
+      503: errorRef('The audit log is unavailable'),
+    },
+  });
+  add('post', '/api/settings/encryption/project-keys/{projectId}/rotate', {
+    tag: 'Settings',
+    id: 'rotateProjectKey',
+    summary: 'Rotate one project’s key',
+    description: 'Owner only, session only. A new key version for the project: its credentials are re-sealed with it one at a time (no other project is touched) and the old version is retired (a later sweep deletes it). `failed` lists credentials that stayed on the old version. Audited fail-closed as `encryption.project_key.rotated`.',
+    pathParams: { projectId: 'The project id' },
+    responses: {
+      200: reply('The new version', object({ version: { type: 'integer' }, resealed: { type: 'integer' }, failed: array({ type: 'string' }), done: { type: 'boolean' } }, ['version', 'resealed', 'failed', 'done'])),
+      403: errorRef('Not the owner'),
+      404: notFound,
+      503: errorRef('The audit log is unavailable'),
+    },
+  });
+
+  // SB19: the model Spotlight uses (docs/assistant.md, "The Spotlight panel").
+  const spotlightModelsDoc = object({ default: { type: 'string' }, models: array(object({ id: { type: 'string' }, label: { type: 'string' }, source: { type: 'string', enum: ['ollama', 'gateway', 'anthropic', 'openai'] }, local: { type: 'boolean' } }, ['id', 'label', 'source', 'local'])) }, ['default', 'models']);
+  add('get', '/api/settings/spotlight', {
+    tag: 'Settings',
+    id: 'getSpotlightModels',
+    summary: 'The model Spotlight uses, and the models the server offers it',
+    description: 'The list comes only from the server’s configuration: Ollama’s pulled chat models, `litellm/…` when the instance has a gateway, `anthropic/…` and `openai/…` only when the server has the key. Any reader.',
+    responses: { 200: reply('The default and the models', spotlightModelsDoc) },
+  });
+  add('put', '/api/settings/spotlight', {
+    tag: 'Settings',
+    id: 'setSpotlightModel',
+    summary: 'Set the model Spotlight uses by default',
+    description: 'Admins. A model the server does not offer is refused with 400 “Not a model this server offers: …”. The same check holds the `model` of the chat, build, design, agent and suggest routes.',
+    body: jsonBody(object({ model: { type: 'string', maxLength: 200 } }, ['model'])),
+    responses: { 200: reply('The default and the models', spotlightModelsDoc), 400: invalid, 403: errorRef('Not an admin') },
+  });
+
+  // C14: policy hooks asked before an outbound MCP call (docs/features/audit-and-governance.md, "MCP policy hooks").
+  const hookMatch = object({ hosts: array({ type: 'string' }), pathPrefix: { type: 'string' }, tools: array({ type: 'string' }), methods: array({ type: 'string', enum: ['tools/call', 'resources/read', 'prompts/get'] }), projects: array({ type: 'string' }) });
+  const policyHookDoc = object(
+    {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      enabled: { type: 'boolean' },
+      url: { type: 'string' },
+      auth: { type: 'string', enum: ['hmac', 'bearer', 'none'] },
+      credential: object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'], { description: 'The Bearer Auth credential that signs the request or is sent as the bearer: its id and name, never its data' }),
+      timeoutMs: { type: 'integer', minimum: 100, maximum: 5000 },
+      failureMode: { type: 'string', enum: ['closed', 'open'], description: 'What happens when the service does not answer: `closed` blocks the call, `open` lets it through' },
+      match: hookMatch,
+      createdAt: { type: 'string' },
+      updatedAt: { type: 'string' },
+    },
+    ['id', 'name', 'enabled', 'url', 'auth', 'timeoutMs', 'failureMode', 'match'],
+  );
+  const hookBody = {
+    name: { type: 'string', minLength: 1, maxLength: 100 },
+    enabled: { type: 'boolean' },
+    url: { type: 'string', description: 'http(s); under the outbound rules (a private address needs `LANDFLOW_OUTBOUND_ALLOW` in the production profile)' },
+    auth: { type: 'string', enum: ['hmac', 'bearer', 'none'], description: 'Default `hmac`: `X-Landflow-Timestamp` and `X-Landflow-Signature` (HMAC-SHA-256 of `timestamp.body` keyed by the credential’s token)' },
+    credentialId: { type: ['string', 'null'], description: 'A `core.httpBearerAuth` credential; needed for `hmac` and `bearer`' },
+    timeoutMs: { type: 'integer', minimum: 100, maximum: 5000 },
+    failureMode: { type: 'string', enum: ['closed', 'open'], description: 'Default `closed` in the production profile, `open` otherwise' },
+    match: hookMatch,
+  };
+  // C30: leased dynamic secrets (docs/features/secrets-and-environments.md#dynamic-secrets)
+  const leaseDoc = {
+    type: 'object',
+    description: 'A `SecretLeaseView` (lib/shared/secrets.ts): id, executionId, workflowId, provider, path (`database/creds/report-reader`), state (`active`, `revoked`, `expired` or `revoke_failed`), issuedAt, expiresAt, renewedUntil, attempts, lastError, endedAt, endedBy (`finish`, `sweeper` or `admin`) and dismissed. Never the lease id or the issued values.',
+    additionalProperties: true,
+  };
+  add('get', '/api/external-secrets/leases', {
+    tag: 'Settings',
+    id: 'listSecretLeases',
+    summary: 'List leased dynamic secrets',
+    description: 'Credentials an OpenBao / Vault provider issued to runs from its Dynamic mounts, newest first, with `counts` (open leases, and failed revokes nobody set aside). Admins.',
+    query: [
+      { name: 'state', description: '`active`, `ended` (revoked or expired) or `revoke_failed`; default all', schema: { type: 'string', enum: ['active', 'ended', 'revoke_failed'] } },
+      { name: 'executionId', description: 'Only the leases of this run', schema: { type: 'string' } },
+      { name: 'limit', description: '1 to 500, default 100', schema: { type: 'integer', minimum: 1, maximum: 500 } },
+      { name: 'cursor', description: '`nextCursor` of the previous page', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The leases', object({ leases: array(leaseDoc), nextCursor: { type: 'string' }, counts: object({ active: { type: 'integer' }, revokeFailed: { type: 'integer' } }, ['active', 'revokeFailed']) }, ['leases', 'counts'])), 400: invalid },
+  });
+  add('post', '/api/external-secrets/leases/revoke', {
+    tag: 'Settings',
+    id: 'revokeSecretLeases',
+    summary: 'Revoke leased dynamic secrets now',
+    description:
+      'Admins. `{ id }` revokes one lease, `{ executionId }` every open lease of a run, `{ id, dismiss: true }` sets a lease whose revoke was given up aside (409 when it is not one). A store that refuses leaves the lease active with the reason in `lastError` and counts it in `failed`; the host tries again by itself. Audited with the person who asked.',
+    body: jsonBody({ oneOf: [object({ id: { type: 'string' }, dismiss: { type: 'boolean' } }, ['id'], { additionalProperties: false }), object({ executionId: { type: 'string' } }, ['executionId'], { additionalProperties: false })] }),
+    responses: { 200: reply('What was revoked', object({ revoked: { type: 'integer' }, failed: { type: 'integer' }, leases: array(leaseDoc) }, ['revoked', 'failed', 'leases'])), 400: invalid, 404: notFound, 409: errorRef('Not a lease that could not be revoked') },
+  });
+  add('get', '/api/settings/mcp/policy-hooks', {
+    tag: 'Settings',
+    id: 'listMcpPolicyHooks',
+    summary: 'List the MCP policy hooks',
+    description: 'Webhooks asked allow or deny before an outbound MCP tool call, resource read or prompt. Admins.',
+    responses: { 200: reply('The hooks', object({ hooks: array(policyHookDoc) }, ['hooks'])) },
+  });
+  add('post', '/api/settings/mcp/policy-hooks', {
+    tag: 'Settings',
+    id: 'createMcpPolicyHook',
+    summary: 'Create an MCP policy hook',
+    description: 'Admins. At most 20. A URL the outbound rules refuse, or a credential that is not a Bearer Auth one, is a 400.',
+    body: jsonBody(object(hookBody, ['name', 'url'])),
+    responses: { 201: reply('The hook', object({ hook: policyHookDoc }, ['hook'])), 400: invalid, 409: errorRef('There are already 20 hooks') },
+  });
+  add('get', '/api/settings/mcp/policy-hooks/{id}', { tag: 'Settings', id: 'getMcpPolicyHook', summary: 'Get an MCP policy hook', responses: { 200: reply('The hook', object({ hook: policyHookDoc }, ['hook'])), 404: notFound } });
+  add('patch', '/api/settings/mcp/policy-hooks/{id}', {
+    tag: 'Settings',
+    id: 'updateMcpPolicyHook',
+    summary: 'Change an MCP policy hook',
+    description: 'Any subset; `credentialId: null` clears the credential.',
+    body: jsonBody(object(hookBody)),
+    responses: { 200: reply('The hook', object({ hook: policyHookDoc }, ['hook'])), 400: invalid, 404: notFound },
+  });
+  add('delete', '/api/settings/mcp/policy-hooks/{id}', { tag: 'Settings', id: 'deleteMcpPolicyHook', summary: 'Remove an MCP policy hook', responses: { 200: reply('Removed', ok), 404: notFound } });
+  add('post', '/api/settings/mcp/policy-hooks/{id}/test', {
+    tag: 'Settings',
+    id: 'testMcpPolicyHook',
+    summary: 'Send a sample request to an MCP policy hook',
+    description: 'Sends one request (`tool: "example_tool"`, no arguments, `test: true`) and answers what the service said, or why it did not. Not a run: nothing is cached or audited as a decision.',
+    responses: {
+      200: reply('The service’s answer', object({ ok: { type: 'boolean' }, decision: { type: 'string', enum: ['allow', 'deny'] }, reason: { type: 'string' }, ruleId: { type: 'string' }, status: { type: 'integer' }, error: { type: 'string' }, ms: { type: 'integer' } }, ['ok', 'ms'])),
+      404: notFound,
+    },
+  });
+
+  // SP12: the caller's own AI spend, and the local models Settings lists (docs/llm-gateway.md, "The AI page").
+  const spendTotals = { inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, cacheReadTokens: { type: 'integer' }, cacheWriteTokens: { type: 'integer' }, cost: { type: 'number' }, calls: { type: 'integer' }, unpricedCalls: { type: 'integer' }, runs: { type: 'integer' } };
+  const spendTotalsDoc = object(spendTotals, ['inputTokens', 'outputTokens', 'cost', 'calls', 'unpricedCalls', 'runs']);
+  const spendRowDoc = object({ ...spendTotals, key: { type: 'string' }, label: { type: 'string' }, share: { type: 'number' }, unpriced: { type: 'boolean', description: 'A model with no price whose calls cost nothing (a local model nobody priced)' } }, ['key', 'label', 'share']);
+  // SP11's month-end forecast, for the forecast card's total and caps and the You card's own caps.
+  const forecastShape = object({ monthToDate: { type: 'number' }, p50: { type: 'number' }, low: { type: 'number' }, high: { type: 'number' }, early: { type: 'boolean' }, daysObserved: { type: 'integer' }, daysLeft: { type: 'integer' } }, ['monthToDate', 'p50', 'low', 'high', 'early', 'daysObserved', 'daysLeft']);
+  add('get', '/api/insights/ai/me', {
+    tag: 'Insights',
+    id: 'getMyAiSpend',
+    summary: 'Your own AI spend',
+    description: 'Only the caller’s own rows (today, this month, the period’s days, or hours for 24h, by model, purpose and surface) and the caller’s own user caps (their own set, or the default for everyone), each with the forecast card’s figure for the same cap: a monthly cap’s `forecast` and `reachesOn`, a daily cap’s `pace`; never anyone else’s. No prompt text.',
+    query: [{ name: 'period', description: '`24h`, `7d` (default), `30d` or `90d`', schema: { type: 'string', enum: ['24h', '7d', '30d', '90d'] } }],
+    responses: {
+      200: reply(
+        'Your spend',
+        object({ today: spendTotalsDoc, month: spendTotalsDoc, period: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, series: array(object({ at: { type: 'string' }, cost: { type: 'number' }, inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, calls: { type: 'integer' } })), byModel: array(spendRowDoc), byPurpose: array(spendRowDoc), bySurface: array(spendRowDoc), caps: array(object({ id: { type: 'string' }, subject: { type: 'string' }, period: { type: 'string', enum: ['day', 'month'] }, metric: { type: 'string', enum: ['tokens', 'cost'] }, max: { type: 'number' }, used: { type: 'number' }, ratio: { type: 'number' }, forecast: forecastShape, pace: { type: 'number' }, reachesOn: { type: 'string', description: 'YYYY-MM-DD' } })), monthEnd: { type: 'string', description: 'YYYY-MM-DD: the month’s last day in the instance’s time zone, what a monthly cap’s forecast runs to' } }, ['today', 'month', 'series', 'byModel', 'byPurpose', 'bySurface', 'caps', 'monthEnd']),
+      ),
+      400: invalid,
+    },
+  });
+  add('get', '/api/settings/ai-prices/local', {
+    tag: 'Settings',
+    id: 'listLocalModels',
+    summary: 'The local models seen in the last 30 days',
+    description: 'Every model seen on a local provider (Ollama through Landflow or the gateway) with its calls and tokens, and the override that prices it now (`price` absent: not priced). A price saved with `PUT /api/settings/ai-prices` applies from then on; recorded calls keep their cost.',
+    responses: { 200: reply('The local models', array(object({ model: { type: 'string' }, providers: array({ type: 'string' }), calls: { type: 'integer' }, inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, lastAt: { type: 'string' }, price: object({ provider: { type: 'string' }, model: { type: 'string' }, input: { type: 'number' }, output: { type: 'number' } }) }, ['model', 'providers', 'calls', 'inputTokens', 'outputTokens', 'lastAt']))) },
+  });
+
+  // ---- goals and project briefs (PC01; docs/projects-and-goals.md) ----
+  const goalDoc = object({ id: { type: 'string' }, title: { type: 'string' }, why: { type: 'string' }, level: { type: 'string', enum: ['company', 'project'] }, status: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] }, ownerId: { type: 'string' }, ownerName: { type: 'string' }, targetDate: { type: 'string', description: 'YYYY-MM-DD' }, parentId: { type: 'string' }, projectId: { type: 'string' }, projects: array(object({ id: { type: 'string' }, name: { type: 'string' } })), initiatives: array(object({ id: { type: 'string' }, name: { type: 'string' } })), canEdit: { type: 'boolean' }, createdAt: { type: 'string' }, updatedAt: { type: 'string' } }, ['id', 'title', 'level', 'status', 'projects', 'initiatives', 'canEdit']);
+  const goalReply = (description: string) => reply(description, object({ goal: goalDoc }, ['goal']));
+  add('get', '/api/goals', {
+    tag: 'Goals',
+    id: 'listGoals',
+    summary: 'The goals you can see, as a tree',
+    description: 'Company goals, and the project goals of projects you can open. `goals` are the roots, each with `children`; a goal whose parent you can’t see is a root. `mission` is the company mission (Settings → Company). `projectId` keeps the goals that project serves; `status` one status.',
+    query: [
+      { name: 'projectId', description: 'Only the goals this project serves', schema: { type: 'string' } },
+      { name: 'status', description: 'Only goals in this status', schema: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] } },
+      { name: 'progress', description: '`1` adds `progress`, one entry per goal in the tree', schema: { type: 'string', enum: ['1'] } },
+      { name: 'window', description: 'with `progress=1`, the days counted back (default 7)', schema: { type: 'string', enum: ['7', '30'] } },
+    ],
+    responses: { 200: reply('The goal tree', object({ mission: { type: 'string' }, goals: array({ type: 'object', additionalProperties: true }), canCreateCompanyGoals: { type: 'boolean' }, progress: array({ type: 'object', additionalProperties: true }) }, ['goals', 'canCreateCompanyGoals'])), 400: invalid },
+  });
+  add('post', '/api/goals', {
+    tag: 'Goals',
+    id: 'createGoal',
+    summary: 'Add a goal',
+    description: 'Company goals are for owners and admins; a project goal needs `projectId` (its admins). `projectIds` (company goals) lists the projects that serve it, each one you must admin. Goals go 4 levels deep; a company goal’s parent is a company goal.',
+    body: jsonBody(object({ title: { type: 'string', maxLength: 200 }, why: { type: 'string', maxLength: 2000 }, level: { type: 'string', enum: ['company', 'project'] }, status: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'], default: 'active' }, ownerId: { type: 'string' }, targetDate: { type: 'string', description: 'YYYY-MM-DD' }, parentId: { type: 'string' }, projectId: { type: 'string' }, projectIds: { type: 'array', maxItems: 10, items: { type: 'string' } } }, ['title', 'level'])),
+    responses: { 201: goalReply('The new goal'), 400: invalid, 403: errorRef('Not allowed to add this goal'), 404: notFound },
+  });
+  add('get', '/api/goals/{id}', { tag: 'Goals', id: 'getGoal', summary: 'A goal with its chain of parents', responses: { 200: reply('The goal', object({ goal: goalDoc, chain: array({ type: 'object', additionalProperties: true }) }, ['goal', 'chain'])), 404: notFound } });
+  add('patch', '/api/goals/{id}', {
+    tag: 'Goals',
+    id: 'updateGoal',
+    summary: 'Change a goal',
+    description: '`null` clears `why`, `ownerId`, `targetDate` or `parentId`. Moving a goal rejects cycles and more than 4 levels.',
+    body: jsonBody(object({ title: { type: 'string' }, why: { type: ['string', 'null'] }, status: { type: 'string', enum: ['planned', 'active', 'achieved', 'cancelled'] }, ownerId: { type: ['string', 'null'] }, targetDate: { type: ['string', 'null'] }, parentId: { type: ['string', 'null'] } })),
+    responses: { 200: goalReply('The goal'), 400: invalid, 403: errorRef('Not allowed to change this goal'), 404: notFound },
+  });
+  add('delete', '/api/goals/{id}', { tag: 'Goals', id: 'deleteGoal', summary: 'Delete a goal', description: 'Also removes it from the projects that serve it and unlinks its initiatives. A goal with sub-goals answers 409 `goal_has_children`.', responses: { 200: reply('Deleted', ok), 403: errorRef('Not allowed to delete this goal'), 404: notFound, 409: errorRef('The goal has sub-goals') } });
+  add('put', '/api/goals/{id}/initiatives', {
+    tag: 'Goals',
+    id: 'setGoalInitiatives',
+    summary: 'Link brain initiatives to a goal',
+    description: 'Replaces the links. Each id is a brain entity of type `initiative` you may read; otherwise 400 names the bad ids.',
+    body: jsonBody(object({ ids: { type: 'array', maxItems: 50, items: { type: 'string' } } }, ['ids'])),
+    responses: { 200: goalReply('The goal'), 400: invalid, 403: errorRef('Not allowed to change this goal'), 404: notFound },
+  });
+  add('get', '/api/projects/{id}/goals', { tag: 'Goals', id: 'getProjectGoals', summary: 'The goals a project serves, in order', description: 'The first planned or active one is the primary goal.', pathParams: { id: 'The project id' }, responses: { 200: reply('The goals', object({ goals: array(goalDoc) }, ['goals'])), 404: notFound } });
+  add('put', '/api/projects/{id}/goals', {
+    tag: 'Goals',
+    id: 'setProjectGoals',
+    summary: 'Set the goals a project serves, and their order',
+    description: 'The project’s admins. Each is a goal you can see: a company goal, or one of the project’s own. At most 10.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(object({ goalIds: { type: 'array', maxItems: 10, items: { type: 'string' } } }, ['goalIds'])),
+    responses: { 200: reply('The goals', object({ goals: array(goalDoc) }, ['goals'])), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound },
+  });
+  add('patch', '/api/projects/{id}', {
+    tag: 'Goals',
+    id: 'updateProject',
+    summary: 'Rename a project or change its brief',
+    description: 'The project’s admins. `brief` sets the brief, constraints, done-when, words we use, status, target date, lead and decision owner (`null` clears one); the lead and decision owner must have a role in the project. `GET /api/projects/{id}` returns the brief as `project.brief`.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(object({ name: { type: 'string', maxLength: 120 }, description: { type: ['string', 'null'], maxLength: 500 }, icon: { type: ['string', 'null'] }, repos: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'owner/name, lowercased (PC10)' }, brief: object({ brief: { type: ['string', 'null'], maxLength: 1500 }, constraints: { type: ['string', 'null'], maxLength: 1000 }, doneWhen: { type: ['string', 'null'], maxLength: 600 }, glossary: { type: ['string', 'null'], maxLength: 800 }, status: { type: ['string', 'null'], enum: ['planned', 'active', 'paused', 'done', null] }, targetDate: { type: ['string', 'null'] }, leadId: { type: ['string', 'null'] }, decisionOwnerId: { type: ['string', 'null'] } }) })),
+    responses: { 200: reply('The project', object({ project: { type: 'object', additionalProperties: true } }, ['project'])), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound },
   });
 
   // ---- templates ----
@@ -1684,21 +2256,225 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 120 }, currentPassword: { type: 'string' }, newPassword: { type: 'string', minLength: 8, maxLength: 256 } })),
     responses: { 200: reply('You', object({ user: ref('Viewer') }, ['user'])), 400: invalid },
   });
+  // ---- C16: a second factor for local accounts (docs/features/authentication.md#second-factor) ----
+  const mfaMethod = { type: 'string', enum: ['webauthn', 'totp', 'recovery'] };
+  /** The browser's JSON for a passkey answer (`@simplewebauthn/browser`); the server verifies it. */
+  const passkeyResponse = { type: 'object', additionalProperties: true, description: 'The authenticator’s answer as @simplewebauthn/browser gives it (`id`, `rawId`, `type`, `response`, `clientExtensionResults`).' };
+  const passkeyOptions = { type: 'object', additionalProperties: true, description: 'Options for `navigator.credentials.create()` or `.get()` (JSON form, for @simplewebauthn/browser).' };
+  const mfaFactor = object({ id: { type: 'string' }, kind: { type: 'string', enum: ['totp', 'webauthn'] }, name: { type: 'string' }, confirmed: { type: 'boolean' }, createdAt: { type: 'string' }, lastUsedAt: { type: 'string' }, flagged: { type: 'boolean' } }, ['id', 'kind', 'name', 'confirmed', 'createdAt']);
+  add('post', '/api/auth/login', {
+    tag: 'Account',
+    id: 'signIn',
+    summary: 'Sign in with a password',
+    description: 'Sets the session cookie. A user with a second factor gets 202 instead: a single-use `challenge` (5 minutes, good only for `POST /api/auth/mfa/verify`) and no cookie. Failed attempts are limited per email and per IP (429 with `retryAfter`).',
+    public: true,
+    publicNote: 'Public: no API key or session; the password is the credential.',
+    body: jsonBody(object({ email: { type: 'string' }, password: { type: 'string' } }, ['email', 'password'])),
+    responses: {
+      200: reply('Signed in', object({ user: ref('Viewer') }, ['user'])),
+      202: reply('The password was right and a second factor is next', object({ mfaRequired: { type: 'boolean', enum: [true] }, methods: array(mfaMethod), challenge: { type: 'string' } }, ['mfaRequired', 'methods', 'challenge'])),
+      401: errorRef('Wrong email or password'),
+      429: errorRef('Too many failed sign-ins (`retryAfter` seconds)'),
+    },
+  });
+  add('post', '/api/auth/mfa/verify', {
+    tag: 'Account',
+    id: 'verifySecondFactor',
+    summary: 'Finish a sign-in with a second factor',
+    description: 'Takes the challenge from sign-in (or a password reset) and an answer: `totp` (the authenticator app, one step either side, a code works once), `recovery` (a recovery code, once) or `webauthn` (a passkey, with the `response` to the options from `POST /api/auth/mfa/options`). Sets the session cookie (method `password+totp`, `password+recovery` or `password+webauthn`). A recovery code also answers `recoveryCodesLeft`. 401 for a wrong code, or an expired, used or burnt challenge (five wrong codes burn it); wrong codes count against the sign-in limits (429).',
+    public: true,
+    publicNote: 'Public: no API key or session; the single-use challenge and the code are the credential.',
+    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 }, method: mfaMethod, code: { type: 'string', maxLength: 32, description: 'For `totp` and `recovery`.' }, response: { ...passkeyResponse, description: 'For `webauthn`: the passkey’s answer.' } }, ['challenge', 'method'])),
+    responses: { 200: reply('Signed in', object({ user: ref('Viewer'), recoveryCodesLeft: { type: 'integer' } }, ['user'])), 401: errorRef('Wrong code, or sign in again'), 429: errorRef('Too many failed sign-ins') },
+  });
+  add('post', '/api/auth/mfa/options', {
+    tag: 'Account',
+    id: 'secondFactorPasskeyOptions',
+    summary: 'Options for answering the second step with a passkey',
+    description: 'Takes the sign-in challenge and answers the options for `navigator.credentials.get()`; the browser’s answer goes to `POST /api/auth/mfa/verify` with `method: webauthn`. Asking again replaces the earlier options; each options value works for one answer. 401 for an expired or used challenge, 409 when the account has no usable (unflagged) passkey.',
+    public: true,
+    publicNote: 'Public: no API key or session; the single-use sign-in challenge is the credential.',
+    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 } }, ['challenge'])),
+    responses: { 200: reply('Options', object({ options: passkeyOptions }, ['options'])), 401: errorRef('Sign in again'), 409: errorRef('No passkey'), 429: errorRef('Too many failed sign-ins') },
+  });
+  add('get', '/api/me/mfa', {
+    tag: 'Account',
+    id: 'getMyMfa',
+    summary: 'Your second factors',
+    description: 'The factors (never a secret), recovery codes left, what `LANDFLOW_MFA_REQUIRED` asks of you and whether this session passed a second-factor check in the last five minutes.',
+    responses: { 200: reply('Your state', object({ factors: array(mfaFactor), recoveryCodesLeft: { type: 'integer' }, mode: { type: 'string', enum: ['off', 'admins', 'all'] }, covered: { type: 'boolean' }, enrolmentRequired: { type: 'boolean' }, recentlyVerified: { type: 'boolean' }, canEnrol: { type: 'boolean' } }, ['factors', 'recoveryCodesLeft', 'mode', 'covered', 'enrolmentRequired', 'recentlyVerified', 'canEnrol'])) },
+  });
+  add('post', '/api/me/mfa/totp', {
+    tag: 'Account',
+    id: 'startTotp',
+    summary: 'Start adding an authenticator app',
+    description: 'Answers the `secret`, the `otpauthUrl` and a `qr` SVG data URL, once. The factor counts after the confirm call. 409 when you already have an app or sign in with single sign-on.',
+    responses: { 201: reply('Started', object({ factorId: { type: 'string' }, secret: { type: 'string' }, otpauthUrl: { type: 'string' }, qr: { type: 'string' } }, ['factorId', 'secret', 'otpauthUrl', 'qr'])), 409: errorRef('Not possible for this account') },
+  });
+  add('post', '/api/me/mfa/totp/{id}/confirm', {
+    tag: 'Account',
+    id: 'confirmTotp',
+    summary: 'Confirm an authenticator app with a current code',
+    description: 'The first confirmed factor also makes ten recovery codes, answered once as `recoveryCodes`. A code works once. Wrong codes count against the sign-in limits.',
+    body: jsonBody(object({ code: { type: 'string', maxLength: 32 } }, ['code'])),
+    responses: { 200: reply('Confirmed', object({ factor: mfaFactor, recoveryCodes: array({ type: 'string' }) }, ['factor'])), 400: errorRef('The code did not work'), 404: notFound, 429: errorRef('Too many failed attempts') },
+  });
+  add('post', '/api/me/mfa/passkeys/options', {
+    tag: 'Account',
+    id: 'passkeyOptions',
+    summary: 'Options for adding a passkey, or for a passkey step-up',
+    description: 'With `purpose: register` and your current password (403 when wrong; wrong tries count against the sign-in limits): options for `navigator.credentials.create()`. With `purpose: step-up`: options for `navigator.credentials.get()`. Answers the options and a single-use `challenge` token (5 minutes, you and that purpose only) that goes back with the browser’s answer. The relying party is the host of `LANDFLOW_PUBLIC_URL`. 409 at ten passkeys, for single sign-on accounts, or with no passkey to check.',
+    body: jsonBody(object({ purpose: { type: 'string', enum: ['register', 'step-up'] }, password: { type: 'string', maxLength: 1024 } }, ['purpose'])),
+    responses: { 200: reply('Options', object({ challenge: { type: 'string' }, options: passkeyOptions }, ['challenge', 'options'])), 400: errorRef('Password missing'), 403: errorRef('Wrong password'), 409: errorRef('Not possible for this account'), 429: errorRef('Too many failed attempts') },
+  });
+  add('post', '/api/me/mfa/passkeys', {
+    tag: 'Account',
+    id: 'addPasskey',
+    summary: 'Finish adding a passkey',
+    description: 'Takes the challenge from `POST /api/me/mfa/passkeys/options`, a name and the browser’s answer; verifies origin and relying party against `LANDFLOW_PUBLIC_URL` (attestation `none`). The first second factor of any kind also answers ten `recoveryCodes`, once. 400 when it does not verify or the request expired; 409 for a passkey that is already registered or at ten.',
+    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 }, name: { type: 'string', minLength: 1, maxLength: 60 }, response: passkeyResponse }, ['challenge', 'name', 'response'])),
+    responses: { 201: reply('Added', object({ factor: mfaFactor, recoveryCodes: array({ type: 'string' }) }, ['factor'])), 400: errorRef('The passkey did not verify'), 409: errorRef('Already registered, or too many') },
+  });
+  add('post', '/api/me/mfa/step-up', {
+    tag: 'Account',
+    id: 'mfaStepUp',
+    summary: 'Check your second factor for this session',
+    description: 'A fresh check (an app code, a recovery code or a passkey) that removing a factor and making new recovery codes need within five minutes. For `webauthn` send the `challenge` and `response` from `POST /api/me/mfa/passkeys/options` with `purpose: step-up`.',
+    body: jsonBody(object({ method: mfaMethod, code: { type: 'string', maxLength: 32 }, challenge: { type: 'string', maxLength: 100 }, response: passkeyResponse }, ['method'])),
+    responses: { 200: reply('Checked', object({ ok: { type: 'boolean' }, recoveryCodesLeft: { type: 'integer' } }, ['ok'])), 401: errorRef('The code did not work'), 409: errorRef('No second factor'), 429: errorRef('Too many failed attempts') },
+  });
+  add('post', '/api/me/mfa/recovery-codes', {
+    tag: 'Account',
+    id: 'newRecoveryCodes',
+    summary: 'Make a new set of recovery codes',
+    description: 'Ten codes, answered once; the old set stops working. Needs a second-factor check from the last five minutes (403 `mfa_step_up_required`).',
+    responses: { 200: reply('The new codes', object({ recoveryCodes: array({ type: 'string' }) }, ['recoveryCodes'])), 403: errorRef('Check your second factor first'), 409: errorRef('No second factor') },
+  });
+  add('delete', '/api/me/mfa/{id}', {
+    tag: 'Account',
+    id: 'removeMfaFactor',
+    summary: 'Remove one of your second factors',
+    description: 'Needs a second-factor check from the last five minutes (403 `mfa_step_up_required`). Your last factor is refused (409 `mfa_required_by_policy`) while `LANDFLOW_MFA_REQUIRED` covers you; removing the last one otherwise deletes the recovery codes.',
+    responses: { 200: reply('Removed', ok), 403: errorRef('Check your second factor first'), 404: notFound, 409: errorRef('Your role must keep a second factor') },
+  });
+  add('delete', '/api/users/{id}/mfa', {
+    tag: 'Account',
+    id: 'resetUserMfa',
+    summary: 'Reset a person’s second factors',
+    description: 'For someone locked out. The owner resets anyone’s but their own; an admin resets members’ and other admins’, never the owner’s; nobody their own. Ends the person’s sessions and records `auth.mfa_reset` in the same transaction (503 and no change when audit is fail-closed and down).',
+    responses: { 200: reply('Reset', object({ ok: { type: 'boolean' }, removed: { type: 'integer' } }, ['ok', 'removed'])), 400: errorRef('Use Sign-in & security for yourself'), 403: errorRef('Not allowed for that role'), 404: notFound, 503: errorRef('The audit log is unavailable') },
+  });
+  // C32: custom roles. Under /api/users, so the policy table needs no entry: reads for any signed-in user, writes `users:manage`.
+  add('get', '/api/users/roles', { tag: 'Account', id: 'listCustomRoles', summary: 'List the custom roles', description: 'Each with its rules and how many members hold it. A custom role grants a subset of the role-gated actions to a member (one per member); `projects:manage` is never grantable.', responses: { 200: reply('The roles', object({ roles: array(ref('CustomRole')) }, ['roles'])) } });
+  add('post', '/api/users/roles', {
+    tag: 'Account',
+    id: 'createCustomRole',
+    summary: 'Create a custom role',
+    description: 'You may grant only the actions you hold, only the owner grants `users:manage`, `apiKeys:admin`, `scim:manage`, `plugins:manage` or `settings:manage`, and nobody grants `projects:manage` (403 naming the action). A name is 1 to 40 characters, unique in any case, and not `owner`, `admin` or `member` (409 for a taken one). Recorded as `role.created` in one transaction with the change (503 and no change when audit is fail-closed and down).',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 40 }, description: { type: 'string', maxLength: 200 }, rules: { ...array(object({ action: { type: 'string' }, effect: { type: 'string', const: 'allow' } }, ['action', 'effect'])), minItems: 1, maxItems: 20 } }, ['name', 'rules'])),
+    responses: { 201: reply('The role', object({ role: ref('CustomRole') }, ['role'])), 400: invalid, 403: errorRef('A rule grants more than you may'), 409: errorRef('The name is taken'), 503: errorRef('The audit log is unavailable') },
+  });
+  add('get', '/api/users/roles/{id}', { tag: 'Account', id: 'getCustomRole', summary: 'Read a custom role', responses: { 200: reply('The role', object({ role: ref('CustomRole') }, ['role'])), 404: notFound } });
+  add('put', '/api/users/roles/{id}', {
+    tag: 'Account',
+    id: 'updateCustomRole',
+    summary: 'Change a custom role',
+    description: 'Any of `name`, `description` (null clears it) and `rules`; the escalation check runs on the whole new rule set. The holders see the change on their next request. Recorded as `role.updated` with the old and new rules.',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 40 }, description: { type: ['string', 'null'], maxLength: 200 }, rules: { ...array(object({ action: { type: 'string' }, effect: { type: 'string', const: 'allow' } }, ['action', 'effect'])), minItems: 1, maxItems: 20 } })),
+    responses: { 200: reply('The role', object({ role: ref('CustomRole') }, ['role'])), 400: invalid, 403: errorRef('A rule grants more than you may'), 404: notFound, 409: errorRef('The name is taken'), 503: errorRef('The audit log is unavailable') },
+  });
+  add('delete', '/api/users/roles/{id}', {
+    tag: 'Account',
+    id: 'deleteCustomRole',
+    summary: 'Delete a custom role',
+    description: 'A role someone holds answers 409 with `holders` until `?confirm=true`; its holders then become plain members, one `user.custom_role` event each, and the role is gone (`role.deleted`).',
+    query: [{ name: 'confirm', description: '`true` to delete a role that has holders', schema: { type: 'string', enum: ['true', 'false'] } }],
+    responses: { 200: reply('Deleted', ok), 404: notFound, 409: errorRef('Someone holds it: confirm to delete'), 503: errorRef('The audit log is unavailable') },
+  });
+  add('patch', '/api/users/{id}', {
+    tag: 'Account',
+    id: 'updateUser',
+    summary: 'Change a person’s role, or give a member a custom role',
+    description: 'Either `{ role: "admin" | "member" }` or `{ customRoleId: "<id>" | null }`, not both. A custom role is held by members only (400 for an admin; making a holder an admin clears it), and you must hold every action it grants. Recorded as `user.role_change` or `user.custom_role` with from and to.',
+    body: jsonBody({ oneOf: [object({ role: { type: 'string', enum: ['admin', 'member'] } }, ['role']), object({ customRoleId: { type: ['string', 'null'] } }, ['customRoleId'])] }),
+    responses: { 200: reply('The user', object({ user: { type: 'object', additionalProperties: true } }, ['user'])), 400: invalid, 403: errorRef('Not allowed'), 404: notFound, 503: errorRef('The audit log is unavailable') },
+  });
   add('get', '/api/api-keys', { tag: 'Account', id: 'listApiKeys', summary: 'List your API keys', responses: { 200: reply('Your keys (never the keys themselves)', object({ keys: array(ref('ApiKey')) }, ['keys'])) } });
   add('post', '/api/api-keys', {
     tag: 'Account',
     id: 'createApiKey',
     summary: 'Create an API key',
-    description: 'The key (`lf_…`) comes back once, as `token`. Only owners and admins create keys with the `admin` scope.',
+    description:
+      'The key (`lf_…`) comes back once, as `token`. Only owners and admins create keys with the `admin` scope. `allowedIps` and `maxUses` are fixed at creation (a new key replaces one): a call from another address, or past the cap, gets 401 (“This API key can’t be used from this address” / “This API key has used all its uses”, no fall back to a session) and an `api.denied` audit row; a use is a request that reaches its handler. The same rules hold for SCIM tokens and `/api/mcp`. In production an address list is refused (400) until `LANDFLOW_TRUSTED_PROXIES` is set.',
     body: jsonBody(
       object(
-        { label: { type: 'string', minLength: 1, maxLength: 100 }, scopes: { ...array(ref('ApiKeyScope')), minItems: 1 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 3650, description: 'None: never expires' } },
+        { label: { type: 'string', minLength: 1, maxLength: 100 }, scopes: { ...array(ref('ApiKeyScope')), minItems: 1 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 3650, description: 'None: never expires' },
+          allowedIps: { ...array({ type: 'string', maxLength: 100 }), maxItems: 50, description: 'IPv4/IPv6 addresses or CIDR ranges, `localhost`; none: any address. A bad entry answers 400 naming it' },
+          maxUses: { type: 'integer', minimum: 1, maximum: 1000000, description: 'None: no cap' },
+        },
         ['label', 'scopes'],
       ),
     ),
     responses: { 201: reply('The key, shown once', object({ key: ref('ApiKey'), token: { type: 'string', description: 'lf_…' } }, ['key', 'token'])), 400: invalid },
   });
   add('delete', '/api/api-keys/{id}', { tag: 'Account', id: 'deleteApiKey', summary: 'Revoke an API key', description: 'It stops working at once.', responses: { 200: reply('Revoked', ok), 404: notFound } });
+
+  // ---- B02: personal preferences and conversations (docs/assistant.md#conversation-history) ----
+  const preferences = object({ developerDetails: { type: 'boolean' }, keepConversations: { type: 'boolean' }, briefingDelivery: { type: 'string', enum: ['none', 'slack', 'email'] } }, ['developerDetails', 'keepConversations', 'briefingDelivery']);
+  const conversation = object(
+    { id: { type: 'string' }, surface: { type: 'string', enum: ['spotlight', 'brain', 'architect', 'agent-test'] }, projectId: { type: ['string', 'null'] }, subjectType: { type: ['string', 'null'] }, subjectId: { type: ['string', 'null'] }, title: { type: 'string' }, pinned: { type: 'boolean' }, createdAt: { type: 'string' }, updatedAt: { type: 'string' } },
+    ['id', 'surface', 'title', 'pinned', 'createdAt', 'updatedAt'],
+  );
+  const conversationItem = object({ seq: { type: 'integer' }, role: { type: 'string', enum: ['user', 'assistant'] }, parts: array({ type: 'object' }), meta: { type: 'object' }, at: { type: 'string' } }, ['seq', 'role', 'parts', 'at']);
+  add('get', '/api/me/preferences', { tag: 'Conversations', id: 'getMyPreferences', summary: 'Get your preferences', description: 'Defaults fill what you never set.', responses: { 200: reply('Your preferences', object({ preferences }, ['preferences'])) } });
+  add('patch', '/api/me/preferences', {
+    tag: 'Conversations',
+    id: 'updateMyPreferences',
+    summary: 'Change your preferences',
+    description: 'A partial body; a bad value is a 400 and an unknown key is dropped.',
+    body: jsonBody(object({ developerDetails: { type: 'boolean' }, keepConversations: { type: 'boolean' }, briefingDelivery: { type: 'string', enum: ['none', 'slack', 'email'] } })),
+    responses: { 200: reply('Your preferences', object({ preferences }, ['preferences'])), 400: invalid },
+  });
+  add('get', '/api/conversations', {
+    tag: 'Conversations',
+    id: 'listConversations',
+    summary: 'List your conversations',
+    description: 'Only yours, newest first. `q` searches titles and your own messages.',
+    query: [
+      { name: 'surface', description: 'spotlight, brain, architect or agent-test', schema: { type: 'string' } },
+      { name: 'subjectType', description: 'What the chat was about, such as workflow', schema: { type: 'string' } },
+      { name: 'subjectId', description: 'Its id', schema: { type: 'string' } },
+      { name: 'q', description: 'Search text', schema: { type: 'string' } },
+      { name: 'limit', description: '1 to 100, default 50', schema: { type: 'integer' } },
+      { name: 'cursor', description: 'The nextCursor of the previous page', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('A page', object({ conversations: array(conversation), nextCursor: { type: ['string', 'null'] } }, ['conversations'])), 400: invalid },
+  });
+  add('post', '/api/conversations', {
+    tag: 'Conversations',
+    id: 'createConversation',
+    summary: 'Start a conversation',
+    description: 'With “Keep my conversations” off, nothing is stored: 200 `{ conversation: null, kept: false }`.',
+    body: jsonBody(object({ surface: { type: 'string', enum: ['spotlight', 'brain', 'architect', 'agent-test'] }, subjectType: { type: 'string' }, subjectId: { type: 'string' }, projectId: { type: 'string' }, title: { type: 'string' } }, ['surface'])),
+    responses: { 201: reply('Created', object({ conversation }, ['conversation'])), 200: reply('Not kept', object({ conversation: { type: 'null' }, kept: { type: 'boolean', const: false } }, ['conversation', 'kept'])), 400: invalid },
+  });
+  add('get', '/api/conversations/{id}', { tag: 'Conversations', id: 'getConversation', summary: 'Get a conversation with its items', description: 'Someone else’s id is a 404, for admins too.', responses: { 200: reply('The conversation', object({ conversation, items: array(conversationItem) }, ['conversation', 'items'])), 404: notFound } });
+  add('patch', '/api/conversations/{id}', {
+    tag: 'Conversations',
+    id: 'updateConversation',
+    summary: 'Rename or pin a conversation',
+    body: jsonBody(object({ title: { type: 'string' }, pinned: { type: 'boolean' } })),
+    responses: { 200: reply('Updated', object({ conversation }, ['conversation'])), 400: invalid, 404: notFound },
+  });
+  add('delete', '/api/conversations/{id}', { tag: 'Conversations', id: 'deleteConversation', summary: 'Delete a conversation', description: 'The row and its items are removed for good.', responses: { 204: reply('Deleted'), 404: notFound } });
+  add('post', '/api/conversations/{id}/items', {
+    tag: 'Conversations',
+    id: 'appendConversationItems',
+    summary: 'Add messages to a conversation',
+    description: '1 to 20 items, each up to 32 KB. With keeping off, 204 and nothing stored.',
+    body: jsonBody(object({ items: array(object({ role: { type: 'string', enum: ['user', 'assistant'] }, parts: array({ type: 'object' }), meta: { type: 'object' } }, ['role', 'parts'])) }, ['items'])),
+    responses: { 200: reply('The last seq', object({ seq: { type: 'integer' } }, ['seq'])), 204: reply('Not kept'), 400: invalid, 404: notFound },
+  });
 
   // ---- plugins and transports (docs/transports.md) ----
   const pluginsReply = reply('Every plugin: its endpoints by transport, its transport policy, and the transport the next call takes with the reason', object({ plugins: array(ref('Plugin')) }, ['plugins']));
@@ -1738,8 +2514,9 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'MCP',
     id: 'callProjectMcp',
     summary: 'Talk to one project’s MCP server',
+    // B13: the description's key-scope sentence.
     description:
-      'The instance MCP server (`/api/mcp`: build, validate and run workflows) scoped to one project: it lists, reads, changes and runs only that project’s workflows and creates new ones in it. Off while the instance server is off (Settings → MCP). Callers: the instance access token, a Landflow MCP token (one scoped to another project gets 403), an identity provider token, an API key, or the bundled gateway.',
+      'The instance MCP server (`/api/mcp`: build, validate and run workflows) scoped to one project: it lists, reads, changes and runs only that project’s workflows and creates new ones in it. Off while the instance server is off (Settings → MCP). Callers: the instance access token, a Landflow MCP token (one scoped to another project gets 403), an identity provider token, an API key, or the bundled gateway. An API key lists and calls only the tools its scopes cover (`workflows:read` the workflow and node-type reads, `workflows:write` create and update, `run` execute, retry and run a node, `executions:read` executions and the debug reads, `brain:read` the brain reads, `brain_ask`, `my_briefing` and `my_ai_spend` (your own AI spend), `brain:write` also `brain_suggest` and `record_work`); the same server serves the `morning-briefing` prompt and the `brain://briefing/today`, `brain://briefing/yesterday` and `brain://work/today` resources to a key with `brain:read`.',
     public: true,
     pathParams: { id: 'The project id' },
     body: jsonBody(jsonRpc),
@@ -1752,6 +2529,41 @@ function paths(): Record<string, Record<string, Json>> {
   });
   add('get', '/api/projects/{id}/mcp', { tag: 'MCP', id: 'getProjectMcp', summary: 'A project’s MCP server', description: 'Where the project’s scoped instance MCP server is served and whether its gateway route is registered.', pathParams: { id: 'The project id' }, responses: { 200: reply('The state', { type: 'object', additionalProperties: true }), 404: notFound } });
   add('patch', '/api/projects/{id}/mcp', { tag: 'MCP', id: 'updateProjectMcp', summary: 'Register a project’s MCP server on the gateway', description: 'Project admins (and instance owners and admins). `gateway: true` makes the gateway sync add `/mcp/projects/<name>` (while the instance server is on).', pathParams: { id: 'The project id' }, body: jsonBody(object({ gateway: { type: 'boolean' } }, ['gateway'])), responses: { 200: reply('The state', { type: 'object', additionalProperties: true }), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound } });
+  // C19: a project's event subscriptions (docs/features/event-subscriptions.md).
+  const eventTypes = { type: 'string', enum: ['run.started', 'run.finished', 'run.failed', 'node.finished'] };
+  const subscriptionDoc = object(
+    {
+      id: { type: 'string' }, projectId: { type: 'string' }, name: { type: 'string' }, url: { type: 'string' }, events: array(eventTypes),
+      workflowIds: { type: ['array', 'null'], items: { type: 'string' }, description: 'Null: every workflow of the project' }, nodeNames: array({ type: 'string' }),
+      includeOutput: { type: 'boolean' }, ordered: { type: 'boolean' }, enabled: { type: 'boolean' }, disabledReason: { type: ['string', 'null'] },
+      createdAt: { type: 'string' }, updatedAt: { type: 'string' }, lastDelivery: { type: ['object', 'null'], additionalProperties: true },
+      backlog: { type: 'integer', description: 'Events waiting to be delivered' }, dead: { type: 'integer', description: 'Events given up on after 72 hours' }, lastError: { type: ['string', 'null'] }, oldestAgeSeconds: { type: 'integer' },
+    },
+    ['id', 'projectId', 'name', 'url', 'events', 'enabled', 'backlog', 'dead'],
+  );
+  const subscriptionInput = {
+    name: { type: 'string', maxLength: 120 }, url: { type: 'string', description: 'http or https; an address the outbound policy blocks is a 400' }, events: array(eventTypes),
+    workflowIds: { type: ['array', 'null'], items: { type: 'string' } }, nodeNames: { ...array({ type: 'string' }), description: 'The steps `node.finished` is sent for (required with that event)' },
+    includeOutput: { type: 'boolean' }, ordered: { type: 'boolean' },
+  };
+  const subscriptionPath = { id: 'The project id', subscriptionId: 'The subscription id' };
+  const adminOnly = errorRef('Not an admin of the project');
+  add('get', '/api/projects/{id}/event-subscriptions', { tag: 'Projects', id: 'listEventSubscriptions', summary: 'A project’s event subscriptions', description: 'Members of the project. Each has its backlog, dead events, last delivery and last error; never the signing secret.', pathParams: { id: 'The project id' }, responses: { 200: reply('The subscriptions', object({ subscriptions: array(subscriptionDoc), canEdit: { type: 'boolean' } }, ['subscriptions', 'canEdit'])), 404: notFound } });
+  add('post', '/api/projects/{id}/event-subscriptions', {
+    tag: 'Projects', id: 'createEventSubscription', summary: 'Add an event subscription',
+    description: 'Project admins (and instance owners and admins). Landflow makes the signing secret and answers it once. Run events are sent as signed POSTs with a stable `x-landflow-event-id`, at least once and in order; see the feature page. At most 20 per project (409).',
+    pathParams: { id: 'The project id' }, body: jsonBody(object(subscriptionInput, ['name', 'url', 'events'])),
+    responses: { 201: reply('The subscription and its secret (shown once)', object({ subscription: subscriptionDoc, secret: { type: 'string' } }, ['subscription', 'secret'])), 400: invalid, 403: adminOnly, 404: notFound, 409: errorRef('The project already has 20') },
+  });
+  add('patch', '/api/projects/{id}/event-subscriptions/{subscriptionId}', {
+    tag: 'Projects', id: 'updateEventSubscription', summary: 'Change an event subscription',
+    description: 'Project admins. Any field of the create body, `enabled` (turning it on clears why it was off) and `newSecret: true`, which replaces the signing secret and answers the new one once.',
+    pathParams: subscriptionPath, body: jsonBody(object({ ...subscriptionInput, enabled: { type: 'boolean' }, newSecret: { type: 'boolean' } })),
+    responses: { 200: reply('The subscription (and the new secret, once)', object({ subscription: subscriptionDoc, secret: { type: 'string' } }, ['subscription'])), 400: invalid, 403: adminOnly, 404: notFound },
+  });
+  add('delete', '/api/projects/{id}/event-subscriptions/{subscriptionId}', { tag: 'Projects', id: 'deleteEventSubscription', summary: 'Remove an event subscription', description: 'Project admins. Events still waiting for it are dropped.', pathParams: subscriptionPath, responses: { 200: reply('Removed', ok), 403: adminOnly, 404: notFound } });
+  add('post', '/api/projects/{id}/event-subscriptions/{subscriptionId}/retry', { tag: 'Projects', id: 'retryEventSubscription', summary: 'Retry an event subscription now', description: 'Project admins. Waiting events are due at once and the ones given up on after 72 hours are queued again.', pathParams: subscriptionPath, responses: { 200: reply('How many events it touched', object({ retried: { type: 'integer' } }, ['retried'])), 403: adminOnly, 404: notFound } });
+  add('post', '/api/projects/{id}/event-subscriptions/{subscriptionId}/test', { tag: 'Projects', id: 'testEventSubscription', summary: 'Send a test event', description: 'Project admins. One signed `test` event straight to the URL, not through the queue; a receiver that refuses is a 200 with `ok: false`.', pathParams: subscriptionPath, responses: { 200: reply('What the receiver answered', object({ ok: { type: 'boolean' }, status: { type: 'integer' }, message: { type: 'string' } }, ['ok', 'message'])), 403: adminOnly, 404: notFound } });
   add('get', '/api/mcp/tools', {
     tag: 'MCP',
     id: 'listMcpTools',
@@ -1781,6 +2593,15 @@ function paths(): Record<string, Record<string, Json>> {
   add('get', '/api/mcp/approvals', { tag: 'MCP', id: 'listMcpApprovals', summary: 'MCP tool calls waiting for a person', description: 'The approvals of destructive (or, per grant, every) MCP tool calls that the signed-in user may answer: pending ones and the last day’s answers. Calls from clients that support MCP elicitation are asked through the client instead (lib/server/mcp/approvals.ts).', responses: { 200: reply('The approvals', object({ approvals: array({ type: 'object', additionalProperties: true }) }, ['approvals'])) } });
   add('post', '/api/mcp/approvals/{id}', { tag: 'MCP', id: 'decideMcpApproval', summary: 'Approve or deny an MCP tool call', description: 'Owners, admins, the user the agent acts for and members of a project they share. An approval is good for one repeat of the same call (same tool, same arguments, same caller) for ten minutes.', body: jsonBody(object({ approve: { type: 'boolean' } }, ['approve'])), responses: { 200: reply('Answered', object({ approval: { type: 'object', additionalProperties: true } }, ['approval'])), 403: errorRef('Not yours to answer'), 404: notFound, 409: errorRef('Already answered'), 410: errorRef('Expired') } });
   add('get', '/api/mcp/files/{id}', { tag: 'MCP', id: 'downloadMcpFile', summary: 'A file of an MCP tool result', description: 'The target of a `resource_link` in a tool result: a URL the host signed (`exp`, `t`, `c`, `sig` query parameters), valid until `exp` (LANDFLOW_MCP_FILE_URL_TTL_SECONDS, default 900). No session; 403 for a wrong signature, 410 once expired.', public: true, responses: { 200: { description: 'The bytes', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, 403: errorRef('Invalid signature'), 404: notFound, 410: errorRef('Expired') } });
+  add('post', '/api/gateway-parts', {
+    tag: 'Agents',
+    id: 'postGatewayParts',
+    summary: 'The LLM gateway’s split of one model call',
+    description: 'Posted by the LiteLLM callback `deploy/llm-gateway/custom_callbacks.py` (docs/llm-gateway.md, “The gateway’s split”): the parts of a call kagent’s agents or Claude Code made through the gateway, in tokens, with keyed hashes, under the gateway’s response id. Never text: any key outside the contract is a 400. The `x-landflow-signature` header (`t=<unix seconds>,v1=<HMAC-SHA-256 of "<t>.<body>">` under LANDFLOW_LLM_GATEWAY_PARTS_SECRET, within 300 seconds) is the only credential; the route answers 404 while the secret is unset. A repeat of a request id is a no-op, and a split Landflow made of the same call wins.',
+    public: true,
+    body: jsonBody(object({ requestId: { type: 'string' }, at: { type: 'string' }, model: { type: 'string' }, provider: { type: 'string' }, method: { type: 'string', enum: ['provider', 'tokenizer', 'estimate'] }, inputTokens: { type: 'integer' }, parts: { type: 'object', additionalProperties: { type: 'integer' } }, prefixHash: { type: 'string' }, promptHash: { type: 'string' }, partHashes: { type: 'object', additionalProperties: { type: 'string' } }, toolNames: { type: 'array', items: { type: 'string' } } }, ['requestId', 'at', 'model', 'provider', 'method', 'inputTokens', 'parts'])),
+    responses: { 204: { description: 'Stored, or already stored' }, 400: invalid, 401: errorRef('Bad or old signature'), 404: notFound, 413: errorRef('Body over 32 KB') },
+  });
   add('post', '/api/agent-trace/{id}', {
     tag: 'Agents',
     id: 'postAgentTrace',
@@ -1790,6 +2611,29 @@ function paths(): Record<string, Record<string, Json>> {
     pathParams: { id: 'The trace id from the request’s `<!-- landflow-trace … -->` line' },
     body: jsonBody(object({ events: array({ type: 'object', additionalProperties: true }) }, ['events'])),
     responses: { 202: { description: 'Passed on to the queue-mode process that holds the trace' }, 204: { description: 'Taken' }, 400: invalid, 404: notFound, 410: errorRef('The call has ended: stop posting here'), 413: errorRef('The trace holds all it may') },
+  });
+  add('post', '/api/harness/{harness}/hooks', {
+    tag: 'Agents',
+    id: 'postHarnessHook',
+    summary: 'Send one hook event of a coding harness',
+    description: 'Claude Code’s hook JSON as sent, one event per request (at most 64 KB), with an API key that has the `harness:write` scope (a cookie session is refused). The event joins a session of the key’s owner: a Landflow agent’s when `agent_type` names one they may run, else their own, which keeps status and counts only (docs/harnesses.md#live-status). `X-Landflow-Hook-Seq` (a per-session counter) orders events; else `X-Landflow-Hook-Time` (ISO or epoch milliseconds; ignored when more than 5 minutes ahead of the server) does; else the server’s receive time. A session belongs to an agent only when its first event is a `SessionStart` naming one. At most 20 events a second per key (100 for all of one person’s keys) and 2,000 open sessions per key owner. Not in the audit log per call.',
+    pathParams: { harness: 'A registry id whose strategy sends events: `claude-code`' },
+    body: jsonBody(object({ hook_event_name: { type: 'string' }, session_id: { type: 'string' } }, ['hook_event_name', 'session_id'])),
+    responses: { 204: { description: 'Taken' }, 400: invalid, 401: errorRef('No or an invalid API key'), 403: errorRef('The key lacks `harness:write`, or this is not an API key'), 404: errorRef('A harness that sends no events'), 413: errorRef('Over 64 KB'), 429: errorRef('Over the per-key limits (`retryAfter` seconds)') },
+  });
+  add('get', '/api/harness/sessions', {
+    tag: 'Agents',
+    id: 'listHarnessSessions',
+    summary: 'Harness sessions you may see',
+    description: 'Your own sessions (nobody else sees them, an admin included) and the sessions of Landflow agents you may read, newest first by last event. Needs `executions:read` for a key.',
+    query: [
+      { name: 'agentId', description: 'Only this agent’s sessions', schema: { type: 'string' } },
+      { name: 'open', description: '`1`: leave out closed sessions', schema: { type: 'string', enum: ['1', 'true', '0', 'false'] } },
+      { name: 'kind', description: '`own`: only your own sessions; `agent`: only sessions of Landflow agents you may read', schema: { type: 'string', enum: ['own', 'agent'] } },
+      { name: 'limit', description: 'At most this many per page (default 100, at most 500)', schema: { type: 'integer', minimum: 1, maximum: 500, default: 100 } },
+      { name: 'cursor', description: 'Opaque; the previous page’s nextCursor', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The sessions', object({ sessions: array({ type: 'object', additionalProperties: true }), nextCursor: { type: 'string' } }, ['sessions'])), 400: invalid },
   });
   add('get', '/api/agent-trace/{id}/asks/{askId}', {
     tag: 'Agents',
@@ -1839,6 +2683,55 @@ function paths(): Record<string, Record<string, Json>> {
   add('get', '/api/mcp/registry/v0.1/servers/{name}/versions', { tag: 'MCP', id: 'listMcpServerVersions', summary: 'Every version of one server', public: true, pathParams: { name: 'URL-encoded, e.g. `local.landflow%2Ftwilio`' }, responses: { 200: reply('The versions, newest first', ref('McpServerList')), 404: notFound } });
   add('get', '/api/mcp/registry/v0.1/servers/{name}/versions/{version}', { tag: 'MCP', id: 'getMcpServerVersion', summary: 'One version of a server', public: true, pathParams: { name: 'URL-encoded', version: 'A version, or `latest`' }, responses: { 200: reply('The server', ref('McpServerResponse')), 404: notFound } });
 
+  // ---- C29: network runners for the HTTP Request node (docs/network-runners.md) ----
+  // The admin routes sit under /api/settings, so the policy table needs no entry: reads `workflows:read` (the list is filtered by project), writes the built-in admin's.
+  add('get', '/api/settings/networks', { tag: 'Plugins', id: 'listNetworks', summary: 'List networks and their runners', description: 'The instance-wide networks and those of the caller’s projects, each with its runners’ status, version and last seen and the workflows that run in it. A token is never in a read.', responses: { 200: reply('The networks', object({ networks: array(ref('Network')) }, ['networks'])) } });
+  add('post', '/api/settings/networks', {
+    tag: 'Plugins',
+    id: 'createNetwork',
+    summary: 'Create a network',
+    description: 'A place the host can’t reach by itself. With `projectId`, only that project’s workflows may run in it. Owner or admin. Recorded as `network.created`.',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 60 }, description: { type: 'string', maxLength: 300 }, projectId: { type: 'string' } }, ['name'])),
+    responses: { 201: reply('The network', object({ network: ref('Network') }, ['network'])), 400: invalid, 403: errorRef('Not an owner or admin'), 409: errorRef('The name is taken') },
+  });
+  add('put', '/api/settings/networks/{id}', {
+    tag: 'Plugins',
+    id: 'updateNetwork',
+    summary: 'Rename or describe a network',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 60 }, description: { type: ['string', 'null'], maxLength: 300 } })),
+    responses: { 200: reply('The network', object({ network: ref('Network') }, ['network'])), 400: invalid, 403: errorRef('Not an owner or admin'), 404: notFound, 409: errorRef('The name is taken') },
+  });
+  add('delete', '/api/settings/networks/{id}', { tag: 'Plugins', id: 'deleteNetwork', summary: 'Delete a network', description: 'Its runners are revoked first; a node that runs in it then fails “Network not found”. Recorded as `network.deleted`.', responses: { 200: reply('Deleted', ok), 403: errorRef('Not an owner or admin'), 404: notFound } });
+  add('post', '/api/settings/networks/{id}/runners', {
+    tag: 'Plugins',
+    id: 'registerNetworkRunner',
+    summary: 'Register a runner',
+    description: 'The answer holds the runner’s token (`lf_run_…`): this is the only time it is returned; Landflow keeps its SHA-256. `allowedIps` limits where the runner may connect from. Recorded as `network.runner.registered`.',
+    body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 60 }, allowedIps: { ...array({ type: 'string' }), maxItems: 50 } }, ['name'])),
+    responses: { 201: reply('The runner and its token', object({ runner: ref('NetworkRunner'), token: { type: 'string' } }, ['runner', 'token'])), 400: invalid, 403: errorRef('Not an owner or admin'), 404: notFound },
+  });
+  add('delete', '/api/settings/networks/{id}/runners/{runnerId}', { tag: 'Plugins', id: 'revokeNetworkRunner', summary: 'Revoke a runner', description: 'Its token is refused from its next check (a runner waiting on a poll is cut off within a second); a call it holds fails as lost. Recorded as `network.runner.revoked`.', responses: { 200: reply('The runner', object({ runner: ref('NetworkRunner') }, ['runner'])), 403: errorRef('Not an owner or admin'), 404: notFound } });
+  add('post', '/api/runner/v1/poll', {
+    tag: 'Plugins',
+    id: 'pollNetworkRunner',
+    summary: 'A network runner’s long poll',
+    description: 'Used by `services/network-runner`. Holds the request up to 25 seconds and answers `200 { id, request: { method, url, headers: [[name, value]], body?: base64, timeoutMs } }` with the next call for the runner’s network, or `204`. `max: 0` only reports that the runner is here. 401 for no token, a wrong or revoked one, or an address the runner’s list refuses.',
+    public: true,
+    publicNote: 'Public: no API key or session; the runner’s own token (`Authorization: Bearer lf_run_…`) is the credential.',
+    body: jsonBody(object({ name: { type: 'string' }, version: { type: 'string' }, max: { type: 'integer', minimum: 0, maximum: 1 } })),
+    responses: { 200: reply('A call to make', object({ id: { type: 'string' }, request: { type: 'object', additionalProperties: true } }, ['id', 'request'])), 204: { description: 'No call within the wait' }, 401: errorRef('Not a valid runner token') },
+  });
+  add('post', '/api/runner/v1/calls/{id}', {
+    tag: 'Plugins',
+    id: 'answerNetworkCall',
+    summary: 'A network runner’s answer to one call',
+    description: 'The claiming runner’s answer: `{ status, headers: [[name, value]], body?: base64 }`, or `{ error: { code: "refused" | "timeout" | "network", message } }`. Bodies up to 10 MiB. 404 for a call the runner did not claim or that was answered already.',
+    public: true,
+    publicNote: 'Public: no API key or session; the runner’s own token is the credential.',
+    body: jsonBody({ oneOf: [object({ status: { type: 'integer' }, headers: array(array({ type: 'string' })), body: { type: 'string' } }, ['status', 'headers']), object({ error: object({ code: { type: 'string', enum: ['refused', 'timeout', 'network'] }, message: { type: 'string' } }, ['code', 'message']) }, ['error'])] }),
+    responses: { 204: { description: 'Taken' }, 400: invalid, 401: errorRef('Not a valid runner token'), 404: notFound },
+  });
+
   add('get', '/api/transports', {
     tag: 'Plugins',
     id: 'listTransports',
@@ -1884,30 +2777,54 @@ function paths(): Record<string, Record<string, Json>> {
     text('agentId', 'One agent'),
     text('nodeType', 'One node type'),
     text('signature', 'One failure signature'),
-    text('limit', 'At most this many rows'),
+    text('limit', 'At most this many rows (/api/usage: at most 1000; /api/usage/events: at most 5000)'),
   ];
-  const proposal = { type: 'object', description: 'A Proposal (lib/shared/brain.ts): target, title, why, evidence, effect, ops or a draft or persona rules, risk, confidence, score, status' };
+  const proposal = { type: 'object', description: 'A Proposal (lib/shared/brain.ts): target, title, why, evidence, effect, actions (buttons a flow added), decision (the latest), ops or a draft or persona rules, risk, confidence, score, status' };
   add('get', '/api/usage', {
     tag: 'Second brain',
     id: 'usageReport',
     summary: 'A grouped report of the usage ledger',
-    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent or model (default kind). Counts, failures, durations, items, tokens and cost per group; windows past USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
-    query: [{ name: 'groupBy', description: 'What to group by', schema: { type: 'string', enum: ['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model'] } }, ...usageQuery],
+    description: '`groupBy`: day, kind, workflow, nodeType, signature, agent, model or attr (default kind; attr needs `groupAttr`, and reads the raw events). `kinds` takes custom kinds too (work.ticket_moved). Counts, failures, durations, items, tokens and cost per group; windows past LANDFLOW_USAGE_RETENTION_DAYS read the daily rollups. Members see the workflows and agents they can open.',
+    query: [{ name: 'groupBy', description: 'What to group by', schema: { type: 'string', enum: ['day', 'kind', 'workflow', 'nodeType', 'signature', 'agent', 'model', 'attr'] } }, text('groupAttr', 'For groupBy=attr: the attribute to group by, such as team'), text('attr.<name>', 'Only events whose attribute <name> equals the value, such as attr.team=billing'), ...usageQuery],
     responses: { 200: reply('The report', object({ from: { type: 'string' }, to: { type: 'string' }, groupBy: { type: 'string' }, rows: array({ type: 'object' }), totals: { type: 'object' } }, ['rows', 'totals'])) },
   });
   add('get', '/api/usage/events', {
     tag: 'Second brain',
     id: 'listUsageEvents',
     summary: 'Usage events, newest first',
-    query: usageQuery,
+    // PC05:
+    query: [...usageQuery, text('projectId', 'Only events of one project'), text('goalId', 'Only events of one goal (the goal the run served)')],
     responses: { 200: reply('The events', object({ events: array({ type: 'object' }) }, ['events'])) },
+  });
+  const usageKind = { type: 'object', description: 'A declared custom kind: kind, description, fields [{ name, type: string|number|boolean, required, description }], projectId, createdBy, createdAt, updatedAt' };
+  const kindBody = object({ kind: { type: 'string', description: '<namespace>.<name>, such as work.ticket_moved; not a built-in namespace (run, node, ai, workflow, credential, assistant, spotlight, search, agent, feedback, template, plugin, proposal, tool)' }, description: { type: 'string' }, fields: array({ type: 'object' }) }, ['kind']);
+  add('get', '/api/usage/kinds', {
+    tag: 'Second brain',
+    id: 'listUsageKinds',
+    summary: 'List the custom event kinds',
+    description: 'The kinds flows record with the Record Event node, with the attributes each declares.',
+    responses: { 200: reply('The kinds', object({ kinds: array(usageKind) }, ['kinds'])) },
+  });
+  add('post', '/api/usage/kinds', {
+    tag: 'Second brain',
+    id: 'declareUsageKind',
+    summary: 'Declare a custom event kind, or update its fields',
+    body: jsonBody(kindBody, 'The kind and its attributes'),
+    responses: { 200: reply('Updated', object({ kind: usageKind }, ['kind'])), 201: reply('Declared', object({ kind: usageKind }, ['kind'])), 400: invalid },
+  });
+  add('delete', '/api/usage/kinds/{kind}', {
+    tag: 'Second brain',
+    id: 'deleteUsageKind',
+    summary: 'Forget a custom event kind’s declaration',
+    description: 'Events already recorded stay in the ledger.',
+    responses: { 200: reply('Forgotten', object({ ok: { type: 'boolean' } }, ['ok'])), 404: notFound },
   });
   add('get', '/api/proposals', {
     tag: 'Second brain',
     id: 'listProposals',
     summary: 'List suggestions',
-    description: 'Best first. `status`: open (default), applied, dismissed, snoozed, expired or all. Members see suggestions about the workflows and agents they can open.',
-    query: [text('status', 'open (default), applied, dismissed, snoozed, expired or all'), text('workflowId', 'About one workflow'), text('agentId', 'About one agent'), text('detector', 'From one detector'), text('limit', 'At most this many (200)')],
+    description: 'Best first. `status`: open (default), applied, dismissed, snoozed, expired or all. Members see suggestions about the workflows and agents they can open, and the ones addressed to them (`audience`).',
+    query: [text('status', 'open (default), applied, dismissed, snoozed, expired or all'), text('workflowId', 'About one workflow'), text('agentId', 'About one agent'), text('detector', 'From one detector'), text('for', '`me`: only suggestions addressed to the caller'), text('limit', 'At most this many (200)')],
     responses: { 200: reply('The suggestions', object({ proposals: array(proposal) }, ['proposals'])) },
   });
   add('post', '/api/proposals', {
@@ -1915,7 +2832,7 @@ function paths(): Record<string, Record<string, Json>> {
     id: 'createProposal',
     summary: 'Add a suggestion',
     description: 'Source `analyst`. Its ops are checked against the workflow; the same fingerprint refreshes the open suggestion. Needs edit access to the workflow or agent. `proposal: null` when it is held back (dismissed or applied recently, or the weekly cap is full).',
-    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' } }, ['title', 'why'])),
+    body: jsonBody(object({ title: { type: 'string' }, why: { type: 'string' }, workflowId: { type: 'string' }, agentId: { type: 'string' }, entity: object({ type: { type: 'string', enum: ['initiative', 'person', 'customer', 'system'] }, id: { type: 'string' } }, ['type', 'id']), nodeName: { type: 'string' }, effect: { type: 'string' }, ops: array({ type: 'object' }), risk: { type: 'string', enum: ['low', 'medium', 'high'] }, confidence: { type: 'number' }, fingerprint: { type: 'string' }, actions: array(object({ id: { type: 'string' }, label: { type: 'string' }, style: { type: 'string', enum: ['primary', 'default'] }, confirm: { type: 'string' } }, ['id', 'label'])), audience: array(object({ userId: { type: 'string' }, email: { type: 'string' }, slackUserId: { type: 'string' }, name: { type: 'string' } })) }, ['title', 'why'])),
     responses: { 200: reply('Held back', object({ proposal: { type: 'null' }, reason: { type: 'string' } })), 201: reply('The suggestion', object({ proposal }, ['proposal'])), 400: invalid, 404: notFound },
   });
   add('get', '/api/proposals/{id}', { tag: 'Second brain', id: 'getProposal', summary: 'Get a suggestion', responses: { 200: reply('The suggestion', object({ proposal }, ['proposal'])), 404: notFound } });
@@ -1934,15 +2851,931 @@ function paths(): Record<string, Record<string, Json>> {
     description: 'Ops are checked against the workflow as it is now and saved through governance; a draft becomes a new workflow (`?projectId=`); persona rules go to the agent’s draft.',
     responses: { 200: reply('Applied', object({ proposal, workflow: ref('Workflow'), warnings: array({ type: 'string' }) }, ['proposal', 'warnings'])), 400: errorRef('Advice only: nothing to apply'), 404: notFound, 409: errorRef('The changes no longer fit, or it is already decided') },
   });
+  add('post', '/api/proposals/{id}/act', {
+    tag: 'Second brain',
+    id: 'actOnProposal',
+    summary: 'Take one of a suggestion’s actions',
+    description:
+      'The buttons a flow put on the suggestion (`actions`). Records `decision: { action, label, by, at, note }`, counts it as applied and starts the workflows on On Suggestion Decided. `started` names them; `warnings` says when none listens.',
+    body: jsonBody(object({ action: { type: 'string' }, note: { type: 'string' } }, ['action'])),
+    responses: { 200: reply('Done', object({ proposal, warnings: array({ type: 'string' }), started: array(object({ id: { type: 'string' }, name: { type: 'string' } })) }, ['proposal', 'warnings'])), 400: errorRef('No such action'), 404: notFound, 409: errorRef('Already decided') },
+  });
   add('get', '/api/brain/facts', {
     tag: 'Second brain',
     id: 'listBrainFacts',
     summary: 'What the second brain learned',
-    description: '`q` searches (keywords fused with the vector index); otherwise lists by subjectType, subjectId, kind and status.',
-    query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential or instance'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (100)')],
-    responses: { 200: reply('The facts', object({ facts: array({ type: 'object' }) }, ['facts'])) },
+    description: '`q` searches (keywords fused with the vector index); otherwise lists by subjectType, subjectId, kind and status. Only the latest version of a fact comes back, never a forgotten one or one past its forget-after. `history=1` adds earlier versions; `forgotten=1` lists the forgotten facts the caller may change, with the reason. A bad `limit` answers 400.',
+    query: [text('q', 'Search'), text('subjectType', 'workflow, agent, nodeType, credential, instance or entity (subjectId is then <type>/<id>)'), text('subjectId', 'One subject'), text('kind', 'purpose, health, cost, failure, slow, change, dependency, usage, quality or intended'), text('status', 'active (default), stale or all'), text('limit', 'At most this many (1 to 500, default 100)'), text('history', '1 to include earlier versions'), text('forgotten', '1 to list forgotten facts')],
+    responses: { 200: reply('The facts', object({ facts: array({ type: 'object' }) }, ['facts'])), 400: invalid },
+  });
+  add('get', '/api/brain/graph', {
+    tag: 'Second brain',
+    id: 'brainGraph',
+    summary: 'The memory graph: facts and their subjects',
+    description: 'A page of facts as nodes with the subjects they are about (workflow, agent, entity, project) and edges: `about` from a fact to its subject and, with `history=1`, `updates`, `extends` or `derives` from a version to the one that follows. `about` limits it to one subject (`workflow/<id>`, `agent/<id>`, `entity/<type>/<id>`, `project/<id>` or a page’s `<type>/<id>`; 404 when you may not read it) and `depth=2` adds the subjects one link away (at most 50). Up to `limit` facts a page (500), newest first, paged by `cursor`; facts you may not see are left out in SQL. `forgotten=1` adds the forgotten facts you may restore, marked. Statements are plain text. A person’s private agent memory never appears.',
+    query: [text('about', 'One subject'), text('depth', '1 (default) or 2'), text('history', '1 adds earlier versions and version edges'), text('forgotten', '1 adds forgotten facts you may restore'), text('limit', '1 to 500 (default 500)'), text('cursor', 'nextCursor of the page before')],
+    responses: { 200: reply('The graph page', object({ nodes: array({ type: 'object' }), edges: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['nodes', 'edges'])), 400: invalid, 404: notFound },
+  });
+  add('get', '/api/brain/facts/{id}/versions', {
+    tag: 'Second brain',
+    id: 'listFactVersions',
+    summary: 'A fact’s versions, oldest first',
+    description: 'The chain of a fact (`id` is the chain id, URL-encoded: entity fact ids hold `/`, or one version’s `<chain id>#v<n>`): version, relation, statement (empty and `trimmed` for a version dropped to keep the chain at 50), evidence, confidence, first and last seen and who or what wrote it. At most 100 a page; `nextCursor` goes in `cursor`. Visible to whoever may read the fact; 404 otherwise.',
+    query: [text('limit', '1 to 100 (default 100)'), text('cursor', 'The last version of the page before')],
+    responses: { 200: reply('The versions', object({ versions: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['versions'])), 400: invalid, 404: notFound },
+  });
+  add('post', '/api/brain/facts/{id}/forget', {
+    tag: 'Second brain',
+    id: 'forgetFact',
+    summary: 'Forget a fact softly',
+    description: 'The fact leaves every list, search, prompt and MCP tool; the row stays with the reason and who, and can be restored. `forgetAfter` (an ISO time, a minute to five years ahead) only sets when it goes. Audited as brain.fact_forgotten. Editors of the fact’s subject (a workflow, an agent or an entity’s project; owners and admins for node types, credentials and the instance); 404 for someone who may not see it, 403 for a reader.',
+    body: jsonBody(object({ reason: { type: 'string', minLength: 1, maxLength: 500 }, forgetAfter: { type: 'string', format: 'date-time' } }, ['reason'])),
+    responses: { 200: reply('The forgotten fact', object({ fact: { type: 'object' } }, ['fact'])), 400: invalid, 403: errorRef('Not an editor of the fact’s subject'), 404: notFound },
+  });
+  add('post', '/api/brain/facts/{id}/restore', {
+    tag: 'Second brain',
+    id: 'restoreFact',
+    summary: 'Restore a forgotten fact',
+    description: 'Audited as brain.fact_restored. Same access as forgetting it.',
+    responses: { 200: reply('The fact', object({ fact: { type: 'object' } }, ['fact'])), 403: errorRef('Not an editor of the fact’s subject'), 404: notFound },
+  });
+  const entity = { type: 'object', description: 'A BrainEntity (lib/shared/brain.ts): type (initiative, person, customer, system), id, name, description, owner, ownerName, projectId, attrs, source, createdAt, updatedAt' };
+  const entityBody = (required: string[]) =>
+    jsonBody(object({ type: { type: 'string', enum: ['initiative', 'person', 'customer', 'system'] }, id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, owner: { type: 'string', description: 'A user id or a free name' }, projectId: { type: 'string' }, attrs: { type: 'object', description: 'Flat values; null removes one' } }, required));
+  add('get', '/api/entities', {
+    tag: 'Second brain',
+    id: 'listEntities',
+    summary: 'List entities',
+    description: 'Initiatives, people, customers and systems the second brain reasons about, by name. Members see those in projects they can open.',
+    query: [text('type', 'initiative, person, customer or system'), text('owner', 'A user id or name'), text('q', 'Words in the name, description, owner or attributes'), text('projectId', 'One project'), text('limit', 'At most this many (500)')],
+    responses: { 200: reply('The entities', object({ entities: array(entity) }, ['entities'])), 400: invalid },
+  });
+  add('post', '/api/entities', {
+    tag: 'Second brain',
+    id: 'upsertEntity',
+    summary: 'Add an entity, or update the one with this id',
+    description: 'Needs editor access to the project (`projectId`, else your personal project). With an `id` that exists it updates (fields left out stay).',
+    body: entityBody(['type']),
+    responses: { 200: reply('Updated', object({ entity }, ['entity'])), 201: reply('Added', object({ entity }, ['entity'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound },
+  });
+  add('get', '/api/entities/{type}/{id}', { tag: 'Second brain', id: 'getEntity', summary: 'An entity with what the brain knows', description: 'The entity, its profile, the facts about it and its open suggestions.', responses: { 200: reply('The entity', object({ entity, profile: { type: 'object' }, facts: array({ type: 'object' }), proposals: array(proposal) }, ['entity', 'facts', 'proposals'])), 404: notFound } });
+  add('patch', '/api/entities/{type}/{id}', { tag: 'Second brain', id: 'updateEntity', summary: 'Change an entity', body: entityBody([]), responses: { 200: reply('The entity', object({ entity }, ['entity'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('delete', '/api/entities/{type}/{id}', { tag: 'Second brain', id: 'deleteEntity', summary: 'Delete an entity', description: 'Its facts and profile go with it and its open suggestions expire.', responses: { 200: reply('Deleted', object({ ok: { type: 'boolean' } }, ['ok'])), 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('post', '/api/entities/{type}/{id}/facts', {
+    tag: 'Second brain',
+    id: 'addEntityFact',
+    summary: 'Add a fact about an entity',
+    description: 'A statement the brain keeps and searches. `kind` is purpose, health, cost, failure, slow, change, dependency, usage, quality or intended. `isStatic` marks a fact that never changes (the study never stales or rewrites it). `parentId` with `relation` (`extends` or `derives`) starts a new chain that follows a fact the caller can read (404 otherwise). `forgetAfter` is when it leaves recall.',
+    body: jsonBody(object({ kind: { type: 'string' }, statement: { type: 'string' }, confidence: { type: 'number' }, isStatic: { type: 'boolean' }, parentId: { type: 'string' }, relation: { type: 'string', enum: ['extends', 'derives'] }, forgetAfter: { type: 'string', format: 'date-time' } }, ['kind', 'statement'])),
+    responses: { 201: reply('The fact', object({ fact: { type: 'object' } }, ['fact'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound },
+  });
+  add('post', '/api/brain/backtest', {
+    tag: 'Second brain',
+    id: 'backtestDetector',
+    summary: 'Backtest a detector against past decisions',
+    description: 'Reruns the detector as of past points (`days` back, 30 by default, one point every `step` days) without suggesting anything, and scores its findings against how people decided the same suggestions: precision, recall, hits, false alarms, misses. `quiet` tests another threshold multiplier; a precision under `threshold` (0.5) fails the gate. Owners and admins; waits for the run.',
+    body: jsonBody(object({ detector: { type: 'string', description: 'A built-in detector id or flow:<workflowId> (published)' }, days: { type: 'integer' }, step: { type: 'integer' }, quiet: { type: 'number' }, threshold: { type: 'number' } }, ['detector'])),
+    responses: { 200: reply('The result', object({ backtest: { type: 'object' } }, ['backtest'])), 400: errorRef('Bad window or detector'), 404: notFound, 409: errorRef('The flow is not published') },
+  });
+  add('get', '/api/brain/backtest', {
+    tag: 'Second brain',
+    id: 'listBacktests',
+    summary: 'Past backtests, newest first',
+    query: [text('detector', 'One detector'), text('limit', 'At most this many (10)')],
+    responses: { 200: reply('The results', object({ backtests: array({ type: 'object' }) }, ['backtests'])) },
   });
   add('get', '/api/brain/status', { tag: 'Second brain', id: 'brainStatus', summary: 'What the second brain holds and when it last looked', responses: { 200: reply('The status', { type: 'object' }) } });
+  // The Brain page: the second brain read as a wiki (docs/second-brain.md#the-brain-page).
+  const workItem = { type: 'object', description: 'A work.* event: id, at, kind, source, title, summary, url, actor (email), team, customer, initiative, refs (the pages it names, <type>/<id>)' };
+  const wikiSummary = object({ text: { type: 'string', description: 'With [[type/id]] page links' }, model: { type: 'string' }, generatedAt: { type: 'string' }, stale: { type: 'boolean', description: 'The facts or work changed since it was written' }, links: array({ type: 'string' }) }, ['text', 'model', 'generatedAt', 'stale', 'links']);
+  add('get', '/api/brain/wiki', {
+    tag: 'Second brain',
+    id: 'brainWikiHome',
+    summary: 'The Brain page’s home',
+    description: 'The pages (entities) with how much work named them in 7 and 30 days; `shared`: customers and initiatives two or more teams worked on this week; `teams`; `kinds`; the latest work; open suggestions; `health` (no owner, quiet, summaries out of date); and the brain’s status. Only what the caller can open.',
+    responses: { 200: reply('The home', object({ status: { type: 'object' }, days: { type: 'integer' }, entries: array({ type: 'object' }), shared: array({ type: 'object' }), teams: array({ type: 'object' }), kinds: array({ type: 'object' }), recent: array(workItem), proposals: array(proposal), health: { type: 'object' }, model: { type: 'string' } }, ['status', 'days', 'entries', 'shared', 'teams', 'kinds', 'recent', 'proposals', 'health'])) },
+  });
+  add('get', '/api/brain/wiki/{type}/{id}', {
+    tag: 'Second brain',
+    id: 'brainWikiPage',
+    summary: 'One page of the Brain page',
+    description: 'The entity, its facts and open suggestions, the work that names it (90 days), the people and teams on it, related pages, the pages that name it, and the summary the model wrote. `canEdit` when the caller can change the entity.',
+    responses: { 200: reply('The page', object({ entity: { type: 'object' }, facts: array({ type: 'object' }), proposals: array(proposal), summary: wikiSummary, work: array(workItem), people: array({ type: 'object' }), related: array({ type: 'object' }), teams: array({ type: 'object' }), mentionedIn: array({ type: 'object' }), canEdit: { type: 'boolean' } }, ['entity', 'facts', 'proposals', 'work', 'people', 'related', 'teams', 'mentionedIn', 'canEdit'])), 404: notFound },
+  });
+  add('post', '/api/brain/wiki/{type}/{id}/summary', {
+    tag: 'Second brain',
+    id: 'writeBrainWikiSummary',
+    summary: 'Have the brain’s model write a page’s summary',
+    description: 'From what the caller can see of the page; kept until it is written again. 409 when the brain has no model (LANDFLOW_BRAIN_MODEL=off), 502 when the model fails.',
+    responses: { 200: reply('The summary', object({ summary: wikiSummary }, ['summary'])), 404: notFound, 409: errorRef('The brain has no model'), 502: errorRef('The model failed') },
+  });
+  add('post', '/api/brain/ask', {
+    tag: 'Second brain',
+    id: 'askBrain',
+    summary: 'Ask the second brain',
+    description: 'Finds the pages, facts and work the question is about, among what the caller can open, and the brain’s model answers from them with [[type/id]] page links and [n] references to `work`. `about` (<type>/<id>) asks from a page; `history` (the last two turns) makes it a follow-up; `mentions.refs` (at most 8) are what the person tagged with @, each read as the caller (an API key tags only the kinds its scopes cover). Without a model `answer` is left out. With `Accept: text/event-stream` the answer streams instead: `found`, step events, `text.delta`, `text`, then `done` (with `links`, `cited`, `sources`, `model`, `durationMs`, `steps`, tokens and `local`) or `error`. An API key needs the `brain:read` scope (`executions:read` alone no longer reaches it).',
+    body: jsonBody(object({ question: { type: 'string', maxLength: 500 }, about: { type: 'string', description: '<type>/<id> of the page it is asked from' }, history: array(object({ question: { type: 'string' }, answer: { type: 'string' } }, ['question', 'answer'])), mentions: object({ refs: { ...array(object({ type: { type: 'string', enum: [...MENTION_TYPES] }, id: { type: 'string' }, workflowId: { type: 'string' }, name: { type: 'string', description: 'Words a refusal only' } }, ['type', 'id'])), maxItems: MENTION_LIMITS.refs } }, ['refs']) }, ['question'])),
+    responses: { 200: reply('The answer', object({ question: { type: 'string' }, answer: { type: 'string' }, links: array(object({ ref: { type: 'string' }, name: { type: 'string' } }, ['ref', 'name'])), cited: array({ type: 'integer' }), model: { type: 'string' }, pages: array({ type: 'object' }), facts: array({ type: 'object' }), work: array(workItem), note: { type: 'string' }, about: { type: 'string' }, tags: { ...array(object({ ok: { type: 'boolean' }, label: { type: 'string' } }, ['ok', 'label'])), description: 'With `mentions`: each tag as read (`Read @Name`) or refused (`Couldn\'t read @Name`, `Left out @Name`); `facts` is then empty' } }, ['question', 'pages', 'facts', 'work'])), 400: invalid },
+  });
+  // B04: tagging with @ (docs/assistant.md#tagging-with-).
+  add('get', '/api/mentions', {
+    tag: 'Workflows',
+    id: 'searchMentions',
+    summary: 'Find what can be tagged with @',
+    description: 'Per kind, at most 8 hits, a prefix match first and then the newest, among what the caller can open. Credentials and people give a name and a type or role only. `workflowId` adds that workflow’s nodes and puts its runs first.',
+    query: [
+      { name: 'q', description: 'Words in the name (at most 80 characters)', schema: { type: 'string', maxLength: 80 } },
+      { name: 'types', description: 'A comma list of kinds: workflow, node, run, agent, team, dataTable, template, nodeType, plugin, brainPage, person, credential', schema: { type: 'string' } },
+      { name: 'workflowId', description: 'The workflow being edited', schema: { type: 'string' } },
+    ],
+    responses: {
+      200: reply('The groups', object({ groups: array(object({ type: { type: 'string' }, items: array(object({ type: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, hint: { type: 'string' }, workflowId: { type: 'string' } }, ['type', 'id', 'name'])) }, ['type', 'items'])) }, ['groups'])),
+      400: invalid,
+    },
+  });
+  // NB03: a project's link to a Notion page (docs/features/notion-brain.md#setting-it-up).
+  const notionLink = { type: 'object', additionalProperties: true, description: 'A LinkView (lib/shared/notion-brain.ts): id, projectId, status, reason, credential (id and name, never the key), rootPageId, rootUrl, rootTitle, brainPageId, workspaceName, botName, knowledgeScope, rps, copy, lastPushAt, lastPullAt, waiting, problems, createdAt, updatedAt, canManage' };
+  const notionPath = { id: 'The project id' };
+  const notionOff = errorRef('The Notion brain is switched off on this instance (`LANDFLOW_NOTION_BRAIN=off`), or the page is linked already');
+  add('get', '/api/projects/{id}/brain/notion', {
+    tag: 'Second brain',
+    id: 'getProjectNotionLink',
+    summary: 'A project’s Notion link',
+    description: 'Any role in the project; with an API key it needs the `brain:read` scope. `{ linked: false, canManage }` when the project is not linked, else the link: its status, the credential by id and name (never the key), the progress of the copy, what waits and how many problems are open.',
+    pathParams: notionPath,
+    responses: { 200: reply('The link', { oneOf: [notionLink, object({ linked: { type: 'boolean', enum: [false] }, canManage: { type: 'boolean' } }, ['linked', 'canManage'])] }), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/brain/notion', {
+    tag: 'Second brain',
+    id: 'linkProjectToNotion',
+    summary: 'Link a project to a Notion page',
+    description: 'The project’s admins. Checks the page again, then makes the link in `setting_up`; the copy is the sync’s. `credentialId` must be a `productivity.notionApi` credential the project may use. 409 when the project or the page is linked already, or the Notion brain is off; 404 when the page is not shared with the key; 400 for a refused key or a page that is not a Notion page.',
+    pathParams: notionPath,
+    body: jsonBody(object({ credentialId: { type: 'string' }, page: { type: 'string', description: 'A Notion link, a 32-hex id or a dashed UUID' }, knowledgeScope: { type: 'string', enum: ['brain', 'root'], default: 'brain' }, rps: { type: 'integer', minimum: 1, maximum: 8, default: 2 } }, ['credentialId', 'page'])),
+    responses: { 202: reply('The link', notionLink), 400: invalid, 403: errorRef('Not an admin of the project, or the project may not use that credential'), 404: notFound, 409: notionOff },
+  });
+  add('patch', '/api/projects/{id}/brain/notion', {
+    tag: 'Second brain',
+    id: 'updateProjectNotionLink',
+    summary: 'Pause, resume or tune a project’s Notion link',
+    description: 'The project’s admins. `paused`, `rps` (1 to 8 requests a second) and `knowledgeScope` (`brain` or `root`); a field left out keeps its value. NB07: `credentialId` (another Notion key the project may use) checks the link’s page, and its brain page, with that key first and only then keeps it (a refused key is 400, a page it cannot see 404, a Notion that does not answer in 15 seconds 504; the link stays as it was), and a link stopped as `unauthorized` or `unshared` goes back to `active` after it. `paused: false` on an `unauthorized` or `unshared` link does the same check with the link’s own key (“Check again”); on a `paused` link it resumes it. A check running for the project answers 409.',
+    pathParams: notionPath,
+    body: jsonBody(object({ paused: { type: 'boolean' }, rps: { type: 'integer', minimum: 1, maximum: 8 }, knowledgeScope: { type: 'string', enum: ['brain', 'root'] }, credentialId: { type: 'string', description: 'Another Notion key for the same page' } })),
+    responses: { 200: reply('The link', notionLink), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound, 409: notionOff, 504: errorRef('Notion did not answer the check in time; the link is unchanged') },
+  });
+  add('delete', '/api/projects/{id}/brain/notion', {
+    tag: 'Second brain',
+    id: 'unlinkProjectFromNotion',
+    summary: 'Disconnect a project from Notion',
+    description: 'The project’s admins. The link is kept as `unlinked` for the history; nothing is sent to Notion, which keeps what is there, and Landflow’s own brain is unchanged. The project can be linked again.',
+    pathParams: notionPath,
+    responses: { 200: reply('Disconnected', object({ ok: { type: 'boolean' }, linked: { type: 'boolean' }, message: { type: 'string' } }, ['ok', 'message'])), 403: errorRef('Not an admin of the project'), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/brain/notion/check', {
+    tag: 'Second brain',
+    id: 'checkNotionPage',
+    summary: 'Check a Notion page before linking it',
+    description: 'The project’s admins. Reads Notion and writes nothing: the page’s title, whether a Landflow brain is already under it, what a copy of this project would send (pages, facts, practices, project notes) and about how many minutes it takes. 404 “Landflow can’t see this page” names the connection to add in Notion. NB07: 504 when Notion has not answered in 15 seconds (a brain found only by the deeper probe may be missed then); 409 “A check of this project is running” when another page or key is being checked (the same page and key share the running check’s answer).',
+    pathParams: notionPath,
+    body: jsonBody(object({ credentialId: { type: 'string' }, page: { type: 'string' } }, ['credentialId', 'page'])),
+    responses: { 504: errorRef('Notion took too long to answer; try again in a moment'), 200: reply('What the page is', object({ title: { type: 'string' }, url: { type: 'string' }, workspaceName: { type: 'string' }, botName: { type: 'string' }, existingBrain: object({ found: { type: 'boolean' }, pageId: { type: 'string' } }, ['found']), counts: object({ pages: { type: 'integer' }, facts: { type: 'integer' }, practices: { type: 'integer' }, notes: { type: 'integer' } }, ['pages', 'facts', 'practices', 'notes']), estimateMinutes: { type: 'integer' } }, ['title', 'url', 'existingBrain', 'counts', 'estimateMinutes'])), 400: invalid, 403: errorRef('Not an admin of the project, or the project may not use that credential'), 404: notFound, 409: notionOff },
+  });
+  add('post', '/api/projects/{id}/brain/notion/sync', {
+    tag: 'Second brain',
+    id: 'syncProjectNotionLink',
+    summary: 'Sync a project’s Notion link now',
+    description: 'The project’s admins. Makes the next sync due at once and answers 202 with the link.',
+    pathParams: notionPath,
+    responses: { 202: reply('The link', notionLink), 403: errorRef('Not an admin of the project'), 404: notFound, 409: notionOff },
+  });
+  add('get', '/api/projects/{id}/brain/notion/problems', {
+    tag: 'Second brain',
+    id: 'listNotionProblems',
+    summary: 'Open sync problems of a project’s Notion link',
+    description: 'Any role in the project; with an API key it needs the `brain:read` scope, like the link (NB07; it was `workflows:read`). Each problem has its kind, Landflow’s words about it (never page text), `notionUrl` when it names a Notion page, and the actions its kind offers (the client shows the ones the viewer’s role may press).',
+    pathParams: notionPath,
+    responses: { 200: reply('The problems', array({ type: 'object', additionalProperties: true, description: 'A LinkProblemView: id, kind, notionId, notionUrl, localKey, detail, at, actions' })), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/brain/notion/problems/{problemId}', {
+    tag: 'Second brain',
+    id: 'resolveNotionProblem',
+    summary: 'Resolve a Notion sync problem',
+    description: 'Project editors and admins; `repair` and `deleteLocal` need an admin. 400 for an action the problem’s kind does not offer; 409 when the problem is resolved already, the object it names is gone, or `LANDFLOW_NOTION_BRAIN=off`.',
+    pathParams: { id: 'The project id', problemId: 'The problem id' },
+    body: jsonBody(object({ action: { type: 'string', enum: ['dismiss', 'repair', 'putBack', 'deleteLocal', 'keepAsFact'] } }, ['action'])),
+    responses: { 200: reply('Resolved', object({ id: { type: 'string' }, resolved: { type: 'boolean' }, action: { type: 'string' }, by: { type: 'string' }, at: { type: 'string' } }, ['id', 'resolved', 'action'])), 400: invalid, 403: errorRef('Not allowed to take that action'), 404: notFound, 409: errorRef('Resolved already, the object is gone, or the Notion brain is off') },
+  });
+  // B05: the person's own work and day (docs/work-and-briefings.md).
+  const briefingWorkItem = { type: 'object', description: 'A WorkItem (lib/shared/brain-work.ts): id, sourceId, source, kind, title, summary, repo, areas, at, endedAt, url, visibility' };
+  add('post', '/api/brain/work', {
+    tag: 'Second brain',
+    id: 'recordWork',
+    summary: 'Record your own work',
+    description: 'Needs the `brain:write` scope (or a session). `events` holds 1 to 50 work events (packages/protocol/src/work-events.ts): kind (work.<name>), source, sourceId, occurredAt, title and optional summary, repo, branch, areas (directory names), commits, prs, turns, initiative, customer, team, url, visibility. Private to the caller unless sent `team` (people who share a project with them) or `org` (everyone): nobody else reads a private one, an admin included. The same source and sourceId updates the event. An event that fails the checks comes back in `rejected` with its reason; the others are saved. 503 when the brain is off.',
+    body: jsonBody(object({ events: array({ type: 'object' }) }, ['events'])),
+    responses: {
+      200: reply('What was saved and what was rejected', object({ saved: array(object({ sourceId: { type: 'string' }, id: { type: 'string' }, created: { type: 'boolean' } }, ['sourceId', 'id', 'created'])), rejected: array(object({ sourceId: { type: 'string' }, reason: { type: 'string' } }, ['sourceId', 'reason'])) }, ['saved', 'rejected'])),
+      400: invalid,
+      503: errorRef('The brain is off'),
+    },
+  });
+  add('delete', '/api/brain/work/{sourceId}', {
+    tag: 'Second brain',
+    id: 'deleteWork',
+    summary: 'Delete one of your own work events',
+    description: 'Needs the `brain:write` scope (or a session). `source` names the tool the event came from. Someone else’s event is not found.',
+    query: [text('source', 'The event’s source (required)')],
+    responses: { 204: { description: 'Deleted' }, 400: invalid, 404: notFound, 503: errorRef('The brain is off') },
+  });
+  // B18: team and org visibility, Post as my update (docs/work-and-briefings.md).
+  add('patch', '/api/brain/work/{sourceId}', {
+    tag: 'Second brain',
+    id: 'setWorkVisibility',
+    summary: 'Change who reads one of your own work events',
+    description: 'Needs the `brain:write` scope (or a session). `team` is the people who share a project with you, `org` everyone, `private` you alone. `source` narrows it to one tool. Someone else’s event is not found.',
+    query: [text('source', 'The event’s source')],
+    body: jsonBody(object({ visibility: { type: 'string', enum: ['private', 'team', 'org'] } }, ['visibility'])),
+    responses: { 200: reply('The item', briefingWorkItem), 400: invalid, 404: notFound },
+  });
+  add('post', '/api/brain/work/{sourceId}/share', {
+    tag: 'Second brain',
+    id: 'shareWork',
+    summary: 'Post one of your work events as an update',
+    description: 'Needs the `brain:write` scope (or a session). Records a `work.self_update` event you own, shared with the organization (`org`, the default) or your team, that links the item. Posting it again updates that event. Someone else’s event is not found. 503 when the brain is off.',
+    query: [text('source', 'The event’s source')],
+    body: jsonBody(object({ visibility: { type: 'string', enum: ['team', 'org'] } }, [])),
+    responses: { 200: reply('The update', object({ id: { type: 'string' }, created: { type: 'boolean' }, of: { type: 'string' }, visibility: { type: 'string' } }, ['id', 'created', 'of', 'visibility'])), 400: invalid, 404: notFound, 503: errorRef('The brain is off') },
+  });
+  add('get', '/api/brain/briefing', {
+    tag: 'Second brain',
+    id: 'getBriefing',
+    summary: 'Your own day',
+    description: 'Needs the `brain:read` scope (`brain:write` includes it) or a session. The caller’s own work of `day` (today in the instance time zone by default) and the day before, newest first, at most 50 each; `autoSend` is the admin’s setting for tools sending work on their own.',
+    query: [text('day', 'YYYY-MM-DD')],
+    responses: { 200: reply('The briefing', object({ day: { type: 'string' }, generatedAt: { type: 'string' }, source: { type: 'string', enum: ['live', 'flow'] }, today: array(briefingWorkItem), yesterday: array(briefingWorkItem), related: array({ type: 'object' }), summary: { type: 'string' }, autoSend: { type: 'string', enum: ['allowed', 'forbidden'] }, brain: { type: 'string', enum: ['on', 'off'] } }, ['day', 'generatedAt', 'source', 'today', 'yesterday', 'related', 'autoSend', 'brain'])), 400: invalid },
+  });
+  // SP14: your own AI spend over a brain key.
+  add('get', '/api/brain/my-spend', {
+    tag: 'Second brain',
+    id: 'getBrainMyAiSpend',
+    summary: 'Your own AI spend',
+    description: 'Needs the `brain:read` scope (`brain:write` includes it) or a session. The same answer as `GET /api/insights/ai/me`: today, this month, the period by model, purpose and surface, and your own caps with their forecast or pace. Only the caller’s own rows and caps.',
+    query: [text('period', '24h, 7d (default), 30d or 90d')],
+    responses: { 200: reply('Your AI spend', { type: 'object' }), 400: invalid },
+  });
+  // PR01: practices (docs/practices.md).
+  const practiceDraftBody = object(
+    {
+      handle: { type: 'string', description: 'two or three lowercase parts, such as helm/chart-location' },
+      level: { type: 'string', enum: ['org', 'project'] },
+      projectId: { type: 'string' },
+      title: { type: 'string', maxLength: 160 },
+      strength: { type: 'string', enum: ['required', 'recommended'] },
+      topics: array({ type: 'string' }),
+      repos: array({ type: 'string' }),
+      paths: array({ type: 'string' }),
+      summary: { type: 'string', maxLength: 300 },
+      body: { type: 'string', maxLength: 4000 },
+      checks: array({ type: 'object' }),
+      citations: array({ type: 'object' }),
+    },
+    ['handle', 'level', 'strength', 'topics', 'repos', 'paths', 'title', 'summary', 'body'],
+  );
+  const practiceView = { type: 'object', description: 'A PracticeView (lib/shared/practices.ts): the practice, its approved version, the drafts the caller may see, `canApprove` and `canDraft`' };
+  const practiceVersion = { type: 'object', description: 'A PracticeVersion (lib/shared/practices.ts)' };
+  add('get', '/api/practices', {
+    tag: 'Practices',
+    id: 'listPractices',
+    summary: 'List practices',
+    description: 'Needs the `brain:read` scope (or a session). The practices the caller may see: approved and retired ones (org practices to everyone signed in, project practices to people with a role there) and drafts to their drafters and approvers. `status` defaults to draft and approved; `retired` lists retired ones. `waiting` counts the versions waiting for the caller’s approval.',
+    query: [text('status', 'draft, approved or retired'), text('level', 'org or project'), text('projectId', 'A project'), text('topic', 'A topic tag'), text('q', 'Words in the handle or title')],
+    responses: { 200: reply('The practices', object({ practices: array(practiceView), canApproveOrg: { type: 'boolean' }, waiting: { type: 'integer' } }, ['practices', 'canApproveOrg', 'waiting'])), 400: invalid },
+  });
+  add('post', '/api/practices', {
+    tag: 'Practices',
+    id: 'draftPractice',
+    summary: 'Draft a practice',
+    description: 'Needs the `brain:write` scope (or a session). Saves version 1 as a draft; nothing reaches an agent until a person approves it. A draft typed in a signed-in session is a person’s; one sent with an API key, MCP or by a flow is `learned` (with citations) or `agent` and is tainted: its approver must read it against its sources. A project practice needs editor access in the project. 409 when the handle is taken at that level.',
+    body: jsonBody(practiceDraftBody),
+    responses: { 201: reply('The practice and its first version', object({ practice: practiceView, version: practiceVersion }, ['practice', 'version'])), 400: invalid, 403: errorRef('Not allowed to draft here'), 404: notFound, 409: errorRef('The handle is taken') },
+  });
+  add('get', '/api/practices/{id}', {
+    tag: 'Practices',
+    id: 'getPractice',
+    summary: 'One practice',
+    description: 'Needs the `brain:read` scope (or a session). The versions the caller may see, each with its state (`approved`, `replaced`, `pending`, `rejected`), the latest 20 applications and the approved practices its newest pending version overlaps (for approvers). 404 when the caller may not see it.',
+    responses: { 200: reply('The practice', object({ practice: practiceView, versions: array(practiceVersion), applications: array({ type: 'object' }), conflicts: array({ type: 'object' }) }, ['practice', 'versions', 'applications', 'conflicts'])), 404: notFound },
+  });
+  add('patch', '/api/practices/{id}', {
+    tag: 'Practices',
+    id: 'editPractice',
+    summary: 'Draft a new version',
+    description: 'Needs the `brain:write` scope (or a session). Any of `title`, `strength`, `topics`, `repos`, `paths`, `summary`, `body`, `checks`, `citations`: a new draft version is made from the newest version the caller may see (not a rejected one) plus the changes. What agents get is unchanged until it is approved.',
+    body: jsonBody(object({ title: { type: 'string' }, strength: { type: 'string', enum: ['required', 'recommended'] }, topics: array({ type: 'string' }), repos: array({ type: 'string' }), paths: array({ type: 'string' }), summary: { type: 'string' }, body: { type: 'string' }, checks: array({ type: 'object' }), citations: array({ type: 'object' }) })),
+    responses: { 201: reply('The practice and the new version', object({ practice: practiceView, version: practiceVersion }, ['practice', 'version'])), 400: invalid, 403: errorRef('Not allowed to draft here'), 404: notFound },
+  });
+  add('post', '/api/practices/{id}/approve', {
+    tag: 'Practices',
+    id: 'approvePractice',
+    summary: 'Approve a version',
+    description: 'A session only (an API key gets 403). Org practices: owners and admins. Project practices: that project’s admins. The drafter may approve their own. A tainted version needs `reviewedSources: true` (409 `PracticeNeedsReview`). An approved practice it overlaps (a shared topic and scopes that meet) needs an answer in `conflicts` (`supersede` retires it, `keep` leaves both), else 409 `PracticeConflict` with the list.',
+    body: jsonBody(object({ version: { type: 'integer' }, reviewedSources: { type: 'boolean' }, conflicts: { type: 'object', additionalProperties: { type: 'string', enum: ['supersede', 'keep'] } } }, ['version'])),
+    responses: { 200: reply('The practice', object({ practice: practiceView }, ['practice'])), 400: invalid, 403: errorRef('Not an approver'), 404: notFound, 409: errorRef('Needs review, or an overlap needs an answer') },
+  });
+  add('post', '/api/practices/{id}/versions/{version}/reject', {
+    tag: 'Practices',
+    id: 'rejectPracticeVersion',
+    summary: 'Reject a version',
+    description: 'A session only. The same people who may approve it. `reason` is 10 to 500 characters.',
+    body: jsonBody(object({ reason: { type: 'string', minLength: 10, maxLength: 500 } }, ['reason'])),
+    responses: { 200: reply('The practice', object({ practice: practiceView }, ['practice'])), 400: invalid, 403: errorRef('Not an approver'), 404: notFound },
+  });
+  add('post', '/api/practices/{id}/retire', {
+    tag: 'Practices',
+    id: 'retirePractice',
+    summary: 'Retire a practice',
+    description: 'A session only. The same people who may approve it. Agents stop getting it; its versions stay, and a new approved version brings it back.',
+    responses: { 200: reply('The practice', object({ practice: practiceView }, ['practice'])), 403: errorRef('Not an approver'), 404: notFound },
+  });
+  add('post', '/api/practices/{id}/waivers', {
+    tag: 'Practices',
+    id: 'waivePractice',
+    summary: 'Waive a practice for one run',
+    description: 'A session only. Someone who may approve the practice, for a run they may read. `version` must have been approved. A second waiver for the same practice and run returns the first.',
+    body: jsonBody(object({ executionId: { type: 'string' }, version: { type: 'integer' }, reason: { type: 'string', minLength: 10, maxLength: 500 } }, ['executionId', 'version', 'reason'])),
+    responses: { 201: reply('The waiver', object({ application: { type: 'object' } }, ['application'])), 400: invalid, 403: errorRef('Not an approver'), 404: notFound },
+  });
+  add('get', '/api/practices/{id}/applications', {
+    tag: 'Practices',
+    id: 'listPracticeApplications',
+    summary: 'Where a practice was applied',
+    description: 'Needs the `brain:read` scope (or a session). Delivered, cited, checked and waived rows, newest first, 50 a page (`limit` up to 100). Only approvers see who a row belongs to.',
+    query: [text('limit', '1 to 100'), text('cursor', 'From the previous page’s `nextCursor`')],
+    responses: { 200: reply('A page', object({ applications: array({ type: 'object' }), nextCursor: { type: 'string' } }, ['applications'])), 404: notFound },
+  });
+  // PR09:
+  add('get', '/api/practices/{id}/compliance', {
+    tag: 'Practices',
+    id: 'getPracticeCompliance',
+    summary: 'How a practice is followed',
+    description: 'Needs the `brain:read` scope (or a session). Over the last `days` (1 to 90, default 30): how often it was given (`delivered`), cited, passed or failed its checks and waived, the agents that cited it most (`followedBy`, at most 10, only those the caller may read; the rest are counted in `otherAgents`), `lastApplied` and the same counts per version. 404 for a practice the caller may not see.',
+    query: [text('days', '1 to 90, default 30')],
+    responses: { 200: reply('The counts', object({ compliance: { type: 'object', description: 'A PracticeCompliance (lib/shared/practice-compliance.ts)' } }, ['compliance'])), 400: invalid, 404: notFound },
+  });
+  add('get', '/api/executions/{id}/practices', {
+    tag: 'Practices',
+    id: 'getExecutionPractices',
+    summary: 'The practices a run was given',
+    description: 'Needs the `executions:read` scope (or a session). Each practice the run was given or checked as `{ handle, version, delivered, cited, check? }` (`check`: pass, fail or waived), only practices the caller may see. 404 for a run the caller may not read.',
+    responses: { 200: reply('The practices', object({ practices: array({ type: 'object' }) }, ['practices'])), 404: notFound },
+  });
+  // PR03:
+  add('post', '/api/practices/learn', {
+    tag: 'Practices',
+    id: 'learnPractices',
+    summary: 'Draft practices from files',
+    description: 'Needs the `brain:write` scope (or a session). The brain’s model reads up to 20 files of one repository at one commit and drafts at most 10 practices. Every draft is tainted and none of its citations is verified, because the files came from the caller; a citation whose excerpt is not in a sent file is dropped. A person approves on Brain → Practices. 503 when the brain’s model is off or practices are not loaded.',
+    body: jsonBody(
+      object(
+        {
+          repo: { type: 'string', description: 'owner/name' },
+          sha: { type: 'string', description: 'The commit the files are from' },
+          files: array(object({ path: { type: 'string' }, content: { type: 'string', maxLength: 20000 } }, ['path', 'content'])),
+          topics: array({ type: 'string' }),
+          level: { type: 'string', enum: ['org', 'project'] },
+          projectId: { type: 'string' },
+        },
+        ['repo', 'sha', 'files'],
+      ),
+    ),
+    responses: {
+      200: reply('The drafts and what was skipped', object({ drafts: array(object({ practiceId: { type: 'string' }, handle: { type: 'string' }, version: { type: 'integer' }, url: { type: 'string' } }, ['practiceId', 'handle', 'version', 'url'])), skipped: array(object({ handle: { type: 'string' }, reason: { type: 'string' } }, ['reason'])) }, ['drafts', 'skipped'])),
+      400: invalid,
+      503: errorRef('The brain’s model is off, or practices are not loaded'),
+    },
+  });
+  // PR04: practices
+  add('get', '/api/practices/applicable', {
+    tag: 'Practices',
+    id: 'getApplicablePractices',
+    summary: 'Practices that apply',
+    description:
+      'Needs the `brain:read` scope or a session. The approved practices that apply for the caller, as a block that fits `size` (`full` 3,000 characters, `mod` 2,000, the default, `index` 800). Organization practices, and the project practices of projects the caller is in (with `projectId`, that project only; 404 when the caller is not in it). `repo`, `path`, `topic` and `task` only narrow and rank: they never add a practice. Records a `delivered` row per practice unless `preview=1`. Empty when practices are off.',
+    query: [
+      { name: 'repo', description: 'owner/name', schema: { type: 'string' } },
+      { name: 'path', description: 'A repository-relative path; repeat for more (at most 20)', schema: { type: 'string' } },
+      { name: 'topic', description: 'A topic; repeat for more (at most 5)', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Only this project’s practices (and the organization’s)', schema: { type: 'string' } },
+      { name: 'task', description: 'What is about to be done, in words (at most 500 characters)', schema: { type: 'string', maxLength: 500 } },
+      { name: 'size', description: 'The budget of the block', schema: { type: 'string', enum: ['full', 'mod', 'index'], default: 'mod' } },
+      { name: 'preview', description: '`1`: do not record `delivered` rows', schema: { type: 'string', enum: ['0', '1'] } },
+    ],
+    responses: {
+      200: reply(
+        'The practices',
+        object(
+          {
+            practices: array(object({ handle: { type: 'string' }, version: { type: 'integer' }, title: { type: 'string' }, level: { type: 'string', enum: ['org', 'project'] }, strength: { type: 'string', enum: ['required', 'recommended'] }, summary: { type: 'string' }, topics: array({ type: 'string' }), repos: array({ type: 'string' }), paths: array({ type: 'string' }) }, ['handle', 'version', 'title', 'level', 'strength', 'summary', 'topics', 'repos', 'paths'])),
+            text: { type: 'string' },
+            budget: { type: 'integer' },
+            omitted: { type: 'integer' },
+          },
+          ['practices', 'text', 'budget', 'omitted'],
+        ),
+      ),
+      400: invalid,
+      404: notFound,
+    },
+  });
+  add('get', '/api/practices/resolve', {
+    tag: 'Practices',
+    id: 'resolvePractice',
+    summary: 'One approved practice in full',
+    description:
+      'Needs the `brain:read` scope or a session. The approved version of one practice: its rules, scope and machine checks, redacted, exactly the one `applicable` delivered for the same `repo`, `path`s, `topic`s and `projectId` (the same filter and ranking; `level` keeps a winner of that level). 404 when practices are off, when delivery gave none, or for a project the caller has no role in. Unlike the Brain page’s list, this never gives a body while practices are off.',
+    query: [
+      { name: 'handle', description: 'The practice’s handle. Give this or `id`, not both.', schema: { type: 'string' } },
+      { name: 'id', description: 'The practice’s id (`prc_…`, as `applicable` lists it). Given, it is found only when delivery gives it for the same `repo`, `path`s and `topic`s; 404 otherwise. Give this or `handle`, not both.', schema: { type: 'string' } },
+      { name: 'repo', description: 'owner/name, as given to `applicable`', schema: { type: 'string' } },
+      { name: 'path', description: 'A repository-relative path, as given to `applicable`; repeat for more (at most 20)', schema: { type: 'string' } },
+      { name: 'topic', description: 'A topic, as given to `applicable`; repeat for more (at most 5)', schema: { type: 'string' } },
+      { name: 'projectId', description: 'Only this project’s practices (and the organization’s); 404 when the caller has no role in it', schema: { type: 'string' } },
+      { name: 'level', description: 'Only the organization’s or only the project’s practice', schema: { type: 'string', enum: ['org', 'project'] } },
+    ],
+    responses: {
+      200: reply('The practice', object({ practice: { type: 'object', description: 'handle, version, title, strength, scope { level, projectId?, topics, repos, paths }, summary, body, checks' } }, ['practice'])),
+      400: invalid,
+      404: notFound,
+    },
+  });
+  add('post', '/api/practices/cite', {
+    tag: 'Practices',
+    id: 'citePractices',
+    summary: 'Record the practices an answer followed',
+    description:
+      'Needs the `brain:write` scope or a session. Reads the “Practices followed: [handle@version], …” line of `text` and any `Practice: handle@version` lines (a commit’s), plus `citations`, at most 20 in all, and records a `cited` row for each version of a practice the caller may get. The rest come back in `unknown`. An `executionId` the caller cannot read is 404.',
+    body: jsonBody(object({ text: { type: 'string', maxLength: 20000 }, citations: { type: 'array', items: { type: 'string' }, maxItems: 20 }, executionId: { type: 'string' }, repo: { type: 'string' } })),
+    responses: { 200: reply('What was recorded', object({ recorded: array({ type: 'string' }), unknown: array({ type: 'string' }) }, ['recorded', 'unknown'])), 400: invalid, 404: notFound },
+  });
+  // PC06: agents across projects.
+  const availabilityDoc = object({ home: object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name']), all: { type: 'boolean' }, projects: array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])) }, ['home', 'all', 'projects']);
+  const agentSharesDoc = object({ availability: availabilityDoc, shares: array({ type: 'object', description: 'projectId, projectName, projectType, role (`user`), createdAt, createdBy' }) }, ['availability', 'shares']);
+  add('get', '/api/agents/{id}/shares', {
+    tag: 'Agents',
+    id: 'getAgentShares',
+    summary: 'Where an agent is available',
+    description: 'Its home project, the projects it is shared with (only those the caller has a role in; `[]` when `all` is true) and whether it is shared with all projects. The “All projects” row is not in `shares`.',
+    pathParams: { id: 'The agent id' },
+    responses: { 200: reply('The availability', agentSharesDoc), 404: notFound },
+  });
+  add('put', '/api/agents/{id}/shares', {
+    tag: 'Agents',
+    id: 'setAgentShares',
+    summary: 'Make an agent available to projects',
+    description: 'Admins of the agent’s home project, owners and admins. Replaces every share; the home project in `projectIds` is ignored and an unknown project is 404. `all: true` shares it with every project. Each change is audited.',
+    pathParams: { id: 'The agent id' },
+    body: jsonBody(object({ projectIds: { type: 'array', items: { type: 'string' }, maxItems: 100, uniqueItems: true }, all: { type: 'boolean' } }, ['projectIds', 'all'])),
+    responses: { 200: reply('The availability', agentSharesDoc), 400: invalid, 403: errorRef('Not an admin of the agent’s project'), 404: notFound },
+  });
+  // C22: a knowledge base's sources and their sync history
+  const knowledgeSource = { type: 'object', additionalProperties: true, description: 'A SourceView (lib/shared/knowledge-sources.ts): id, kind (`folder`, `s3`, `crawl`, `googleDrive`), name, settings, credential (id and name, never a value), schedule (`manual`, `hourly`, `daily`), paused, pausedReason, running, lastRun, nextAt, createdAt' };
+  const sourceBody = object({ kind: { type: 'string', enum: ['folder', 's3', 'crawl', 'googleDrive'] }, name: { type: 'string' }, settings: { type: 'object', additionalProperties: true, description: 'folder: `{ folder }`; s3: `{ bucket, prefix }`; crawl: `{ startUrl, maxDepth (0 to 3), maxPages (1 to 500) }`; googleDrive: `{ folderId, includeSubfolders }`' }, credentialId: { type: 'string', description: 'An `s3Api` credential (S3) or a connected Google OAuth2 credential (Drive), one the agent’s project may use' }, schedule: { type: 'string', enum: ['manual', 'hourly', 'daily'] } }, ['kind', 'settings', 'schedule']);
+  add('get', '/api/agents/{id}/knowledge/{toolId}/sources', {
+    tag: 'Agents',
+    id: 'listKnowledgeSources',
+    summary: 'A knowledge base’s sources',
+    description: 'Callers who may update the agent; anyone else gets 404. Each source with its last run and the time of the next sync. Agent knowledge bases only.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id' },
+    responses: { 200: reply('The sources', object({ sources: array(knowledgeSource) }, ['sources'])), 404: notFound },
+  });
+  add('post', '/api/agents/{id}/knowledge/{toolId}/sources', {
+    tag: 'Agents',
+    id: 'addKnowledgeSource',
+    summary: 'Add a source to a knowledge base',
+    description: 'At most 20 sources a base; the same place twice is 409. A site start address on a private network is refused when `LANDFLOW_OUTBOUND_BLOCK_PRIVATE` is on (400); a credential the agent’s project may not use is 403 and one of the wrong type 400. A scheduled source syncs for the first time at the next check. Audited as `knowledge_source.created`, with the credential’s name.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id' },
+    body: jsonBody(sourceBody),
+    responses: { 201: reply('The source', knowledgeSource), 400: invalid, 403: errorRef('The credential is not one the agent’s project may use'), 404: notFound, 409: errorRef('The same place is already a source') },
+  });
+  add('patch', '/api/agents/{id}/knowledge/{toolId}/sources/{sourceId}', {
+    tag: 'Agents',
+    id: 'updateKnowledgeSource',
+    summary: 'Pause, resume or change a source',
+    description: '`name`, `schedule`, `paused` and `settings` (checked again); a field left out keeps its value. Audited as `knowledge_source.updated`.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id', sourceId: 'The source id' },
+    body: jsonBody(object({ name: { type: 'string' }, schedule: { type: 'string', enum: ['manual', 'hourly', 'daily'] }, paused: { type: 'boolean' }, settings: { type: 'object', additionalProperties: true } })),
+    responses: { 200: reply('The source', knowledgeSource), 400: invalid, 404: notFound },
+  });
+  add('delete', '/api/agents/{id}/knowledge/{toolId}/sources/{sourceId}', {
+    tag: 'Agents',
+    id: 'removeKnowledgeSource',
+    summary: 'Remove a source',
+    description: '`?deleteChunks=1` also deletes the chunks the source wrote (never an uploaded document or another source’s); without it they stay. A source that is syncing answers 409. Audited as `knowledge_source.removed`.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id', sourceId: 'The source id' },
+    query: [{ name: 'deleteChunks', description: '`1` deletes the chunks it wrote', schema: { type: 'string', enum: ['1'] } }],
+    responses: { 200: reply('Removed', object({ removedChunks: { type: 'integer' } }, ['removedChunks'])), 404: notFound, 409: errorRef('A sync of this source is running') },
+  });
+  add('post', '/api/agents/{id}/knowledge/{toolId}/sources/{sourceId}/sync', {
+    tag: 'Agents',
+    id: 'syncKnowledgeSource',
+    summary: 'Sync a source now',
+    description: 'Starts a sync and answers at once; `GET …/runs` shows how it went. One sync per source runs at a time, across every process: another answers 409 with the running run’s id.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id', sourceId: 'The source id' },
+    responses: { 202: reply('Started', object({ runId: { type: 'string' } }, ['runId'])), 404: notFound, 409: errorRef('A sync of this source is running (`runId`)') },
+  });
+  add('get', '/api/agents/{id}/knowledge/{toolId}/sources/{sourceId}/runs', {
+    tag: 'Agents',
+    id: 'listKnowledgeSourceRuns',
+    summary: 'A source’s sync runs',
+    description: 'Newest first, the last 100 kept: when, by whom (`schedule` or `manual`), the result, the counts (seen, added, changed, removed, failed, skipped, embedded, reused), up to 50 failed items with the reason, and a note when a run stopped short.',
+    pathParams: { id: 'The agent id', toolId: 'The knowledge base’s tool id', sourceId: 'The source id' },
+    query: [
+      { name: 'limit', description: 'At most this many (default 20, at most 100)', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+      { name: 'cursor', description: 'Opaque; the previous page’s `next`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The runs', object({ runs: array({ type: 'object', additionalProperties: true }), next: { type: 'string' } }, ['runs'])), 400: invalid, 404: notFound },
+  });
+  add('get', '/api/agents', {
+    tag: 'Agents',
+    id: 'listAgents',
+    summary: 'List the agents the caller sees',
+    description: 'Each agent has its `ownership`. `availableIn` lists only the agents available in that project (its own, shared to it, or shared with all); the caller needs a role there, else 404 “Project not found”. For a shared agent `ownership.shared` is true and `ownership.projectName` is its home.',
+    query: [
+      { name: 'projectId', description: 'Only the agents this project owns or has been shared', schema: { type: 'string' } },
+      { name: 'availableIn', description: 'Only the agents available in this project', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The agents', object({ agents: array({ type: 'object', additionalProperties: true }) }, ['agents'])), 404: notFound },
+  });
+  // SP11: the AI page's forecast and cache card
+  add('get', '/api/insights/ai/forecast', {
+    tag: 'Insights',
+    id: 'aiForecast',
+    summary: 'The AI page’s month-end forecast',
+    description:
+      'Needs the `executions:read` scope or a session. The month’s total of what the caller can see, forecast to the month’s end (month to date + the mean of the last 7 complete days × the days left, with a band of ±1.2816·σ·√(days left), never below month to date; `early` with fewer than 7 days of data), and each cap or budget the caller may see: monthly ones forecast with the day the P50 line reaches the limit (`reachesOn`), daily ones as today’s `pace`. Cost caps in dollars, token caps in tokens. Other people’s caps are never listed for a member.',
+    responses: {
+      200: reply(
+        'The forecast',
+        object(
+          {
+            month: { type: 'string', description: 'YYYY-MM in the instance’s time zone' },
+            total: forecastShape,
+            caps: array(object({ capId: { type: 'string' }, subject: { type: 'string' }, period: { type: 'string', enum: ['day', 'month'] }, metric: { type: 'string', enum: ['cost', 'tokens'] }, max: { type: 'number' }, used: { type: 'number' }, forecast: forecastShape, pace: { type: 'number' }, reachesOn: { type: 'string', description: 'YYYY-MM-DD' } }, ['capId', 'subject', 'period', 'metric', 'max', 'used'])),
+          },
+          ['month', 'total', 'caps'],
+        ),
+      ),
+    },
+  });
+  // SP23: acknowledge a forecast-over-a-cap or unusual-spend flag
+  add('post', '/api/insights/ai/flags/{id}/ack', {
+    tag: 'Insights',
+    id: 'acknowledgeAiSpendFlag',
+    summary: 'Acknowledge a forecast or unusual-spend flag',
+    description:
+      'Needs the `executions:write` scope or a session. Anyone in the flag’s audience (the person it is about; the editors of the agent or workflow; a project’s admins; owners and admins, who also hear model and credential flags) clears it from Needs you for everyone; the answer says who and when. A caller outside the audience gets 404. Acknowledging again changes nothing. Audited as `ai.spend.acknowledged`. A day whose value doubles after it opens again.',
+    pathParams: { id: 'The flag id (`flagId` of a `spend` item in `GET /api/runs/needs-you`)' },
+    responses: { 200: reply('Acknowledged', object({ id: { type: 'string' }, acknowledgedBy: { type: 'string' }, acknowledgedAt: { type: 'string' } }, ['id'])), 404: notFound },
+  });
+  add('get', '/api/insights/ai/cache', {
+    tag: 'Insights',
+    id: 'aiCache',
+    summary: 'The AI page’s prompt-cache card',
+    description:
+      'Needs the `executions:read` scope or a session. Over the period: the cache hit rate over the calls the Run Trace’s cache line counts (Anthropic and OpenAI rows, and gateway rows that report cache tokens), the dollars it saved, the top 5 agents by uncached input with why they missed, and how many Anthropic calls the AI Agent node made (it asks for no cache). Only what the caller can see; numbers only, never prompt text. `reasonsPartial`: miss reasons need prompt splits, kept 30 days.',
+    query: [
+      { name: 'period', description: 'The period', schema: { type: 'string', enum: ['24h', '7d', '30d', '90d', 'custom'], default: '7d' } },
+      { name: 'from', description: 'A custom range’s first day (YYYY-MM-DD)', schema: { type: 'string', format: 'date' } },
+      { name: 'to', description: 'A custom range’s last day (YYYY-MM-DD)', schema: { type: 'string', format: 'date' } },
+      ...['projectId', 'agentId', 'workflowId', 'userId', 'credentialId', 'model', 'purpose', 'source', 'surface'].map((name) => ({ name, description: `Narrows the card as it narrows the report (a workflow, agent, project or credential the caller can’t read is 404)`, schema: { type: 'string' } })),
+    ],
+    responses: {
+      200: reply('The cache card', object({ period: { type: 'string' }, cache: { type: 'object', additionalProperties: true }, agents: array({ type: 'object', additionalProperties: true }), agentNode: object({ calls: { type: 'integer' }, uncachedTokens: { type: 'integer' } }, ['calls', 'uncachedTokens']), reasonsPartial: { type: 'boolean' }, truncated: { type: 'boolean' } }, ['period', 'cache', 'agents', 'agentNode', 'reasonsPartial', 'truncated'])),
+      400: invalid,
+    },
+  });
+  // PC10: project context for a harness
+  add('get', '/api/projects/context', {
+    tag: 'Projects',
+    id: 'projectContext',
+    summary: 'A project’s context block for a harness',
+    description:
+      'Needs the `brain:read` scope or a session. By `repo`: the projects the caller has a role in that list the repository (owners and admins: every one), sorted by name, and the first one’s block; never a 404. By `projectId`: that project, 404 without a role. `context.text` is the “Where this work fits” block: data, not instructions; \'\' when the project has nothing to say.',
+    query: [
+      { name: 'repo', description: 'owner/name, lowercased by the server', schema: { type: 'string' } },
+      { name: 'projectId', description: 'A project the caller has a role in', schema: { type: 'string' } },
+      { name: 'size', description: 'The block’s size', schema: { type: 'string', enum: ['full', 'compact'], default: 'compact' } },
+    ],
+    responses: {
+      200: reply('The projects and the first one’s block', object({ projects: array(object({ id: { type: 'string' }, name: { type: 'string' } }, ['id', 'name'])), context: { type: ['object', 'null'], additionalProperties: true }, workspace: { type: 'object', additionalProperties: true, description: 'PC16: the first project’s saved workspace (`projectId`, `repos`, `worktree`, `branchTemplate`, `branchPattern`); only when one is saved. Setup lines only for editors and admins.' } }, ['projects', 'context'])),
+      400: invalid,
+      404: notFound,
+    },
+  });
+  // PC13: project settings for agents, and sessions by project.
+  const agentSettingsDoc = object({
+    defaultModel: { type: 'object', additionalProperties: true, description: 'An agent model (`provider`, `model`, optional `credential`, `baseUrl`): used when neither the workflow’s node nor the agent names one' },
+    knowledge: { type: 'object', additionalProperties: true, description: '`{ enabled, tool }`: one knowledge base every agent in the project can search, as `project_knowledge`' },
+    agents: object({ mode: { type: 'string', enum: ['off', 'allow'] }, ids: { type: 'array', items: { type: 'string' }, maxItems: 200 } }, ['mode', 'ids']),
+    agentTools: object({ mode: { type: 'string', enum: ['off', 'allow'] }, kinds: { type: 'array', items: { type: 'string', enum: ['node', 'mcp', 'knowledge', 'workflow', 'agent', 'a2a'] } } }, ['mode', 'kinds']),
+    memory: { type: ['object', 'null'], additionalProperties: true, description: 'C07: where the project’s memory lives: `{ backend: \'built-in\' }` or `{ backend: \'provider\', nodeType, credentialId? }` (a plugin node that declares `memoryProvider`). `null` goes back to built-in' },
+  });
+  const settingsView = object({ settings: { type: 'object', additionalProperties: true }, canEdit: { type: 'boolean' }, plugins: array({ type: 'object', additionalProperties: true }), nodeTypes: array({ type: 'object', additionalProperties: true }), availableAgents: array(object({ id: { type: 'string' }, name: { type: 'string' }, home: { type: 'boolean' } }, ['id', 'name', 'home'])), memoryProviders: array(object({ type: { type: 'string' }, displayName: { type: 'string' }, pluginName: { type: 'string' }, credentialTypes: array({ type: 'string' }) }, ['type', 'displayName'])) }, ['settings', 'canEdit']);
+  add('get', '/api/projects/{id}/settings', {
+    tag: 'Projects',
+    id: 'getProjectSettings',
+    summary: 'A project’s settings',
+    description: 'Any role in the project. Besides the node allow-list and approvers: `defaultModel`, `knowledge`, `agents` and `agentTools` for the agents that run in it, `memory` (the memory backend), and `availableAgents` (the agents available in the project, sorted by name, `home` true for its own) and `memoryProviders` (installed plugin nodes that can be the project’s memory).',
+    pathParams: { id: 'The project id' },
+    responses: { 200: reply('The settings', settingsView), 404: notFound },
+  });
+  add('patch', '/api/projects/{id}/settings', {
+    tag: 'Projects',
+    id: 'updateProjectSettings',
+    summary: 'Change a project’s settings',
+    description: 'The project’s admins, owners and admins. A field the body leaves out keeps its value; `null` clears `defaultModel`, `knowledge` and `memory`. 400 for a credential the project can’t use, an agent that isn’t available in it, a tool kind that doesn’t exist, or a memory provider that isn’t an installed memory provider node.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(agentSettingsDoc),
+    responses: { 200: reply('The settings', settingsView), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound },
+  });
+  // C21: the vector collections a project owns or may use
+  const collectionView = object({ key: { type: 'string' }, store: { type: 'string' }, name: { type: 'string' }, access: { type: 'string', enum: ['owner', 'read', 'write'] }, ownerProjectId: { type: 'string' }, ownerName: { type: 'string' }, source: { type: 'string', enum: ['first-write', 'upgrade', 'admin'] }, grants: array(object({ projectId: { type: 'string' }, projectName: { type: 'string' }, level: { type: 'string', enum: ['read', 'write'] } }, ['projectId', 'level'])), lostAccess: array(object({ projectId: { type: 'string' }, projectName: { type: 'string' } }, ['projectId'])) }, ['key', 'store', 'name', 'access', 'ownerProjectId', 'source']);
+  add('get', '/api/projects/{id}/collections', {
+    tag: 'Projects',
+    id: 'listProjectCollections',
+    summary: 'The vector collections a project owns or may use',
+    description: 'Any member. `collections` are the ones the project owns and the ones shared with it (`access` owner, read or write); the owner’s admins also see `grants` and `lostAccess` (projects that named the collection before the upgrade and have no access until granted). `lost` is what this project named before the upgrade and no longer reaches; `notion` (with an active Notion link) says whether its flows may read its Notion knowledge. `?check=<name>&store=sqlite|memory` answers `{ usable, message? }` for one name instead.',
+    pathParams: { id: 'The project id' },
+    query: [
+      { name: 'check', description: 'A collection name to check (answers `{ usable, message? }`)', schema: { type: 'string' } },
+      { name: 'store', description: 'sqlite or memory, with `check`', schema: { type: 'string', enum: ['sqlite', 'memory'] } },
+    ],
+    responses: { 200: reply('The collections', object({ collections: array(collectionView), lost: array({ type: 'object', additionalProperties: true }), canManage: { type: 'boolean' }, notion: { type: 'object', additionalProperties: true, nullable: true } }, ['collections', 'lost', 'canManage'])), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/collections/{key}', {
+    tag: 'Projects',
+    id: 'changeProjectCollection',
+    summary: 'Share a collection, stop sharing it, or switch the Notion read',
+    description: 'Admins of the owning project (owners and admins of the instance too); each change is audited with from and to. Body `{ grant: { projectId | "*", level: "read" | "write" } }`, `{ revoke: projectId | "*" }` (also dismisses a lost-access notice) or `{ notionRead: boolean }` (with the project’s own Notion collection key). `key` is the collection’s key, URL-encoded (`sqlite:handbook`).',
+    pathParams: { id: 'The owning project’s id', key: 'The collection key, URL-encoded' },
+    body: jsonBody(object({ grant: object({ projectId: { type: 'string' }, level: { type: 'string', enum: ['read', 'write'] } }, ['projectId', 'level']), revoke: { type: 'string' }, notionRead: { type: 'boolean' } })),
+    responses: { 200: reply('Done', object({ ok: { type: 'boolean' } }, ['ok'])), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound },
+  });
+  add('get', '/api/settings/collections', {
+    tag: 'Settings',
+    id: 'listAllCollections',
+    summary: 'Every vector collection on the instance',
+    description: 'Owners and admins. Each claimed collection with its owner, source and grants, the report of the one-time adoption at the upgrade (`adoption`: `at`, `collections`, `lost`, `unresolved`) and the projects.',
+    responses: { 200: reply('The collections', object({ collections: array(collectionView), adoption: { type: 'object', additionalProperties: true }, projects: array({ type: 'object', additionalProperties: true }) }, ['collections'])), 403: errorRef('Not an owner or admin') },
+  });
+  add('post', '/api/settings/collections', {
+    tag: 'Settings',
+    id: 'changeAllCollections',
+    summary: 'Find owners again, or move a collection',
+    description: 'Owners and admins. `{ adopt: true }` looks for owners again (what is owned is kept) and answers `{ adoption }`; `{ transfer: { key, projectId } }` moves a collection to another project (audited).',
+    body: jsonBody(object({ adopt: { type: 'boolean' }, transfer: object({ key: { type: 'string' }, projectId: { type: 'string' } }, ['key', 'projectId']) })),
+    responses: { 200: reply('Done', object({ ok: { type: 'boolean' }, adoption: { type: 'object', additionalProperties: true } })), 400: invalid, 403: errorRef('Not an owner or admin'), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/sessions', {
+    tag: 'Agents',
+    id: 'listAgentSessions',
+    summary: 'An agent’s sessions the caller may read',
+    description: 'Newest first, paged by `cursor`. A session belongs to the project it ran in and is read only from there: members get the sessions of their projects, owners and admins all. With `executionId`, the sessions that run started, for anyone who can read the run (404 otherwise).',
+    pathParams: { id: 'The agent id' },
+    query: [
+      { name: 'limit', description: 'Page size (up to 200)', schema: { type: 'integer' } },
+      { name: 'cursor', description: 'From `nextCursor`', schema: { type: 'string' } },
+      { name: 'executionId', description: 'Only the sessions this run started (in full, oldest first)', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The sessions', object({ sessions: array({ type: 'object', additionalProperties: true }), nextCursor: { type: ['string', 'null'] } }, ['sessions'])), 404: notFound },
+  });
+  add('get', '/api/agents/{id}/memories', {
+    tag: 'Agents',
+    id: 'listAgentMemories',
+    summary: 'What an agent remembers about a person',
+    description: 'Newest first, paged by `cursor`. Anyone who can read the agent lists their own memories (`user` defaults to them); the agent’s editors name another person with `user`, and without it get `users`, the people the agent has memories of. Another person’s memories are 404 to everyone else. `forgotten=1` lists the forgotten ones. `recall` says how the next run finds the relevant memories: `meaning` when the embedding model answers, else `words`.',
+    pathParams: { id: 'The agent id' },
+    query: [
+      { name: 'user', description: 'Whose memories (default: the caller)', schema: { type: 'string' } },
+      { name: 'forgotten', description: '`1`: the forgotten memories', schema: { type: 'string', enum: ['0', '1'] } },
+      { name: 'limit', description: 'Page size (up to 100)', schema: { type: 'integer' } },
+      { name: 'cursor', description: 'From `nextCursor`', schema: { type: 'string' } },
+    ],
+    responses: { 200: reply('The memories', object({ items: array({ type: 'object', additionalProperties: true }), nextCursor: { type: 'string' }, users: array({ type: 'string' }), recall: { type: 'string', enum: ['meaning', 'words'] } }, ['items', 'recall'])), 404: notFound },
+  });
+  add('post', '/api/agents/{id}/memories/{memoryId}', {
+    tag: 'Agents',
+    id: 'changeAgentMemory',
+    summary: 'Forget or restore one memory',
+    description: '`{ action: "forget", reason }` forgets softly (the agent stops recalling it; it can be restored); `{ action: "restore" }` brings it back. A person acts on their own memories; the agent’s editors name another person with `user`. Anyone else, or a memory that is not that person’s, gets 404.',
+    pathParams: { id: 'The agent id', memoryId: 'The memory handle (m_…) the agent’s prompt and the list show' },
+    body: jsonBody(object({ action: { type: 'string', enum: ['forget', 'restore'] }, reason: { type: 'string', description: 'Required to forget (up to 500 characters)' }, user: { type: 'string', description: 'Another person (editors only)' } }, ['action'])),
+    responses: { 200: reply('The memory', object({ item: { type: 'object', additionalProperties: true } }, ['item'])), 400: invalid, 404: notFound },
+  });
+  // C11: the memory playground and the inspector's item states
+  add('post', '/api/memory/search', {
+    tag: 'Second brain',
+    id: 'searchMemoryPlayground',
+    summary: 'Try a memory search',
+    description: 'One search over an agent’s knowledge base (`source: { kind: "kb", agentId, toolId }`, edit access to the agent), a team’s notebook (`{ kind: "notebook", teamId }`, team access) or a project’s facts (`{ kind: "facts", projectId? }`, only the facts the caller may read), with `mode` (`keyword`, `meaning`, `hybrid`), `limit` (1-50), `threshold` (0-1) and an optional `rerank` (a Cohere credential the source’s project may use, or a local chat model). It changes nothing: no note is touched, no store written, no usage recorded, nothing audited. Answers each result’s score and its score after rerank, what the threshold dropped, and the time per stage; `error` says "The embedding model is unreachable" in meaning mode with the model down. A source the caller may not reach is 404; 20 searches a minute a person (429, `Retry-After`).',
+    body: jsonBody(
+      object(
+        {
+          source: { type: 'object', additionalProperties: true, description: '`{ kind: "kb", agentId, toolId }`, `{ kind: "notebook", teamId }` or `{ kind: "facts", projectId? }`' },
+          query: { type: 'string', description: '1 to 2,000 characters' },
+          mode: { type: 'string', enum: ['keyword', 'meaning', 'hybrid'] },
+          limit: { type: 'integer', description: '1-50 (default 10)' },
+          threshold: { type: 'number', description: '0-1 (default 0)' },
+          rerank: { type: 'object', additionalProperties: true, description: '`{ kind: "cohere", credentialId, model? }` or `{ kind: "llm", model }`' },
+        },
+        ['source', 'query'],
+      ),
+    ),
+    responses: {
+      200: reply('The results', object({ results: array({ type: 'object', additionalProperties: true }), dropped: { type: 'object', additionalProperties: true }, via: { type: 'string', enum: ['meaning', 'keywords'] }, timings: { type: 'object', additionalProperties: true }, error: { type: 'string' } }, ['results', 'dropped', 'via', 'timings'])),
+      400: invalid,
+      404: notFound,
+      429: { description: 'More than 20 searches in a minute', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+    },
+  });
+  add('get', '/api/memory/items', {
+    tag: 'Second brain',
+    id: 'memoryItemsState',
+    summary: 'Memories as they are now',
+    description: 'The state of memories a run was given (What it saw → Memory), by `ids` (comma separated, at most 50; 400 above): `{ id, live, version?, text?, forgottenAt?, reason?, canChange?, teamId? }`. A forgotten item (and its reason) is for people who may change it; an id the caller may not see, or that does not exist, is left out.',
+    query: [{ name: 'ids', description: 'Fact chain ids or note ids, comma separated (at most 50)', schema: { type: 'string' } }],
+    responses: { 200: reply('The states', object({ items: array({ type: 'object', additionalProperties: true }) }, ['items'])), 400: invalid },
+  });
+  add('get', '/api/agents/{id}/sessions/{sid}', {
+    tag: 'Agents',
+    id: 'getAgentSession',
+    summary: 'One agent session',
+    description: 'Only from the session’s own project (or by whoever can read the run that started it): 404 “Session not found” otherwise.',
+    pathParams: { id: 'The agent id', sid: 'The session id' },
+    responses: { 200: reply('The session', object({ session: { type: 'object', additionalProperties: true }, traceUrls: { type: 'object', additionalProperties: true }, feedback: array({ type: 'object', additionalProperties: true }) }, ['session'])), 404: notFound },
+  });
+  // PC14: a project's AI budget
+  const budgetViewDoc = object(
+    {
+      budget: { type: 'object', additionalProperties: true, description: 'projectId, monthlyUsd, warnPercent, hardStop, ownerId?, updatedAt?, updatedBy?; absent without a budget' },
+      month: { type: 'string', description: 'YYYY-MM in the instance time zone' },
+      usedUsd: { type: 'number', description: 'This month’s spend from every source' },
+      unpricedCalls: { type: 'integer', description: 'This month’s calls to models without a price: counted, never stopped' },
+      percent: { type: 'integer' },
+      paused: { type: 'boolean', description: 'A stop is open: the project’s priced calls are refused' },
+      incidents: array({ type: 'object', additionalProperties: true, description: 'id, projectId, month, kind (warn, stop), status (open, resolved, dismissed), usedUsd, budgetUsd, resolution?, resolvedBy?, createdAt, resolvedAt?' }),
+      canEdit: { type: 'boolean' },
+      canResume: { type: 'boolean' },
+      canAsk: { type: 'boolean' },
+      capId: { type: 'string', description: '`project:<id>:month:cost`, what “Ask for more” sends; present with a budget' },
+    },
+    ['month', 'usedUsd', 'unpricedCalls', 'percent', 'paused', 'incidents', 'canEdit', 'canResume', 'canAsk'],
+  );
+  add('get', '/api/projects/{id}/budget', {
+    tag: 'Projects',
+    id: 'getProjectBudget',
+    summary: 'A project’s monthly AI budget',
+    description: 'Any role in the project (owners and admins: any project); else 404. The budget, this month’s spend, the month’s incidents and what the caller may do (docs/projects-and-goals.md#ai-budget).',
+    pathParams: { id: 'The project id' },
+    responses: { 200: reply('The budget view', budgetViewDoc), 404: notFound },
+  });
+  add('put', '/api/projects/{id}/budget', {
+    tag: 'Projects',
+    id: 'setProjectBudget',
+    summary: 'Set a project’s monthly AI budget',
+    description: 'The project’s admins, owners and admins; another member gets 403. `monthlyUsd` 0 to 1,000,000 (0 removes the budget and resolves its open incidents as raised); `warnPercent` 1 to 100; `hardStop` refuses the project’s priced calls at the budget; `ownerId` is a user with a role in the project, or null. Audited as `project.budget.update`.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(object({ monthlyUsd: { type: 'number', minimum: 0, maximum: 1000000 }, warnPercent: { type: 'integer', minimum: 1, maximum: 100 }, hardStop: { type: 'boolean' }, ownerId: { type: ['string', 'null'] } }, ['monthlyUsd'])),
+    responses: { 200: reply('The new budget view', budgetViewDoc), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/budget/incidents/{incidentId}', {
+    tag: 'Projects',
+    id: 'actOnProjectBudgetIncident',
+    summary: 'Resume, raise or dismiss a project budget incident',
+    description: '`resume` an open stop (the project’s admins and the budget’s owner; priced calls go on for the month), `raise` an open stop or warning to a higher `monthlyUsd` (the project’s admins), `dismiss` an open warning (admins and the owner). 404 for an unknown incident or another project’s, 409 `Already <resolution>` for one already settled, 400 for the wrong action for its kind or a raise not above the budget, 403 when not allowed.',
+    pathParams: { id: 'The project id', incidentId: 'The incident id' },
+    body: jsonBody(object({ action: { type: 'string', enum: ['resume', 'raise', 'dismiss'] }, monthlyUsd: { type: 'number', description: 'With `raise`: the new monthly budget' } }, ['action'])),
+    responses: { 200: reply('The new budget view', budgetViewDoc), 400: invalid, 403: errorRef('Not allowed'), 404: notFound, 409: errorRef('Already settled') },
+  });
+  // PC16: a project's workspace for harness runs
+  const workspaceDoc = object({
+    repos: { type: 'object', additionalProperties: object({ defaultBranch: { type: 'string' }, setup: array({ type: 'string' }) }) },
+    worktree: { type: 'string', enum: ['per-run', 'shared'] },
+    branchTemplate: { type: 'string', description: 'Tokens {project}, {run}, {date}, {task}' },
+  }, ['repos', 'worktree', 'branchTemplate']);
+  const workspaceView = object({ workspace: workspaceDoc, repos: array({ type: 'string' }), saved: { type: 'boolean' }, canEdit: { type: 'boolean' }, setupShown: { type: 'boolean' }, updatedAt: { type: 'string' }, updatedBy: { type: 'string' } }, ['workspace', 'repos', 'saved', 'canEdit', 'setupShown']);
+  add('get', '/api/projects/{id}/workspace', { tag: 'Projects', id: 'getProjectWorkspace', summary: 'A project’s workspace for harness runs', description: 'Any role. Setup commands only for editors and admins (`setupShown`). The default when nothing is saved (`saved: false`). Repositories the project no longer lists are left out.', pathParams: { id: 'The project id' }, responses: { 200: reply('The workspace', workspaceView), 404: notFound } });
+  add('put', '/api/projects/{id}/workspace', { tag: 'Projects', id: 'putProjectWorkspace', summary: 'Save a project’s workspace', description: 'The project’s admins (and instance owners and admins). Each repository key must be one the project lists. Landflow never runs a setup command. Audited as `project.workspace.update` with what changed, never the setup text.', pathParams: { id: 'The project id' }, body: jsonBody(workspaceDoc), responses: { 200: reply('The workspace', workspaceView), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound } });
+  // PC17: goal progress
+  add('get', '/api/goals/{id}/progress', {
+    tag: 'Goals',
+    id: 'getGoalProgress',
+    summary: 'What moved a goal',
+    description: 'Finished runs of the workflows homed in the projects that serve the goal or its sub-goals, AI spend attributed to them, and work updates linked to them, in the last 7 or 30 days. Counted only from what the caller may see: a person’s private work counts for that person alone, owners and admins included. 404 for a goal the caller cannot see.',
+    pathParams: { id: 'The goal id' },
+    query: [{ name: 'window', description: 'Days counted back (default 7)', schema: { type: 'string', enum: ['7', '30'] } }],
+    responses: { 200: reply('The progress', object({ progress: array({ type: 'object', additionalProperties: true }) }, ['progress'])), 400: invalid, 404: notFound },
+  });
+  // PC19: a project's tasks (docs/projects-and-goals.md#tasks)
+  const taskRunDoc = object(
+    {
+      id: { type: 'string' },
+      taskId: { type: 'string' },
+      projectId: { type: 'string' },
+      agentId: { type: 'string' },
+      status: { type: 'string', enum: ['requested', 'approved', 'denied', 'running', 'waiting', 'done', 'failed'] },
+      reason: { type: 'string', enum: ['wake', 'manual'] },
+      requestedAt: { type: 'string' },
+      requestedBy: { type: 'string' },
+      decidedBy: { type: 'string' },
+      decidedAt: { type: 'string' },
+      sessionId: { type: 'string', description: 'The agent session of the run: /agents/<agentId>?tab=sessions&session=<sessionId>' },
+      reply: { type: 'string', description: 'The agent’s answer, at most 4000 characters' },
+      error: { type: 'string' },
+      finishedAt: { type: 'string' },
+    },
+    ['id', 'taskId', 'projectId', 'agentId', 'status', 'reason', 'requestedAt'],
+  );
+  const taskDoc = object(
+    {
+      id: { type: 'string' },
+      projectId: { type: 'string' },
+      goalId: { type: 'string' },
+      parentId: { type: 'string' },
+      title: { type: 'string' },
+      description: { type: 'string' },
+      status: { type: 'string', enum: ['todo', 'in_progress', 'blocked', 'done', 'cancelled'] },
+      priority: { type: 'string', enum: ['low', 'normal', 'high'] },
+      assignee: object({ kind: { type: 'string', enum: ['agent', 'person'] }, id: { type: 'string' } }, ['kind', 'id']),
+      assigneeName: { type: 'string' },
+      wake: object({ cron: { type: 'string', description: 'Five fields, in the instance time zone' } }, ['cron']),
+      nextWakeAt: { type: 'string' },
+      goalTitle: { type: 'string' },
+      checkedOutBy: { type: 'string' },
+      checkedOutByName: { type: 'string' },
+      createdAt: { type: 'string' },
+      updatedAt: { type: 'string' },
+      createdBy: { type: 'string' },
+      runs: array(taskRunDoc),
+      canEdit: { type: 'boolean' },
+      canRelease: { type: 'boolean' },
+    },
+    ['id', 'projectId', 'title', 'status', 'priority', 'createdAt', 'updatedAt', 'runs', 'canEdit', 'canRelease'],
+  );
+  const taskInput = object(
+    {
+      title: { type: 'string', maxLength: 200 },
+      description: { type: ['string', 'null'], maxLength: 4000 },
+      status: { type: 'string', enum: ['todo', 'in_progress', 'blocked', 'done', 'cancelled'] },
+      priority: { type: 'string', enum: ['low', 'normal', 'high'] },
+      goalId: { type: ['string', 'null'] },
+      parentId: { type: ['string', 'null'] },
+      assignee: { type: ['object', 'null'], additionalProperties: false, properties: { kind: { type: 'string', enum: ['agent', 'person'] }, id: { type: 'string' } } },
+      wake: { type: ['object', 'null'], additionalProperties: false, properties: { cron: { type: 'string' } } },
+    },
+    ['title'],
+  );
+  add('get', '/api/projects/{id}/tasks', {
+    tag: 'Projects',
+    id: 'listProjectTasks',
+    summary: 'A project’s tasks',
+    description: 'Any role in the project (404 otherwise). Ordered by status group (in progress, to do, blocked, done, cancelled), priority, then newest update. `status` filters one status; `mine=1` keeps tasks assigned to or checked out by the caller. Keyset-paged: `limit` 1 to 500 (default 100), `cursor` from `nextCursor`.',
+    pathParams: { id: 'The project id' },
+    query: [
+      { name: 'limit', description: '1 to 500, default 100', schema: { type: 'integer', minimum: 1, maximum: 500 } },
+      { name: 'cursor', description: 'The `nextCursor` of the previous page', schema: { type: 'string' } },
+      { name: 'status', description: 'Only this status', schema: { type: 'string', enum: ['todo', 'in_progress', 'blocked', 'done', 'cancelled'] } },
+      { name: 'mine', description: '`1`: assigned to or checked out by the caller', schema: { type: 'string', enum: ['1'] } },
+    ],
+    responses: { 200: reply('The tasks', object({ tasks: array(taskDoc), nextCursor: { type: 'string' }, canCreate: { type: 'boolean' } }, ['tasks', 'canCreate'])), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/tasks', {
+    tag: 'Projects',
+    id: 'createProjectTask',
+    summary: 'Create a project task',
+    description: 'The project’s editors and admins (403 for other roles). An agent assignee must be available in the project and allowed by its agent settings; a person needs a role in it; `wake` (five-field cron) only on an agent task. 400 with a plain message otherwise. Audited as `project.task.create`.',
+    pathParams: { id: 'The project id' },
+    body: jsonBody(taskInput),
+    responses: { 201: reply('The task', object({ task: taskDoc }, ['task'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound },
+  });
+  add('get', '/api/projects/{id}/tasks/{taskId}', { tag: 'Projects', id: 'getProjectTask', summary: 'One project task', description: 'Any role in the project. Its newest five runs are settled against their sessions first.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 200: reply('The task', object({ task: taskDoc }, ['task'])), 404: notFound } });
+  add('patch', '/api/projects/{id}/tasks/{taskId}', { tag: 'Projects', id: 'updateProjectTask', summary: 'Change a project task', description: 'The project’s editors and admins. Every field is optional; null clears an optional one. Changing the assignee, `wake` or status recomputes `nextWakeAt`. Audited as `project.task.update`.', pathParams: { id: 'The project id', taskId: 'The task id' }, body: jsonBody({ ...taskInput, required: [] }), responses: { 200: reply('The task', object({ task: taskDoc }, ['task'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('delete', '/api/projects/{id}/tasks/{taskId}', { tag: 'Projects', id: 'deleteProjectTask', summary: 'Delete a project task', description: 'The project’s editors and admins. Its runs go with it. Audited as `project.task.delete`.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 204: { description: 'Deleted' }, 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('post', '/api/projects/{id}/tasks/{taskId}/checkout', { tag: 'Projects', id: 'checkoutProjectTask', summary: 'Check a task out', description: 'Editors and admins. Atomic: when nobody holds the task the caller gets it (holding it already is 200); someone else holding it is 409 `task_checked_out` (“Checked out by <name>”). Audited as `project.task.checkout`.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 200: reply('The task', object({ task: taskDoc }, ['task'])), 403: errorRef('Not an editor of the project'), 404: notFound, 409: errorRef('Checked out by someone else') } });
+  add('delete', '/api/projects/{id}/tasks/{taskId}/checkout', { tag: 'Projects', id: 'releaseProjectTask', summary: 'Release a task', description: 'The one who checked it out, or a project admin (403 otherwise). Audited as `project.task.release`.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 200: reply('The task', object({ task: taskDoc }, ['task'])), 403: errorRef('Not the holder or an admin'), 404: notFound } });
+  add('post', '/api/projects/{id}/tasks/{taskId}/runs', { tag: 'Projects', id: 'askProjectTaskRun', summary: 'Ask an agent task to run now', description: 'Editors and admins. Agent tasks only (400 `Only an agent task runs`; 400 `Reopen the task first` for a done or cancelled one). Creates a `requested` run (201) or answers the run the task has open (200, `merged: true`). Nothing runs until a person approves it. Audited as `project.task.run_requested`.', pathParams: { id: 'The project id', taskId: 'The task id' }, responses: { 200: reply('The run it merged into', object({ run: taskRunDoc, merged: { type: 'boolean' } }, ['run', 'merged'])), 201: reply('The new run', object({ run: taskRunDoc, merged: { type: 'boolean' } }, ['run', 'merged'])), 400: invalid, 403: errorRef('Not an editor of the project'), 404: notFound } });
+  add('get', '/api/task-runs/{runId}', { tag: 'Projects', id: 'getProjectTaskRun', summary: 'A project task’s run', description: 'Any role in the run’s project. A running or waiting run is settled against its agent session first.', pathParams: { runId: 'The run id' }, responses: { 200: reply('The run', object({ run: taskRunDoc }, ['run'])), 404: notFound } });
+  add('post', '/api/task-runs/{runId}', { tag: 'Projects', id: 'decideProjectTaskRun', summary: 'Approve or deny a task run', description: 'Editors and admins of the run’s project, signed in (an API key or MCP client gets 403 `session_only`). Only a `requested` run is decided (409 `Already <status>`). Approve re-checks the agent (published, available in the project, allowed by its rules; 409 and the run stays requested), answers 202 and runs the agent in the background through the same runner and limits as every agent run in the project. Deny answers 200. Audited as `project.task.run_decided`.', pathParams: { runId: 'The run id' }, body: jsonBody(object({ decision: { type: 'string', enum: ['approve', 'deny'] } }, ['decision'])), responses: { 200: reply('Denied', object({ run: taskRunDoc }, ['run'])), 202: reply('Approved, starting', object({ run: taskRunDoc }, ['run'])), 403: errorRef('Not an editor of the project, or an API key'), 404: notFound, 409: errorRef('Already decided, or the agent may not run here') } });
+  // PC21: a project as a Claude Code plugin
+  add('get', '/api/projects/{id}/export', {
+    tag: 'Projects',
+    id: 'exportProjectPlugin',
+    summary: 'Export a project as a Claude Code plugin',
+    description: 'Any role in the project (owners and admins: any); none is 404 `Project not found`. The zip is `<project-slug>.zip`: `PROJECT.md` (the brief, constraints, done-when, glossary, the goals it serves and the agents), `.claude-plugin/plugin.json`, `.landflow/project.json`, and `agents/`, `skills/` and `.landflow/agents/` for the agents whose home is the project (agents only shared to it are left out). People, ids, the workspace, budget, settings, variables, credentials, repositories, tasks and sessions are never included; free text is redacted for secrets. Goals the caller cannot see are left out.',
+    pathParams: { id: 'The project id' },
+    query: exportQuery,
+    responses: { 200: zipReply, 400: invalid, 404: notFound },
+  });
   return out;
 }
 
@@ -1964,6 +3797,7 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Executions', description: 'Runs: history, run data, stop, retry and re-run' },
       { name: 'Data tables', description: 'Built-in tables workflows read and write' },
       { name: 'Settings', description: 'Instance settings: time zone, execution retention and the json-render switch' },
+      { name: 'Goals', description: 'The goal tree, the goals each project serves and the project brief (docs/projects-and-goals.md)' },
       { name: 'Variables', description: 'Instance variables (`$vars`); changing them needs an owner or admin' },
       { name: 'Templates', description: 'The templates library: start workflows from templates, save and share your own' },
       { name: 'Audit', description: 'The audit log (owners and admins; project admins their projects’ events), its hash chain and four-eyes publish requests' },
@@ -1974,6 +3808,12 @@ export function openApiDocument(origin?: string): Record<string, unknown> {
       { name: 'Runbooks', description: 'Runbook workflows made from closed Landfall war rooms, found by alert kind (docs/runbooks.md)' },
       { name: 'Agents', description: 'Agents that run elsewhere (kagent) reporting what they did back to the run that asked them (docs/a2a.md)' },
       { name: 'Agent teams', description: 'Teams of agents with standing relations: who leads, who reports to whom, who reviews (docs/agent-teams.md)' },
+      { name: 'Conversations', description: 'A person’s own chats with Spotlight, the brain and the Agent architect, and their personal preferences: session only, owner only (docs/assistant.md#conversation-history)' },
+      { name: 'Practices', description: 'Rules in the brain that connected agents follow: drafts, versions, approval by a person, waivers (docs/practices.md)' },
+      { name: 'Projects', description: 'A project’s context block for a harness, found by repository or id (docs/connect-your-harness.md#project-context)' },
+      // SP09, SP11, SP12:
+      { name: 'Access', description: 'Access requests (docs/access-requests.md): the catalog, asking, deciding, grants and their removal. Session only.' },
+      { name: 'Insights', description: 'The AI page: spend, the runs and model calls behind a number (JSON or CSV), the month-end forecast against caps and budgets, the prompt cache and the caller’s own spend (docs/llm-gateway.md, “The AI page”)' },
       { name: 'MCP', description: 'Agents and MCP (docs/transports.md): Landflow-issued MCP tokens, tool grants, the JWKS, the plugin catalog (server.json, the registry API) and protected resource metadata' },
     ],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { sessionCookie: [] }],

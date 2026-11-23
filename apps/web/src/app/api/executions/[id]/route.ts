@@ -1,3 +1,4 @@
+import { runVersions } from '@/lib/server/agents/versions'; // AG21:
 import { executionFeedback } from '@/lib/server/chat-feedback';
 import { error, handler, json } from '@/lib/server/http';
 import { cancelExecution, cancelQueuedExecution, cancelWaitingExecution, liveExecution, liveProgress } from '@/lib/server/runner';
@@ -10,7 +11,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
-  const found = liveExecution(id) ?? store.getExecution(id);
+  const found = liveExecution(id) ?? await store.loadExecution(id);
   if (!found) return error('Execution not found', 404);
   // The engine state of a waiting run stays on the server.
   const { resumeState: _state, ...execution } = found;
@@ -20,13 +21,15 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const chatFeedback = executionFeedback(id);
   // What the running nodes last reported (a remote agent's steps), for a page opened mid-run.
   const progress = execution.status === 'running' ? liveProgress(id) : {};
-  return json({ execution: { ...execution, ...(chatFeedback && { chatFeedback }) }, ...(link && { traceUrl: link }), ...(Object.keys(progress).length && { progress }) });
+  // AG21: the workflow version and the agent versions this run used.
+  const versions = runVersions(id, execution);
+  return json({ execution: { ...execution, ...(chatFeedback && { chatFeedback }), ...(versions && { versions }) }, ...(link && { traceUrl: link }), ...(Object.keys(progress).length && { progress }) });
 });
 
 /** DELETE cancels a running, waiting or queued execution, or removes a finished one from history. */
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
-  const record = liveExecution(id) ?? store.getExecution(id);
+  const record = liveExecution(id) ?? await store.loadExecution(id);
   const target = { type: 'execution', id, ...(record?.workflowName && { name: record.workflowName }) };
   const details = { workflowId: record?.workflowId, status: record?.status };
   if (liveExecution(id)) {
@@ -34,7 +37,7 @@ export const DELETE = handler(async (_request: Request, { params }: Ctx) => {
     recordAudit({ action: 'execution.stop', target, details });
     return json({ canceled });
   }
-  const status = store.getExecution(id)?.status;
+  const status = (await store.loadExecution(id))?.status;
   if (status === 'waiting' || status === 'queued') {
     const canceled = status === 'waiting' ? cancelWaitingExecution(id) : cancelQueuedExecution(id);
     recordAudit({ action: 'execution.stop', target, details });

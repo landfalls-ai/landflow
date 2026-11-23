@@ -58,6 +58,13 @@ Workflows are named by id or by exact name (case-insensitive; an ambiguous name 
 | `debug-node <execution> <node> --plugin-url <url> [--ttl 15m]` | runs ONE node of a recorded execution against a plugin served on your machine (a debug run, not stored in the execution): mints a single-use `runs:debug` token with your key, spends it at once on `POST /api/debug-node`, and prints the tagged result (exit 1 if the node errored). The host calls only hosts an owner allow-listed in the Local node override card of the Debug access dialog (Run Trace page), and only while that setting (off by default) is on; the plugin gets the recorded input and resolved parameters, never credentials. You need the right to run the workflow |
 | `debug-token --execution <id> [--ttl 1h] [--scopes executions:read,trace:read] [--label t]` | mints a short-lived read-only token (`lf_dbg_…`, shown once) bound to that one execution, for an agent that explains a failed run: it opens `explain_failure`, `get_run_trace` and `get_execution` at the host's `/api/mcp` and nothing else (every other tool and REST route refuses it), redacted of credentials and `$vars`, audited per call. Default 1 h, at most 24 h. `--list` shows the execution's tokens, `--revoke <token id>` closes one. Needs read access to the execution and the host's MCP server on |
 | `env pull [--dry-run] [--prune] [--force] [--publish file\|all\|none]` | apply this environment's branch, like `source-control pull`; `--publish` defaults to the environment's publish on pull (`file`: what the files say) |
+| `work repos add [<path>] \| remove <path> \| list` | the allow-list of working copies `landflow work` may read (kept in `work/repos.json` next to the config file); `add` records the path and its `origin`'s `owner/name` |
+| `work context [--repo owner/name] [--project <id>] [--size full\|compact]` | the project goals the repository belongs to (the "Where this work fits" block of `GET /api/projects/context`), then the other projects that list it; the repository defaults to this directory's `origin`. Reads only; with no project it says so and exits 0; `--json` prints `{ repo, projects, context }` |
+| `work collect [--since today\|yesterday\|<ISO>] [--repo <path>]…` | reads the day's commits (subjects, branches, directories touched) and, when `gh` is installed, your PRs, in the allowed repos; summarises them here without a model and holds one entry per repo per day (`work/held.json`, 0600). Nothing is sent. Collecting a day again updates its entry |
+| `work review [--send <id\|all>] [--yes] [--drop <id>] [--title <id> <text>]` | lists what is held; sends, drops or retitles entries |
+| `work send [--yes]` | sends everything held (batches of 50, private). Asks on a terminal; without one it needs `--yes`, and the host must allow tools to send work (`brain.workAutoSend`) |
+| `work status` | what was sent, with ids |
+| `work forget <sourceId>` | deletes a sent entry on the host (`DELETE /api/brain/work/:sourceId?source=landflow-cli`) and here |
 
 `landflow <command> --help` lists a command's options. Global options: `--json`, `--url`, `--api-key`, `--help`, `--version`.
 
@@ -108,6 +115,33 @@ With `--json` a command prints exactly one document on stdout, nothing on stderr
 | 9 | integrity check failed | `integrity_failed`: `audit verify` found the hash chain broken (`details` is the chain report with `brokenAt`) or `audit verify --head` found a signed head that doesn't verify (`details: { verified: false, reason }`) |
 
 `sync diff --exit-code` and `sync status --exit-code` exit 1 with `ok: true` when there are differences.
+
+### Daily work offload
+
+`landflow work` is for people who do not use Claude Code. It never reads a diff or a file: only commit subjects (redacted, clipped), branch names, the directories touched (two path levels, never a file name) and counts, plus PR links and states from `gh pr list` when `gh` is on the PATH. Entries use the source `landflow-cli` and `sourceId` `<owner>/<name>@<day>`, so a day collected again updates the same row in the brain. `--json` prints `{ ok, entries | sent | refused, … }`; an entry is `{ id, sourceId, status: held|sent|dropped, day, title, repo, branch, commits, areas, prs, heldAt, sentAt, serverId, error }`. Held entries are kept 14 days at most, 500 at most.
+
+Scheduling is yours to set up; run `collect` only, and review by hand:
+
+```bash
+# cron: every weekday at 18:00
+0 18 * * 1-5  /usr/local/bin/landflow work collect
+```
+
+```xml
+<!-- ~/Library/LaunchAgents/com.landflow.work.plist, then: launchctl load ~/Library/LaunchAgents/com.landflow.work.plist -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.landflow.work</string>
+  <key>ProgramArguments</key><array><string>/usr/local/bin/landflow</string><string>work</string><string>collect</string></array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+</dict></plist>
+```
+
+```powershell
+# Windows Task Scheduler, every day at 18:00
+schtasks /Create /SC DAILY /ST 18:00 /TN "Landflow work collect" /TR "landflow work collect"
+```
+
+Add `landflow work send --yes` to the job only if you want unattended sending and your admin allows it.
 
 ### Shapes
 

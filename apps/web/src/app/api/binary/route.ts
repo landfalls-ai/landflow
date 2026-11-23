@@ -21,11 +21,6 @@ export const POST = handler(async (request: Request) => {
   const fileName = uploadFileName(request);
   const type = request.headers.get('content-type')?.trim();
   const mimeType = type && type !== DEFAULT_MIME_TYPE ? type : mimeTypeFromFileName(fileName);
-  try {
-    const ref = await (await binaryStore()).put(claims.w, request.body, { mimeType, ...(fileName && { fileName }) }, { maxBytes });
-    return json(ref, 201);
-  } catch (caught) {
-    if (caught instanceof BinaryTooLargeError) return error(caught.message, 413);
-    throw caught;
-  }
+  const ref = await (await binaryStore()).put(claims.w, request.body, { mimeType, ...(fileName && { fileName }) }, { maxBytes });
+  return json(ref, 201);
 });

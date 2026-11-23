@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanAccess, decideByRules, mostRestrictive, type AgentAccess, type Caller } from '@/lib/shared/agent-access';
 import { applyToolPolicy, configuredEngine, openFgaEngine, opaEngine } from '@/lib/server/agents/policy';
@@ -102,7 +104,7 @@ describe('the OPA and OpenFGA adapters', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ result: { result: 'ask' } }))));
     expect((await opaEngine(request)).effect).toBe('ask');
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('http://opa.test/v1/data/landflow/tools');
+    expect(String(url)).toBe('http://opa.test/v1/data/landflow/tools');
     expect(JSON.parse(String(init.body))).toEqual({ input: request });
   });
 
@@ -113,7 +115,7 @@ describe('the OPA and OpenFGA adapters', () => {
     vi.stubGlobal('fetch', fetchMock);
     expect((await openFgaEngine({ caller: viewer, agentId: 'ag_1', tool: 'read_orders', kind: 'node' })).effect).toBe('allow');
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('http://fga.test:8080/stores/store1/check');
+    expect(String(url)).toBe('http://fga.test:8080/stores/store1/check');
     expect(JSON.parse(String(init.body))).toEqual({ tuple_key: { user: 'user:u_viewer', relation: 'can_use', object: 'tool:ag_1/read_orders' } });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ allowed: false }))));
     expect((await openFgaEngine({ caller: viewer, agentId: 'ag_1', tool: 'read_orders', kind: 'node' })).effect).toBe('deny');
@@ -131,5 +133,50 @@ describe('the OPA and OpenFGA adapters', () => {
     expect(configuredEngine()).toBe(openFgaEngine);
     vi.stubEnv('LANDFLOW_TOOL_POLICY', 'cedar');
     expect(() => configuredEngine()).toThrow(/Unknown/);
+  });
+});
+
+describe('the engine call goes through safeFetch', () => {
+  /** A local OPA that always allows; the production profile refuses its private address unless it is allowed. */
+  async function localOpa() {
+    const server = createServer((_req, res) => res.end(JSON.stringify({ result: 'allow' })));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    return { port, close: () => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }) };
+  }
+  const request = { caller: viewer, agentId: 'ag_1', tool: 'refund_order', kind: 'node' };
+
+  it('does not follow a redirect to another address (the engine URL is an operator’s, a redirect is not)', async () => {
+    const target = await localOpa();
+    const redirector = createServer((_req, res) => res.writeHead(307, { location: `http://127.0.0.1:${target.port}/` }).end());
+    await new Promise<void>((resolve) => redirector.listen(0, '127.0.0.1', resolve));
+    try {
+      vi.stubEnv('LANDFLOW_TOOL_POLICY_URL', `http://127.0.0.1:${(redirector.address() as AddressInfo).port}/v1/data/x`);
+      await expect(opaEngine(request)).rejects.toThrow(/307/);
+    } finally {
+      redirector.closeAllConnections();
+      redirector.close();
+      await target.close();
+    }
+  });
+
+  it('reaches a local engine in the production profile only when it is allowed', async () => {
+    const opa = await localOpa();
+    try {
+      vi.stubEnv('LANDFLOW_PROFILE', 'production');
+      vi.stubEnv('LANDFLOW_TOOL_POLICY_URL', `http://127.0.0.1:${opa.port}/v1/data/x`);
+      // The configured endpoint is exempt without being listed (as OLLAMA_URL is).
+      expect((await opaEngine(request)).effect).toBe('allow');
+      // Another port on the same host is not: the call fails, so the tool is denied (fail closed, as before).
+      vi.stubEnv('LANDFLOW_TOOL_POLICY_URL', `http://127.0.0.1:${opa.port + 1}/v1/data/x`);
+      await expect(opaEngine(request)).rejects.toThrow();
+      const denied = await applyToolPolicy([tool('a')], { agentId: 'ag_1', caller: admin, access: undefined, engine: opaEngine });
+      expect(denied.tools).toEqual([]);
+      vi.stubEnv('LANDFLOW_OUTBOUND_ALLOW', '127.0.0.1');
+      // Allowed now, but nothing listens on that port: still a failure, not a bypass.
+      await expect(opaEngine(request)).rejects.toThrow();
+    } finally {
+      await opa.close();
+    }
   });
 });

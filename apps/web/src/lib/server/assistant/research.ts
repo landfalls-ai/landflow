@@ -4,7 +4,7 @@
  * outline and a keyword search over the node catalog. No model calls here;
  * suggest.ts and the chat tools turn these into prompt text.
  */
-import { indexedPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import { expandPorts, indexedPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { collectionShape, type RunDigest } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, PropertyDescriptor, Workflow, WorkflowNode } from '@/lib/shared/types';
 import { registry } from '../plugins/registry';
@@ -52,12 +52,26 @@ function describeProperty(p: PropertyDescriptor, parameters?: Record<string, unk
   return `- ${parts.join(' ')}`;
 }
 
+/** SB10: the `outputSchema` of the operation these parameters select (`resource` + `operation` options), when it has one. */
+function operationSchema(d: NodeTypeInfo['descriptor'], parameters?: Record<string, unknown>): Record<string, unknown> | undefined {
+  const operation = parameters?.operation;
+  if (typeof operation !== 'string') return undefined;
+  for (const p of d.properties) {
+    if (p.name !== 'operation' || !p.options?.length) continue;
+    const resources = p.displayOptions?.show?.resource;
+    if (resources && !(resources as unknown[]).includes(parameters?.resource)) continue;
+    const schema = p.options.find((o) => o.value === operation)?.outputSchema;
+    if (schema) return schema as Record<string, unknown>;
+  }
+  return undefined;
+}
+
 /**
  * The fields of one output item, from the node's `outputSchema`: `name (type) — what it holds`, so a later node reads the
  * field the node really writes (`$json.snapshot`) rather than one it guessed. Empty when the node declares no schema.
  */
-export function outputFields(d: NodeTypeInfo['descriptor']): string {
-  const properties = (d.outputSchema as { properties?: Record<string, { type?: unknown; description?: unknown }> } | undefined)?.properties;
+export function outputFields(d: NodeTypeInfo['descriptor'], parameters?: Record<string, unknown>): string {
+  const properties = ((operationSchema(d, parameters) ?? d.outputSchema) as { properties?: Record<string, { type?: unknown; description?: unknown }> } | undefined)?.properties;
   if (!properties || typeof properties !== 'object') return '';
   return Object.entries(properties)
     .slice(0, 12)
@@ -72,14 +86,14 @@ export function nodeDocs(info: NodeTypeInfo, parameters?: Record<string, unknown
   const lines = [
     `${d.displayName} — ${info.type} [${d.kind}${d.supplies ? `, supplies ${d.supplies}` : ''}${d.usableAsTool ? ', usable as an agent tool' : ''}]`,
     `${info.pluginId === 'core' ? 'Built in' : `${info.pluginName} plugin (${info.language})`}. ${d.description}`,
-    `Inputs: ${ports(d.inputs)}. Outputs: ${ports(d.outputs)}.`,
+    `Inputs: ${ports(d.inputs)}. Outputs: ${ports(parameters ? expandPorts(d.outputs, parameters) : d.outputs)}.`,
   ];
-  const fields = outputFields(d);
+  const effective = parameters && withPropertyDefaults(d.properties, parameters);
+  const fields = outputFields(d, effective);
   if (fields) lines.push(`Each output item has: ${fields}.`);
   if (d.credentials?.length) lines.push(`Credentials: ${d.credentials.map((c) => `${c.name}${c.required ? ' (required)' : ''}`).join(', ')}.`);
   if (d.documentationUrl) lines.push(`Docs: ${d.documentationUrl}`);
   const properties = d.properties.filter((p) => p.type !== 'notice');
-  const effective = parameters && withPropertyDefaults(d.properties, parameters);
   lines.push(properties.length ? 'Parameters:' : 'No parameters.', ...properties.map((p) => describeProperty(p, effective)));
   return lines.join('\n');
 }
@@ -164,15 +178,67 @@ function describeRun(run: RunDigest): string {
   ].join('\n');
 }
 
-/** A node, its docs (with what's visible for its parameters), its neighbours and its last run. */
-export function nodeContext(workflow: Workflow, nodeId: string, run: RunDigest | undefined, types: NodeTypeInfo[] = availableTypes()): string {
+/** SB10: the node's parameters whole: each string up to 8 000 characters, the text up to 12 000, then "… (N more characters)". */
+function fullParameters(parameters: Record<string, unknown>, limit = 12000): string {
+  const cut = (value: unknown): unknown =>
+    typeof value === 'string' && value.length > 8000
+      ? `${value.slice(0, 8000)}… (${value.length - 8000} more characters)`
+      : Array.isArray(value)
+        ? value.map(cut)
+        : value && typeof value === 'object'
+          ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cut(v)]))
+          : value;
+  const text = JSON.stringify(cut(parameters));
+  return text.length > limit ? `${text.slice(0, limit)}… (${text.length - limit} more characters)` : text;
+}
+
+/** SB10: the parameter text of all the steps given whole in one prompt is capped, the selected step first. */
+export const FOCUS_PARAMETER_CHARS = 24_000;
+
+const SETTINGS = ['retryOnFail', 'maxTries', 'waitBetweenTriesMs', 'retryBackoff', 'onError', 'timeoutSeconds', 'executeOnce', 'alwaysOutputData', 'disabled'] as const;
+
+/** SB10: the node's settings that are set (else "defaults"), and each credential slot it shows: set (by name) or not set; never an id or a value. */
+function settingsAndCredentials(node: WorkflowNode, info: NodeTypeInfo | undefined): string[] {
+  const set = SETTINGS.filter((k) => node[k] !== undefined).map((k) => `${k}: ${JSON.stringify(node[k])}`);
+  const lines = [`Settings: ${set.length ? set.join(', ') : 'defaults'}`];
+  if (info?.descriptor.credentials?.length) {
+    const effective = withPropertyDefaults(info.descriptor.properties, node.parameters);
+    const slots = info.descriptor.credentials
+      .filter((c) => isPropertyVisible(c, effective))
+      .map((c) => {
+        const ref = node.credentials?.[c.name];
+        return `${c.name}: ${ref ? `set (“${ref.name}”)` : 'not set'}`;
+      });
+    if (slots.length) lines.push(`Credentials: ${slots.join(', ')}`);
+  }
+  return lines;
+}
+
+/**
+ * A node, its docs (with what's visible for its parameters), its neighbours and its last run. With `full` (SB10: the
+ * steps in scope) the parameters are given whole and the node's settings and credential state follow them.
+ */
+export function nodeContext(workflow: Workflow, nodeId: string, run: RunDigest | undefined, types: NodeTypeInfo[] = availableTypes(), options: { full?: boolean; budget?: { left: number } } = {}): string {
   const node = nodeById(workflow, nodeId);
   if (!node) return `No node with id ${nodeId}.`;
   const info = types.find((t) => t.type === node.type);
   const { upstream, downstream } = neighbours(workflow, nodeId);
+  // With a `budget` (the characters left for every step of one prompt), this step takes what it needs from it, at most 12 000,
+  // the "… (N more characters)" note counted in. A step reached after the budget is spent gets the 2 000-character summary, not an empty cut.
+  let whole: string | undefined;
+  if (options.full) {
+    const left = options.budget ? options.budget.left : 12000;
+    if (left > 0) {
+      const cap = Math.min(12000, left);
+      whole = fullParameters(node.parameters, cap);
+      if (whole.length > cap) whole = fullParameters(node.parameters, Math.max(0, cap - (whole.length - cap)));
+      if (options.budget) options.budget.left -= whole.length;
+    }
+  }
   return [
     `Node “${node.name}” (${node.type})${node.disabled ? ' [disabled]' : ''}${node.onError === 'continue' ? ' [continues on error]' : ''}`,
-    `Parameters: ${json(node.parameters, 2000)}`,
+    `Parameters: ${whole ?? json(node.parameters, 2000)}`,
+    ...(options.full ? settingsAndCredentials(node, info) : []),
     `Upstream: ${upstream.join(', ') || 'none'}. Downstream: ${downstream.join(', ') || 'none'}.`,
     run ? `Last run:\n${describeRun(run)}` : 'Not run yet.',
     info ? `\nNode type docs:\n${nodeDocs(info, node.parameters)}` : `\nNode type ${node.type} is not available (its plugin is offline or unknown).`,
@@ -197,10 +263,12 @@ export interface OutlineOptions {
   pendingSummaries?: string[];
   /** Nodes the pending proposals remove (no longer in the nodes above). */
   removed?: Array<{ name: string; type: string }>;
+  /** SB10: ids of the steps in scope: their parameters are given up to 2 000 characters (the others 300). */
+  full?: ReadonlySet<string>;
 }
 
 function summarizeNode(node: WorkflowNode, options: OutlineOptions, workflow: Workflow): string[] {
-  const parameters = json(node.parameters, 300);
+  const parameters = json(node.parameters, options.full?.has(node.id) ? 2000 : 300);
   const line = `- “${node.name}” (${node.type})${node.disabled ? ' [disabled]' : ''}${options.pending?.has(node.id) ? ' [pending: proposed, not applied yet]' : ''}: ${parameters}`;
   const outputs = options.types ? mainOutputs(node, options.types) : [];
   if (outputs.length < 2) return [line];

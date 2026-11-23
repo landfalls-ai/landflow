@@ -1,23 +1,28 @@
 /**
  * Reading the usage ledger: events, grouped reports, and the daily rollups that outlive the raw events.
  *
- * Raw events are kept USAGE_RETENTION_DAYS (default 90). `usage_daily` holds one row per day, kind, workflow, node type,
+ * Raw events are kept LANDFLOW_USAGE_RETENTION_DAYS (default 90). `usage_daily` holds one row per day, kind, workflow, node type,
  * signature and agent, recomputed from the raw events for recent days (hourly, and before a report that needs today),
  * and kept 400 days. A report over a window that starts after the raw events' cutoff reads the raw events (exact, to the
  * second); an older window reads the rollups (whole days).
  *
  * Scope: `only` lists the workflows and agents a member sees (undefined: everything, for owners and admins). Events tied
- * to neither (Spotlight asks, empty searches) are left out of a scoped report.
+ * to neither (Spotlight asks, empty searches) are left out of a scoped report. Work events someone owns follow their own
+ * rule, whatever the scope (see `scopeClause`): private ones are read by their owner alone; the daily rollups leave them out.
  */
-import { USAGE_KINDS, type UsageEvent, type UsageFilter, type UsageGroup, type UsageGroupRow, type UsageKind, type UsageReport } from '../../shared/brain';
+import { ATTR_NAME, isUsageKind, type UsageEvent, type UsageFilter, type UsageGroup, type UsageGroupRow, type UsageKind, type UsageReport } from '../../shared/brain';
+import { currentActorId } from '../auth/context';
+import { envWithAliases } from '../config';
 import { database, type Database, type SqlValue } from '../db';
+import { singleton } from '../singleton';
 import { dayOf, fromRow, type UsageRow } from './ledger';
 
 const DAY_MS = 86_400_000;
 const ROLLUP_DAYS = 400;
 
 export const rawRetentionDays = () => {
-  const n = Number(process.env.USAGE_RETENTION_DAYS);
+  // LANDFLOW_USAGE_RETENTION_DAYS; the old USAGE_RETENTION_DAYS still works.
+  const n = Number(envWithAliases('LANDFLOW_USAGE_RETENTION_DAYS'));
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 90;
 };
 
@@ -26,6 +31,22 @@ export interface UsageScope {
   agents?: Set<string>;
   /** Agent teams (the notebook's project suggestions). */
   teams?: Set<string>;
+  /** Entities as `<type>/<id>` (docs/second-brain.md#entities). */
+  entities?: Set<string>;
+  /**
+   * Whose work events these readers may see besides the shared ones (`org`): a member's scope names them (scopeForActor).
+   * Left out, the viewer is the signed-in caller of the request (owners and admins have no workflow restriction, so no
+   * scope to carry it), and outside a request nobody: only shared work.
+   */
+  viewerId?: string;
+  // (A caller that writes shared output from inside a request must pass `system: true`, or the signed-in caller's own work leaks into it.)
+  /** A reader that works for the instance, not for a person (the study, detectors, a flow): it never sees private work. */
+  system?: true;
+  /**
+   * A system reader whose output reaches one person's team only (a teammate's briefing, the overlap detector): it also
+   * reads `team` work of the people who share a project with this user. Without it a system reader sees `org` alone.
+   */
+  teamOf?: string;
 }
 
 /** An ISO time from `from`/`to` (ISO or YYYY-MM-DD), else `fallback`. */
@@ -40,8 +61,9 @@ interface Where {
   params: SqlValue[];
 }
 
-function scopeClause(scope: UsageScope | undefined, where: string[], params: SqlValue[]) {
-  if (!scope || (!scope.workflows && !scope.agents)) return;
+/** The SQL for the workflows and agents a scope covers, or undefined when it covers all of them. */
+function coverClause(scope: UsageScope | undefined, params: SqlValue[]): string | undefined {
+  if (!scope || (!scope.workflows && !scope.agents)) return undefined;
   const parts: string[] = [];
   const wf = [...(scope.workflows ?? [])];
   const ag = [...(scope.agents ?? [])];
@@ -53,10 +75,46 @@ function scopeClause(scope: UsageScope | undefined, where: string[], params: Sql
     parts.push(`(workflow_id IS NULL OR workflow_id = '') AND agent_id IN (${ag.map(() => '?').join(', ')})`);
     params.push(...ag);
   }
-  where.push(parts.length ? `(${parts.map((p) => `(${p})`).join(' OR ')})` : '1 = 0');
+  return parts.length ? `(${parts.map((p) => `(${p})`).join(' OR ')})` : '1 = 0';
 }
 
-function filterClause(filter: UsageFilter, timeColumn: 'at' | 'day', scope?: UsageScope): Where {
+/** Who a scope's reader is, for the work events they own (see UsageScope.viewerId). */
+const viewerOf = (scope: UsageScope | undefined): string | undefined => (scope?.system ? undefined : (scope?.viewerId ?? currentActorId()));
+
+/**
+ * The one visibility rule of the ledger (docs/work-and-briefings.md): a row with no owner is the platform's, seen by the
+ * workflows and agents the scope covers; a row someone owns is seen by its owner and, when shared with the whole
+ * organization (`org`), by everyone; shared with a team (`team`), by the people who share a non-personal project with
+ * its owner. Nobody else reads a private row, owners and admins included, so this holds with no scope at all.
+ */
+/** The owners whose `team` work `userId` reads: the members of every non-personal project `userId` is in. */
+// Personal projects are told apart by `projects.type`, not by their id, so the rule does not depend on how ids are made.
+const TEAMMATES_SQL = `SELECT m2.user_id FROM project_members m1 JOIN projects p ON p.id = m1.project_id JOIN project_members m2 ON m1.project_id = m2.project_id WHERE m1.user_id = ? AND p.type <> 'personal'`;
+
+export function scopeClause(scope: UsageScope | undefined, where: string[], params: SqlValue[], timeColumn: 'at' | 'day' = 'at') {
+  const inner: SqlValue[] = [];
+  const cover = coverClause(scope, inner);
+  // `usage_daily` rolls up only unowned and shared rows (rollupDays) and has no owner column.
+  if (timeColumn === 'day') {
+    if (cover) {
+      where.push(cover);
+      params.push(...inner);
+    }
+    return;
+  }
+  const viewer = viewerOf(scope);
+  // Whose team work is read: the viewer's teammates', or (a system reader reaching one team) the named user's.
+  const teamOf = viewer ?? (scope?.system ? scope.teamOf : undefined);
+  where.push(
+    `(owner_id IS NULL${cover ? ` AND ${cover}` : ''} OR (owner_id IS NOT NULL AND (visibility = 'org'${viewer ? ' OR owner_id = ?' : ''}${teamOf ? ` OR (visibility = 'team' AND owner_id IN (${TEAMMATES_SQL}))` : ''})))`,
+  );
+  params.push(...inner, ...(viewer ? [viewer] : []), ...(teamOf ? [teamOf] : []));
+}
+
+/** The filter of the usage routes: UsageFilter and, on the raw events, one project and one goal (PC05). */
+export type UsageQueryFilter = UsageFilter & { projectId?: string; goalId?: string };
+
+function filterClause(filter: UsageQueryFilter, timeColumn: 'at' | 'day', scope?: UsageScope): Where {
   const now = Date.now();
   const where: string[] = [];
   const params: SqlValue[] = [];
@@ -82,15 +140,54 @@ function filterClause(filter: UsageFilter, timeColumn: 'at' | 'day', scope?: Usa
   eq('agent_id', filter.agentId);
   eq('node_type', filter.nodeType);
   eq('signature', filter.signature);
-  scopeClause(scope, where, params);
+  // usage_daily has no project or goal column: these read the raw events.
+  if (timeColumn === 'at') {
+    eq('project_id', filter.projectId);
+    eq('goal_id', filter.goalId);
+  }
+  // Attributes live in the raw events only (usage_daily keeps none): usageReport reads those whenever they are asked for.
+  if (timeColumn === 'at') {
+    for (const [name, value] of Object.entries(filter.attrEquals ?? {})) {
+      if (!ATTR_NAME.test(name)) continue;
+      // SQLite reads a stored true/false back as 1/0, so a boolean matches either way.
+      const bool = value === 'true' ? '1' : value === 'false' ? '0' : undefined;
+      const text = `CAST(json_extract(attrs, '$.${name}') AS TEXT)`;
+      where.push(bool ? `(${text} = ? OR ${text} = ?)` : `${text} = ?`);
+      params.push(value, ...(bool ? [bool] : []));
+    }
+  }
+  scopeClause(scope, where, params, timeColumn);
   return { sql: where.join(' AND '), params };
 }
 
 /** Events matching `filter`, newest first. */
-export function listUsageEvents(filter: UsageFilter = {}, options: { limit?: number; scope?: UsageScope } = {}, db: Database = database()): UsageEvent[] {
+export function listUsageEvents(filter: UsageQueryFilter = {}, options: { limit?: number; scope?: UsageScope } = {}, db: Database = database()): UsageEvent[] {
   const { sql, params } = filterClause(filter, 'at', options.scope);
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 5_000);
   return db.all<UsageRow>(`SELECT * FROM usage_events WHERE ${sql} ORDER BY at DESC LIMIT ${limit}`, ...params).map(fromRow);
+}
+
+const AGGREGATE_COLUMNS: Record<string, string> = { cost: 'cost', tokens: 'tokens', durationMs: 'duration_ms', items: 'items' };
+
+/**
+ * One number over the raw events matching `filter` (read from `from` up to, not including, `to`): how many, or the sum or
+ * average of a column (cost, tokens, durationMs, items) or of a numeric attribute. Events without the value are left out
+ * of an average. This is what a flow detector's declared metric measures (brain/effect.ts).
+ */
+export function usageAggregate(
+  filter: UsageFilter,
+  how: { aggregate: 'count' | 'sum' | 'avg'; field?: string; scope?: UsageScope },
+  db: Database = database(),
+): number {
+  const { sql, params } = filterClause(filter, 'at', how.scope);
+  // `to` is exclusive here, so two windows that meet don't count an event twice.
+  const where = `${sql.replace('at <= ?', 'at < ?')}`;
+  if (how.aggregate === 'count') return Number(db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM usage_events WHERE ${where}`, ...params)?.n ?? 0);
+  const field = how.field ?? '';
+  const column = AGGREGATE_COLUMNS[field] ?? (ATTR_NAME.test(field) ? `CAST(json_extract(attrs, '$.${field}') AS DOUBLE PRECISION)` : undefined);
+  if (!column) return 0;
+  const fn = how.aggregate === 'sum' ? 'SUM' : 'AVG';
+  return Number(db.get<{ v: number | null }>(`SELECT ${fn}(${column}) AS v FROM usage_events WHERE ${where} AND ${column} IS NOT NULL`, ...params)?.v ?? 0);
 }
 
 const GROUP_COLUMNS: Record<UsageGroup, string> = {
@@ -101,6 +198,8 @@ const GROUP_COLUMNS: Record<UsageGroup, string> = {
   signature: 'signature',
   agent: 'agent_id',
   model: "json_extract(attrs, '$.model')",
+  // Replaced by the attribute `usageReport` was asked for (a name checked against ATTR_NAME).
+  attr: 'NULL',
 };
 
 interface GroupRow {
@@ -126,13 +225,16 @@ export function usageReport(filter: UsageFilter = {}, groupBy: UsageGroup = 'kin
   const now = Date.now();
   const from = isoOf(filter.from, now - 7 * DAY_MS);
   const to = isoOf(filter.to, now, true);
+  const attrName = groupBy === 'attr' && filter.attr && ATTR_NAME.test(filter.attr) ? filter.attr : undefined;
+  if (groupBy === 'attr' && !attrName) throw new Error('Group by an attribute needs its name: groupAttr=team');
   const raw = Date.parse(from) >= now - rawRetentionDays() * DAY_MS;
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 1_000);
   let rows: GroupRow[];
-  if (raw || groupBy === 'model') {
+  if (raw || groupBy === 'model' || attrName || Object.keys(filter.attrEquals ?? {}).length) {
     const { sql, params } = filterClause({ ...filter, from, to }, 'at', options.scope);
+    const column = attrName ? `json_extract(attrs, '$.${attrName}')` : GROUP_COLUMNS[groupBy];
     rows = db.all<GroupRow>(
-      `SELECT ${GROUP_COLUMNS[groupBy]} AS key, COUNT(*) AS count, SUM(${FAILURE_SQL}) AS failures,
+      `SELECT ${column} AS key, COUNT(*) AS count, SUM(${FAILURE_SQL}) AS failures,
         COALESCE(SUM(duration_ms), 0) AS duration_sum, COALESCE(MAX(duration_ms), 0) AS duration_max, COUNT(duration_ms) AS duration_n,
         COALESCE(SUM(items), 0) AS items, COALESCE(SUM(tokens), 0) AS tokens, COALESCE(SUM(cost), 0) AS cost
        FROM usage_events WHERE ${sql} GROUP BY key ORDER BY count DESC LIMIT ${limit}`,
@@ -194,7 +296,8 @@ export function percentile(where: string, params: SqlValue[], p = 0.95, db: Data
 // Rollups and retention
 // ---------------------------------------------------------------------------
 
-let lastRollup = 0;
+/** When rollups last ran (throttle), shared by every module graph. */
+const rollupClock = () => singleton('usage-last-rollup', () => ({ at: 0 }));
 
 /** Recompute `usage_daily` for `days` from the raw events. */
 export function rollupDays(days: string[], db: Database = database()) {
@@ -217,7 +320,7 @@ export function rollupDays(days: string[], db: Database = database()) {
       `SELECT kind, workflow_id, node_type, signature, agent_id, MAX(project_id) AS project_id, COUNT(*) AS count, SUM(${FAILURE_SQL}) AS failures,
         COALESCE(SUM(duration_ms), 0) AS duration_sum, COALESCE(MAX(duration_ms), 0) AS duration_max, COALESCE(SUM(items), 0) AS items,
         COALESCE(SUM(tokens), 0) AS tokens, COALESCE(SUM(cost), 0) AS cost
-       FROM usage_events WHERE day = ? GROUP BY kind, workflow_id, node_type, signature, agent_id`,
+       FROM usage_events WHERE day = ? AND (owner_id IS NULL OR visibility = 'org') GROUP BY kind, workflow_id, node_type, signature, agent_id`,
       day,
     );
     db.transaction(() => {
@@ -246,28 +349,29 @@ export function rollupDays(days: string[], db: Database = database()) {
 
 /** Today's and yesterday's rollups, at most once a minute. */
 export function rollupRecent(db: Database = database(), now = Date.now()) {
-  if (now - lastRollup < 60_000) return;
-  lastRollup = now;
+  const clock = rollupClock();
+  if (now - clock.at < 60_000) return;
+  clock.at = now;
   rollupDays([dayOf(now - DAY_MS), dayOf(now)], db);
 }
 
 /** Every day the raw events cover that has no rollup yet (after a backfill). */
 export function rollupMissing(db: Database = database()) {
-  const days = db.all<{ day: string }>(`SELECT DISTINCT day FROM usage_events WHERE day NOT IN (SELECT DISTINCT day FROM usage_daily)`).map((r) => r.day);
+  const days = db.all<{ day: string }>(`SELECT DISTINCT day FROM usage_events WHERE (owner_id IS NULL OR visibility = 'org') AND day NOT IN (SELECT DISTINCT day FROM usage_daily)`).map((r) => r.day);
   rollupDays(days, db);
   return days.length;
 }
 
-/** Drop raw events past USAGE_RETENTION_DAYS and rollups past 400 days. */
+/** Drop raw events past LANDFLOW_USAGE_RETENTION_DAYS and rollups past 400 days. */
 export function pruneUsage(db: Database = database(), now = Date.now()): number {
   const removed = db.deleteBefore('usage_events', 'at', new Date(now - rawRetentionDays() * DAY_MS).toISOString());
   db.deleteBefore('usage_daily', 'day', dayOf(now - ROLLUP_DAYS * DAY_MS));
   return removed;
 }
 
-/** How many raw events there are, and the oldest one's time. */
+/** How many raw events the instance ledger holds (people's own work left out), and the oldest one's time. */
 export function ledgerSize(db: Database = database()): { events: number; oldest?: string } {
-  const row = db.get<{ n: number; oldest: string | null }>('SELECT COUNT(*) AS n, MIN(at) AS oldest FROM usage_events');
+  const row = db.get<{ n: number; oldest: string | null }>('SELECT COUNT(*) AS n, MIN(at) AS oldest FROM usage_events WHERE owner_id IS NULL');
   return { events: Number(row?.n ?? 0), ...(row?.oldest && { oldest: row.oldest }) };
 }
 
@@ -277,8 +381,13 @@ export function usageFilter(url: URL): UsageFilter {
   const kinds = (param('kinds') ?? '')
     .split(',')
     .map((k) => k.trim())
-    .filter((k): k is UsageKind => (USAGE_KINDS as readonly string[]).includes(k));
+    .filter((k): k is UsageKind => isUsageKind(k));
+  // `attr.team=billing` keeps events whose attribute equals the value; `groupAttr=team` names the attribute groupBy=attr groups by.
+  const attrEquals: Record<string, string> = {};
+  for (const [key, value] of url.searchParams) if (key.startsWith('attr.') && ATTR_NAME.test(key.slice(5))) attrEquals[key.slice(5)] = value;
   return {
+    ...(Object.keys(attrEquals).length && { attrEquals }),
+    ...(param('groupAttr') && { attr: param('groupAttr') }),
     ...(kinds.length && { kinds }),
     from: param('from'),
     to: param('to'),

@@ -35,7 +35,7 @@ import { publicationChangedElsewhere } from '../publications';
 import { retries } from '../retries';
 import { abortLocalExecution, abortLocalExecutions, debugExecution, drainQueues, failExecution, localExecutions } from '../runner';
 import { scheduler } from '../scheduler';
-import { singleton } from '../singleton';
+import { resetSingleton, singleton, singletonKeys } from '../singleton';
 import { store } from '../store';
 import { prometheusText } from '../telemetry';
 import { logger } from '../telemetry/logger';
@@ -83,7 +83,14 @@ export function leaderService(name: string, start: () => unknown, stop?: () => u
   const { config } = clusterState();
   // Regular mode: exactly as before (started here and now).
   if (config.mode !== 'queue' || config.role !== 'main') {
-    start();
+    // Recorded too, so stopLeaderServices() can stop it at shutdown. A failing start never stops the boot.
+    const entry: LeaderServiceEntry = { name, start, ...(stop && { stop }), running: true };
+    services.push(entry);
+    try {
+      Promise.resolve(start()).catch((error: Error) => logger.warn(`${name} failed to start`, { error: error.message }));
+    } catch (error) {
+      logger.warn(`${name} failed to start`, { error: (error as Error).message });
+    }
     return;
   }
   const entry: LeaderServiceEntry = { name, start, ...(stop && { stop }), running: false };
@@ -127,12 +134,18 @@ export interface StartClusterOptions {
 /** Start queue mode in this process. Returns false in regular mode. Throws ClusterConfigError for setups it refuses. */
 export async function startCluster(options: StartClusterOptions = {}): Promise<boolean> {
   const state = clusterState();
-  if (options.role && options.role !== state.config.role) state.config = { ...state.config, role: options.role, instanceId: options.role === 'worker' && !state.config.stableId ? state.config.instanceId.replace(/^main-/, 'worker-') : state.config.instanceId };
+  if (options.role && options.role !== state.config.role) {
+    // The Next host passes `main`: LANDFLOW_ROLE=worker there is a misconfiguration (workers start with `pnpm worker`).
+    if (options.role === 'main') logger.warn('LANDFLOW_ROLE=worker is ignored by the Next.js host: it runs as a main (start workers with `pnpm worker`)');
+    const from = `${state.config.role}-`;
+    const instanceId = state.config.stableId || !state.config.instanceId.startsWith(from) ? state.config.instanceId : `${options.role}-${state.config.instanceId.slice(from.length)}`;
+    state.config = { ...state.config, role: options.role, instanceId };
+  }
   const { config } = state;
   for (const warning of checkClusterConfig(config)) logger.warn(warning);
   if (config.mode !== 'queue') return false;
   if (state.started) return true;
-  return singleton('cluster-start', () => start(config, options));
+  return singleton(singletonKeys.clusterStart, () => start(config, options));
 }
 
 async function start(config: ClusterConfig, options: StartClusterOptions): Promise<boolean> {
@@ -175,7 +188,7 @@ async function start(config: ClusterConfig, options: StartClusterOptions): Promi
 
   // Live events: this process's go out; mains show everyone's.
   setBusRelay((event) => {
-    if (event.channel === 'execution' || event.channel === 'agent' || event.channel === 'lock') void relay.broadcast<BusEvent>('bus', event);
+    if (event.channel === 'execution' || event.channel === 'agent' || event.channel === 'lock' || event.channel === 'harness') void relay.broadcast<BusEvent>('bus', event);
   });
   stoppers.push(() => setBusRelay(undefined));
   if (config.role === 'main') {
@@ -238,11 +251,17 @@ async function start(config: ClusterConfig, options: StartClusterOptions): Promi
 
 const redact = (url: string) => url.replace(/\/\/([^@/]*)@/, '//***@');
 
+/** Stop every leader service (queue mode: the ones running; regular mode: all that were started), newest first. */
+export async function stopLeaderServices(): Promise<void> {
+  for (const entry of [...services].reverse()) await stopService(entry);
+  services.length = 0;
+}
+
 /** Stop queue mode in this process (tests, and a worker's shutdown after its jobs are handed back). */
 export async function stopCluster(): Promise<void> {
   const state = clusterState();
   if (!state.started) return;
-  for (const entry of [...services].reverse()) await stopService(entry);
+  await stopLeaderServices();
   await state.elector?.stop().catch(() => {});
   for (const stop of state.stoppers.splice(0).reverse()) await Promise.resolve().then(stop).catch(() => {});
   await state.coordinator?.forget(state.config.instanceId).catch(() => {});
@@ -255,11 +274,7 @@ export async function stopCluster(): Promise<void> {
   state.elector = undefined;
   state.forward = undefined;
   state.draining = false;
-  singletonReset('cluster-start');
-}
-
-function singletonReset(key: string) {
-  (globalThis as unknown as { __landflow?: Map<string, unknown> }).__landflow?.delete(key);
+  resetSingleton(singletonKeys.clusterStart);
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +314,7 @@ async function onControl(message: ControlMessage) {
 // Caches
 // ---------------------------------------------------------------------------
 
-const dataTableCache = () => singleton('data-tables-sql-cache', () => new Map<string, unknown>());
+const dataTableCache = () => singleton(singletonKeys.dataTablesSqlCache, () => new Map<string, unknown>());
 
 /** Another process changed these tables: drop what this process keeps of them. */
 export function invalidateCaches(change: TablesChanged) {

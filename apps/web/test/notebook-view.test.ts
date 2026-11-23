@@ -4,7 +4,7 @@ import { sourceParts } from '../src/lib/shared/notebook-view';
 describe('where a note came from', () => {
   it('names the run, the step and the page it was read from, in that order', () => {
     expect(sourceParts({ source: { executionId: 'exec_1', spanId: 's1', step: 'Build plugin', url: 'https://docs.example.com/a/b' } })).toEqual([
-      { kind: 'run', label: 'Run Trace', href: '/runs/exec_1?tab=trace&span=s1' },
+      { kind: 'run', label: 'Run trace', href: '/runs/exec_1?tab=trace&span=s1' },
       { kind: 'step', label: 'Build plugin' },
       { kind: 'url', label: 'docs.example.com', href: 'https://docs.example.com/a/b' },
     ]);

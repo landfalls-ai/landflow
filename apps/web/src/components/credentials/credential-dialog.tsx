@@ -8,7 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, BookOpen, Check, KeyRound, PlugZap, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, Check, PlugZap, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -19,9 +19,14 @@ import { ParamForm } from '../editor/param-form';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { AppIcon } from '../ui/icon';
-import { FieldLabel, Input } from '../ui/inputs';
+import { FieldLabel, Input, SectionLabel } from '../ui/inputs';
+import { groupCredentialTypes } from './credential-groups';
+import { JWT_AUTH_CREDENTIAL, JwtAuthPresets } from './jwt-auth-presets';
 import { OAuth2Connection, OAuth2Presets } from './oauth2-connect';
 import { useCredentialStore } from './use-credentials';
+import { useDialogFocus } from '../ui/use-dialog-focus';
+import { usePhone } from '@/lib/client/use-phone';
+import { credentialUsageLine } from '@/lib/shared/credential-usage';
 
 type TestResult = { ok: boolean; message?: string; durationMs?: number };
 
@@ -33,18 +38,29 @@ function defaultsOf(info: CredentialTypeInfo) {
   return Object.fromEntries(info.descriptor.properties.filter((p) => p.default !== undefined).map((p) => [p.name, p.default]));
 }
 
+/**
+ * The fields edited since the credential was loaded or saved (a field emptied out is sent as null), or undefined when
+ * none was: a save sends only these, so saving the form unchanged changes no value and keeps the last changer.
+ */
+function editedFields(values: Record<string, unknown>, saved: Record<string, unknown>): Record<string, unknown> | undefined {
+  const edited: Record<string, unknown> = {};
+  for (const key of new Set([...Object.keys(saved), ...Object.keys(values)])) {
+    if (JSON.stringify(values[key]) === JSON.stringify(saved[key])) continue;
+    edited[key] = key in values ? values[key] : null;
+  }
+  return Object.keys(edited).length ? edited : undefined;
+}
+
 function TypePicker({ types, onPick }: { types: CredentialTypeInfo[]; onPick: (type: string) => void }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.focus(), []);
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return types
-      .filter((t) => !q || `${t.descriptor.displayName} ${t.pluginName} ${t.descriptor.description ?? ''}`.toLowerCase().includes(q))
-      .sort((a, b) => a.descriptor.displayName.localeCompare(b.descriptor.displayName));
-  }, [types, query]);
+  const groups = useMemo(() => groupCredentialTypes(types, query), [types, query]);
+  // The arrow keys walk the rows in the order they are drawn, across groups.
+  const flat = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
   useEffect(() => setActive(0), [query]);
+  let index = -1;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -55,9 +71,9 @@ function TypePicker({ types, onPick }: { types: CredentialTypeInfo[]; onPick: (t
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') setActive((i) => Math.min(shown.length - 1, i + 1));
+            if (e.key === 'ArrowDown') setActive((i) => Math.min(flat.length - 1, i + 1));
             else if (e.key === 'ArrowUp') setActive((i) => Math.max(0, i - 1));
-            else if (e.key === 'Enter' && shown[active]) onPick(shown[active].type);
+            else if (e.key === 'Enter' && flat[active]) onPick(flat[active].info.type);
             else return;
             e.preventDefault();
           }}
@@ -66,24 +82,30 @@ function TypePicker({ types, onPick }: { types: CredentialTypeInfo[]; onPick: (t
         />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {shown.map((info, index) => (
-          <button
-            key={info.type}
-            onClick={() => onPick(info.type)}
-            onMouseEnter={() => setActive(index)}
-            style={{ animationDelay: `${Math.min(index, 12) * 18}ms` }}
-            className={cn('flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors animate-fade-up', index === active && 'bg-acdim')}
-          >
-            <CredentialTypeIcon info={info} />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-semibold text-t1">{info.descriptor.displayName}</span>
-              <span className="block truncate text-[12px] text-t3">{info.descriptor.description ?? `Used by ${info.nodeTypes.length} node${info.nodeTypes.length === 1 ? '' : 's'}`}</span>
-            </span>
-            <span className="shrink-0 text-[11px] text-t3">{info.pluginName}</span>
-            {!info.available && <Badge tone="warning">offline</Badge>}
-          </button>
+        {groups.map((group) => (
+          <section key={group.app} aria-label={group.app} className="mb-2">
+            <SectionLabel className="px-2.5 pb-1 pt-2">{group.app}</SectionLabel>
+            {group.rows.map(({ info, label }) => {
+              const i = ++index;
+              return (
+                <button
+                  key={info.type}
+                  onClick={() => onPick(info.type)}
+                  onMouseEnter={() => setActive(i)}
+                  className={cn('flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors', i === active && 'bg-acdim')}
+                >
+                  <CredentialTypeIcon info={info} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-semibold text-t1">{label}</span>
+                    <span className="block truncate text-[12px] text-t3">{info.descriptor.description ?? `Used by ${info.nodeTypes.length} node${info.nodeTypes.length === 1 ? '' : 's'}`}</span>
+                  </span>
+                  {!info.available && <Badge tone="warning">offline</Badge>}
+                </button>
+              );
+            })}
+          </section>
         ))}
-        {!shown.length && (
+        {!flat.length && (
           <p className="px-3 py-10 text-center text-[13px] text-t3">
             {types.length ? 'No credential type matches.' : 'No plugin publishes a credential type yet. Start an integration plugin and it shows up here.'}
           </p>
@@ -99,11 +121,20 @@ export function CredentialDialog({
   onClose,
   onSaved,
   projectId,
+  initialName,
+  note,
+  overSheet,
 }: {
+  /** Draw above a bottom sheet (z-[60]), as the Spotlight card does; the default stays z-50 so the expression menu (z-[60]) shows over it. */
+  overSheet?: boolean;
   /** Edit this credential; otherwise create one. */
   credentialId?: string;
   /** Create it in this project (default: the viewer's personal project). */
   projectId?: string;
+  /** The name a new credential starts with (the combobox's "Create “Billing API”"). */
+  initialName?: string;
+  /** A line under the header: where the credential will live, when that matters to the caller. */
+  note?: string;
   /** Restrict the type picker (a node's requirement); one type skips the picker. */
   allowedTypes?: string[];
   onClose: () => void;
@@ -111,9 +142,15 @@ export function CredentialDialog({
 }) {
   const types = useCredentialStore((s) => s.types) ?? [];
   const [type, setType] = useState<string | undefined>(allowedTypes?.length === 1 ? allowedTypes[0] : undefined);
+  const panel = useRef<HTMLDivElement>(null);
+  const phone = usePhone();
+  // A phone: a bottom sheet that keeps the focus inside (docs/mobile.md#sheets-and-dialogs).
+  useDialogFocus(panel, phone);
   const [existing, setExisting] = useState<CredentialDetail>();
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName ?? '');
   const [values, setValues] = useState<Record<string, unknown>>({});
+  // The fields as the server last sent them: what a save compares the form with.
+  const [savedValues, setSavedValues] = useState<Record<string, unknown>>({});
   const [test, setTest] = useState<TestResult | 'running'>();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
@@ -131,6 +168,7 @@ export function CredentialDialog({
         setType(credential.type);
         setName(credential.name);
         setValues(credential.data);
+        setSavedValues(credential.data);
         setRateCalls(credential.rateLimit ? String(credential.rateLimit.limit) : '');
         setRateSeconds(credential.rateLimit ? String(credential.rateLimit.intervalSeconds) : '60');
       })
@@ -194,9 +232,12 @@ export function CredentialDialog({
     }
     const rateLimit = rateCalls.trim() ? { limit: calls, intervalSeconds: seconds } : null;
     try {
+      const edited = existing ? editedFields(values, savedValues) : undefined;
       const { credential } = existing
-        ? await api<{ credential: CredentialDetail }>(`/api/credentials/${existing.id}`, { method: 'PATCH', json: { name, data: values, rateLimit } })
+        ? await api<{ credential: CredentialDetail }>(`/api/credentials/${existing.id}`, { method: 'PATCH', json: { name, ...(edited && { data: edited }), rateLimit } })
         : await api<{ credential: CredentialDetail }>(`/api/credentials${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`, { method: 'POST', json: { name, type, data: values, ...(rateLimit && { rateLimit }) } });
+      setSavedValues(credential.data);
+      if (existing) setExisting(credential);
       await useCredentialStore.getState().refresh();
       return credential;
     } catch (e) {
@@ -239,12 +280,14 @@ export function CredentialDialog({
 
   const picking = !type && !credentialId;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6 animate-in" onMouseDown={onClose}>
+    <div className={`fixed inset-0 ${overSheet ? 'z-[70]' : 'z-50'} flex items-center justify-center bg-overlay p-6 animate-in max-md:items-end max-md:p-0`} onMouseDown={onClose}>
       <div
+        ref={panel}
         role="dialog"
+        aria-modal={phone || undefined}
         aria-label={existing ? `Edit ${existing.name}` : 'New credential'}
         onMouseDown={(e) => e.stopPropagation()}
-        className="flex max-h-[min(720px,90vh)] w-[560px] flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop animate-panel"
+        className="flex max-h-[min(720px,90vh)] w-[560px] flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop animate-panel max-md:w-full max-md:!max-w-none max-md:max-h-[92dvh] max-md:rounded-b-none max-md:pb-[env(safe-area-inset-bottom)]"
       >
         <header className="flex items-center gap-3 border-b border-hair px-5 py-3.5">
           {!picking && !credentialId && (!allowedTypes || allowedTypes.length > 1) && (
@@ -264,10 +307,11 @@ export function CredentialDialog({
               <BookOpen className="size-3.5" /> Docs
             </a>
           )}
-          <Button size="icon-sm" variant="ghost" onClick={onClose} aria-label="Close">
+          <Button size="icon-sm" variant="ghost" onClick={onClose} aria-label="Close" className="max-md:size-11">
             <X className="size-4" />
           </Button>
         </header>
+        {note && <p className="border-b border-hair bg-wl px-5 py-2 text-[12px] text-t2">{note}</p>}
 
         {picking ? (
           <TypePicker types={pickable} onPick={setType} />
@@ -277,10 +321,12 @@ export function CredentialDialog({
               <div>
                 <FieldLabel>Credential name</FieldLabel>
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="My account" />
+                {existing && <p className="mt-1 text-[12px] text-t3">{existing.updatedByName ? `Last changed by ${existing.updatedByName}` : 'Last changed by: not recorded'}</p>}
               </div>
               {info ? (
                 <>
                   {info.type === OAUTH2_CREDENTIAL && <OAuth2Presets values={values} onChange={setValues} />}
+                  {info.type === JWT_AUTH_CREDENTIAL && <JwtAuthPresets values={values} onChange={setValues} />}
                   <ParamForm nodeType="" properties={properties} values={values} onChange={setValues} expressionScope="credential" />
                   {info.oauth2 && <OAuth2Connection credential={existing} grantType={String(values.grantType ?? 'pkce')} ensureSaved={ensureSaved} onChange={setExisting} />}
                 </>
@@ -320,7 +366,7 @@ export function CredentialDialog({
               {existing &&
                 (confirmDelete ? (
                   <div role="alertdialog" aria-label="Delete this credential?" className="flex items-center gap-2 animate-fade-up">
-                    <span className="text-[12px] text-t2">{existing.usedBy.length ? `Used by ${existing.usedBy.length} workflow(s). Delete?` : 'Delete?'}</span>
+                    <span className="text-[12px] text-t2">{existing.usedBy.length || existing.usedByAgents?.length ? `${credentialUsageLine(existing.usedBy, existing.usedByAgents)}. Delete?` : 'Delete?'}</span>
                     <Button size="sm" variant="danger" onClick={remove}>
                       <Trash2 className="size-3" /> Delete
                     </Button>
@@ -339,8 +385,11 @@ export function CredentialDialog({
                     <PlugZap className="size-3.5" /> Test connection
                   </Button>
                 )}
+                <Button variant="ghost" onClick={onClose}>
+                  Cancel
+                </Button>
                 <Button variant="primary" onClick={save} loading={saving} disabled={!info}>
-                  <KeyRound className="size-3.5" /> {existing ? 'Save' : 'Create'}
+                  {existing ? 'Save' : 'Create'}
                 </Button>
               </div>
             </footer>

@@ -31,8 +31,8 @@ describe('analystChart', () => {
     ]);
     expect(chart).toMatchObject({ budget: 2.5, scope: { name: 'Tech Review Workflow', workflowId: 'wf_1' } });
     expect(chartHeading(chart!)).toBe('This week · Tech Review Workflow');
-    expect(runsHref(chart)).toBe('/executions?workflowId=wf_1');
-    expect(runsHref()).toBe('/executions');
+    expect(runsHref(chart)).toBe('/runs?workflowId=wf_1');
+    expect(runsHref()).toBe('/runs');
   });
   it('has no chart when only facts, suggestions or workflow knowledge came back', () => {
     expect(analystChart([{ tool: 'search_facts', output: { facts: [{ id: 'f', text: 'x' }] } }])).toBeUndefined();

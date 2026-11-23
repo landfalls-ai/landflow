@@ -1,11 +1,13 @@
 /**
  * A small HTTP load balancer for the queue-mode stack (deploy/compose.queue.yml): requests go round robin to the mains
  * in LB_UPSTREAMS; a main that can't be reached is skipped for a few seconds and the request goes to the next one, so
- * webhooks keep working while a main restarts. A browser sticks to the main it first reached (cookie `landflow_main`)
- * while that main is up: debug sessions and sign-in redirects live in one main. Streams responses (the editor's SSE).
+ * webhooks keep working while a main restarts. Every 2 s it also asks each main's /api/health/ready: a main that is
+ * draining for shutdown (or not ready) is skipped the same way, before its port closes, instead of answering 503s.
+ * A browser sticks to the main it first reached (cookie `landflow_main`) while that main is up: debug sessions and
+ * sign-in redirects live in one main. Streams responses (the editor's SSE).
  *
  * For the local stack only: in production put your own load balancer in front of the mains (nginx, HAProxy, a cloud
- * load balancer) with health checks on /api/health and sticky sessions.
+ * load balancer) with health checks on /api/health/ready and sticky sessions.
  *
  *   LB_UPSTREAMS=main-1:3000,main-2:3000 LB_PORT=3000 node lb.mjs
  */
@@ -82,6 +84,17 @@ function forward(upstream, req, res, body, sticky) {
     proxied.end(body);
   });
 }
+
+/** Mark `upstream` down while its readiness probe says no (a connection error is left to forward(), which retries). */
+function checkReady(upstream) {
+  const probe = http.get({ host: upstream.host, port: upstream.port, path: '/api/health/ready', timeout: 1_500 }, (answer) => {
+    answer.resume();
+    if (answer.statusCode !== 200) upstream.downUntil = Date.now() + DOWN_MS;
+  });
+  probe.on('timeout', () => probe.destroy());
+  probe.on('error', () => {});
+}
+setInterval(() => upstreams.forEach(checkReady), 2_000).unref();
 
 const server = http.createServer(async (req, res) => {
   if (req.url === '/lb/health') {

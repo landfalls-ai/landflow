@@ -211,6 +211,8 @@ describe('Connect: authorization code with PKCE', () => {
     expect(exchange.basic).toEqual({ id: 'client-1', secret: 'secret-1' });
     const status = credentials.list().find((c) => c.id === credential.id)!.oauth2!;
     expect(status).toMatchObject({ grantType: 'pkce', connected: true, account: 'alice@example.test', expired: false, refreshable: true, scope: 'openid email' });
+    // The person who started Connect (carried in the signed state: the callback is public) last changed it.
+    expect(credentials.lastChangedBy(credential.id)).toBe('usr_test_owner');
     expect(Date.parse(status.expiresAt!)).toBeGreaterThan(Date.now() + 3_500_000);
   });
 
@@ -505,7 +507,8 @@ describe('types that extend oAuth2Api', () => {
     let record = await run(workflow);
     expect(record.status).toBe('success');
     const received = record.runData.Who[0].outputs[0][0].json.received as JsonObject;
-    expect(received).toMatchObject({ accessToken: token(credential.id).access_token, region: 'eu', clientId: 'client-1', scope: 'acme.read' });
+    // The node was handed the token, so the host scrubs it from what the node returns (secrets/redact).
+    expect(received).toMatchObject({ accessToken: '[redacted]', region: 'eu', clientId: 'client-1', scope: 'acme.read' });
     expect(received).not.toHaveProperty('oauthAccount');
     expect(JSON.stringify(received)).not.toContain(oauth2.tokenField(token(credential.id), 'refresh_token'));
     // A plugin node's 401 is retried after a refresh too.
@@ -567,11 +570,11 @@ describe('OAuth2 helpers', () => {
 
   it('seals other secrets with the vault key', () => {
     const sealed = credentials.sealSecret('https://hooks.slack.test/T000/B000/xyz');
-    expect(sealed).toMatch(/^v1\./);
+    expect(sealed).toMatch(/^v2\.k0\./);
     expect(sealed).not.toContain('hooks.slack');
     expect(credentials.openSecret(sealed)).toBe('https://hooks.slack.test/T000/B000/xyz');
-    const [v, iv, tag, value] = sealed.split('.');
+    const [v, kid, iv, tag, value] = sealed.split('.');
     // A changed first character always alters the ciphertext, so GCM's tag check fails.
-    expect(() => credentials.openSecret([v, iv, tag, `${value[0] === 'A' ? 'B' : 'A'}${value.slice(1)}`].join('.'))).toThrow(CredentialError);
+    expect(() => credentials.openSecret([v, kid, iv, tag, `${value[0] === 'A' ? 'B' : 'A'}${value.slice(1)}`].join('.'))).toThrow(CredentialError);
   });
 });

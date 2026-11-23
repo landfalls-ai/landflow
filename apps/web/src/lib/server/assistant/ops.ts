@@ -7,6 +7,7 @@ import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { agentWiringWarnings, applyOps, collectionWarnings, credentialWarnings, parseOps, referenceParameters, serviceCredentialWarnings, structuralWarnings, unknownReferenceWarnings, swallowWarnings, wiringWarnings, type AssistantOp, type DescriptorLookup } from '@/lib/shared/assistant-ops';
 import type { NodeTypeInfo, Workflow } from '@/lib/shared/types';
 import { newCompositeErrors, serverCompositeLookup } from '../composites';
+import { authHeaderProblems } from './change-checks'; // SB09:
 import { availableTypes, mainOutputs } from './research';
 
 export function registryLookup(types: NodeTypeInfo[] = availableTypes()): DescriptorLookup {
@@ -48,6 +49,7 @@ export function validateOps(workflow: Workflow, raw: unknown, lookup: Descriptor
     cautions: [
       ...wiring.purpose,
       ...swallowWarnings(result.applied),
+      ...authHeaderProblems(result.applied, workflow, result.workflow, {}, 'credential'), // SB09: a credential and a hand-written Authorization header
       ...credentialWarnings(workflow, result.workflow, lookup, (c, parameters, d) => isPropertyVisible(c, withPropertyDefaults(d.properties, parameters))),
       ...serviceCredentialWarnings(workflow, result.workflow),
     ],
@@ -168,4 +170,18 @@ export function withoutRepeatedAdds(workflow: Workflow, waiting: ReadonlySet<str
     ops.push(op);
   }
   return { ops, repeated };
+}
+
+/** SB14: what one node's parameters get wrong against its descriptor (an option value the list lacks, a collection in the wrong shape, an unknown key). Pure. */
+export function validateNodeParameters(type: string, parameters: Record<string, unknown>, lookup: DescriptorLookup = registryLookup(), name: string = type): string[] {
+  const empty: Workflow = { id: 'check', name: 'Check', nodes: [], connections: [] };
+  const node = { id: 'n', name, type, typeVersion: 1, position: [0, 0] as [number, number], parameters };
+  // Only the properties these parameters show: a node with one `operation` per resource must not be judged by another resource's list.
+  const shown: DescriptorLookup = (t) => {
+    const descriptor = lookup(t);
+    if (!descriptor || t !== type) return descriptor;
+    const effective = withPropertyDefaults(descriptor.properties, parameters);
+    return { ...descriptor, properties: descriptor.properties.filter((p) => isPropertyVisible(p, effective)) };
+  };
+  return collectionWarnings(empty, { ...empty, nodes: [node] }, shown);
 }

@@ -2,12 +2,12 @@
  * On Usage Event (core.usageTrigger, nodes/usage.ts): published workflows that start from it run when the ledger records
  * a matching event. Events are batched per trigger (its *Batch Seconds*, default 10) into one run, one item per event.
  *
- * Loops can't form: events from workflows that start from On Usage Event themselves never fire it. A trigger sees the
+ * Loops can't form: events from workflows that start from On Usage Event themselves never fire it, whether they are about that workflow or written by it (Record Event's `recordedBy`). A trigger sees the
  * events its workflow's creator could see (./scope.ts). Each process fires for the events it recorded.
  */
 import type { Workflow, WorkflowNode } from '@landflow/engine';
 import type { NodeItem } from '@landflow/sdk';
-import type { UsageEvent, UsageKind } from '../../shared/brain';
+import { attrsMatch, detectorFilter, parseAttrEquals, type UsageEvent, type UsageKind } from '../../shared/brain';
 import { workflowForCall } from '../publish';
 import { runWorkflow } from '../runner';
 import { singleton } from '../singleton';
@@ -57,9 +57,10 @@ const asList = (value: unknown): string[] => (Array.isArray(value) ? value.map(S
 export function matches(event: UsageEvent, parameters: Record<string, unknown>): boolean {
   const kinds = asList(parameters.kinds) as UsageKind[];
   if (kinds.length && !kinds.includes(event.kind)) return false;
+  if (!attrsMatch(event.attrs, parseAttrEquals(parameters.attrEquals))) return false;
   const workflowId = typeof parameters.workflowId === 'string' ? parameters.workflowId.trim() : '';
   if (workflowId && event.workflowId !== workflowId) return false;
-  const detector = typeof parameters.detector === 'string' ? parameters.detector.trim() : '';
+  const detector = detectorFilter(parameters.detector);
   if (detector && event.kind === 'proposal.applied' && event.attrs?.detector !== detector) return false;
   const minCost = Number(parameters.minCost ?? 0);
   if (minCost > 0 && (event.cost ?? 0) < minCost) return false;
@@ -102,6 +103,9 @@ function flush(key: string, entry: Armed) {
 export function dispatchUsage(event: UsageEvent) {
   // No loops: what a usage-triggered workflow does never triggers one.
   if (event.workflowId && hasTrigger(store.getWorkflow(event.workflowId))) return;
+  // Record Event notes which workflow wrote the event: one that starts from On Usage Event can't start another through it either.
+  const recordedBy = typeof event.attrs?.recordedBy === 'string' ? event.attrs.recordedBy : undefined;
+  if (recordedBy && hasTrigger(store.getWorkflow(recordedBy))) return;
   const s = state();
   for (const entry of armed()) {
     if (!matches(event, entry.node.parameters ?? {})) continue;

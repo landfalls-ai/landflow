@@ -6,7 +6,15 @@
  */
 import { defineNode, NodeOperationError, type IExecuteContext, type JsonObject, type NodeItem, type StreamChunk } from '@landflow/sdk';
 import type { AgentMemory, AgentTool, LanguageModel } from '@landflow/engine';
-import type { AgentStreamEvent } from '../../shared/agents';
+import { isEditorRun, PIN_PARAM, runSource } from '../../shared/agent-versions'; // AG17: AG21:
+import { approvalSubject, type Agent, type AgentSession, type AgentStreamEvent } from '../../shared/agents';
+import { agentAllowedBy } from '../../shared/project-policy';
+// AG10: the chat approval (the AI Agent node's own wait, reused).
+import { approvalSettings, askForApproval, decisionsOf, toolTargets } from './ai';
+import { inboxMode, maskParams, REFUSE_WHY, refusedResult, settledLine, type InboxOpen } from '../../shared/approval-inbox'; // AP02:
+import { inboxPort } from '../approval-inbox/port'; // AP02:
+import { redactValue } from '../secrets/redact'; // AP02:
+import { runGraph, triggerRefusal } from './inbox-run'; // C13: moved so the AI Judge shares them
 
 const main = [{ type: 'main' as const }];
 
@@ -159,7 +167,7 @@ export const messageAgentNode = defineNode({
         required: true,
         noDataExpression: true,
         typeOptions: { loadOptionsMethod: 'agents' },
-        description: 'Runs the agent’s published version',
+        description: 'Production runs the agent version the workflow was published with; the editor tests the agent’s draft',
       },
       { name: 'message', displayName: 'Message', type: 'string', default: '{{ $json.chatInput ?? $json.text }}', required: true, typeOptions: { rows: 3 } },
       {
@@ -187,10 +195,24 @@ export const messageAgentNode = defineNode({
         typeOptions: { minValue: 0, maxValue: 10 },
         description: 'When the agent’s tools return images (a screenshot), only this many of the newest go back to the model on each turn; older ones are dropped and their text kept',
       },
+      // AG10: a tool that needs approval can wait for the person in the editor's chat.
+      {
+        name: 'toolApprovals',
+        displayName: 'Tool Approvals',
+        type: 'options',
+        // AP02: new steps ask; a saved step without the value keeps refusing (read from the run's workflow at run time, below).
+        default: 'askInChat',
+        noDataExpression: true,
+        options: [
+          { name: 'Ask (the editor’s chat; Needs you when nobody watches)', value: 'askInChat', description: 'A tool that needs approval waits for a person: in the editor’s chat when you run it there, in Needs you when a webhook, schedule or app trigger runs it (the request expires and is then refused)' },
+          { name: 'Refuse', value: 'refuse', description: 'Tools that need approval are refused, as before' },
+        ],
+      },
       {
         name: 'notice',
         displayName:
-          'Connect a chat model to use it instead of the agent’s own, tools (a vector store in Retrieve Documents (As Tool) mode is a knowledge base) to add to its capabilities for this run, and a memory to keep the conversation in. Tools that require approval are refused in workflow runs (nobody is there to approve them).',
+          // AG17:
+          'Runs the agent: its model, memory, tools and knowledge are the bubbles under this node. A model, memory or tool wired here is moved into the agent’s draft when the flow is opened (or at the host’s start); what can’t move stays and runs in this flow only. Tools that require approval are refused in workflow runs (nobody is there to approve them), unless Tool Approvals asks in the editor’s chat and you run the flow from its Chat (then the run waits for your Approve; with a model or tools still wired here it refuses). A run nobody watches (a webhook, a schedule, an app trigger) with Tool Approvals on Ask waits in Needs you for a person to approve or deny each call (and the call is refused if nobody does in time), while a step set to Refuse, a flow with a model or tools wired here, an MCP call or the hosted chat refuses it; Spotlight’s fix sessions approve their own test runs. Runs in the editor use the agent’s draft, which already holds what moved; a published workflow runs the agent’s published version, so what moved keeps running here until you publish the agent.',
         type: 'notice',
       },
     ],
@@ -199,19 +221,51 @@ export const messageAgentNode = defineNode({
     // Loaded lazily: the agents runtime imports the runner, which needs the registry this plugin is part of.
     const { agentStore } = await import('../agents/store');
     const { newSession, runAgent } = await import('../agents/runtime');
+    const { agentVersionConfig, agentVersionExists, fallbackPin, recordRunAgent } = await import('../agents/versions'); // AG21:
+    const { configOf } = await import('../agents/store');
     const connection = ctx.getInputConnectionData;
     const [model] = connection ? await connection<LanguageModel>('ai_languageModel') : [];
     const [memory] = connection ? await connection<AgentMemory>('ai_memory') : [];
     const tools = connection ? await connection<AgentTool>('ai_tool') : [];
+    // AG14: what each wired tool reaches (its sub-node's credential and host), for the via line.
+    const flowTargets = await toolTargets(ctx, tools);
+    // AG17: what the flow's own wiring moved into the agent's draft and the config this run uses does not have yet (production copies are pinned and never overlaid).
+    const moved = async (agent: Agent) => {
+      const { pendingFor } = await import('../agents/flow-moves');
+      const { configOf } = await import('../agents/store');
+      const node = ctx.getNode();
+      const wired = new Set<string>(tools.flatMap((t) => (t.nodeId ? [t.nodeId] : [])));
+      if (model) wired.add('$model');
+      return pendingFor(ctx.getWorkflowId() ?? '', node.id, agent, { pinned: ctx.getNodeParameter<string | undefined>(PIN_PARAM, 0, undefined), wired, config: configOf(agent.published?.config ?? agent) });
+    };
     const send = ctx.sendChunk;
     const items = ctx.getInputData();
-    const out: NodeItem[] = [];
-    for (let i = 0; i < Math.max(items.length, 1); i++) {
+    // AG10: back from a wait for the person's Approve in the editor's chat (WaitRequest.rerun): the items done, and the session to go on with.
+    const saved = ctx.getNodeState?.() as { waiting?: { kind: 'approval'; itemIndex: number; sessionId: string; agentId: string; out: NodeItem[]; inbox?: { ids: Record<string, string>; expiresAt: string; minutes: number } /* AP02: */ }; $resume?: { kind: string; data?: JsonObject } } | undefined;
+    ctx.setNodeState?.(undefined);
+    const waited = saved?.waiting && saved.$resume ? saved.waiting : undefined;
+    const out: NodeItem[] = waited ? [...waited.out] : [];
+    const savedWithoutApprovals = await savedWithout(ctx, ctx.getNode().id, 'toolApprovals'); // AP02: once per run, not per item
+    // Wave ap1: a run the hosted chat or an MCP trigger started (or one of theirs called) refuses whatever the execution mode says, as the publish line says.
+    const triggerWhy = isEditorRun(ctx.getMode(), Boolean(ctx.putExecutionToWait)) ? undefined : await triggerRefusal(ctx.getExecutionId());
+    for (let i = waited?.itemIndex ?? 0; i < Math.max(items.length, 1); i++) {
       try {
         const agentId = ctx.getNodeParameter<string>('agentId', i);
         const agent = agentStore.get(agentId);
+        // AG21: which agent version this run uses: the pin of the published workflow version, the agent's draft in the editor, else the published one.
+        const node = ctx.getNode();
+        const editor = isEditorRun(ctx.getMode(), Boolean(ctx.putExecutionToWait));
+        const pinParam = ctx.getNodeParameter<unknown>(PIN_PARAM, i, undefined);
+        const pin = typeof pinParam === 'number' ? pinParam : editor ? undefined : fallbackPin(ctx.getExecutionId(), node.id, agentId);
+        const source = runSource(pin, editor);
+        if (source === 'pinned' && (!agent || !agentVersionExists(agentId, pin!)))
+          throw new NodeOperationError(`“${agent?.name ?? node.name ?? agentId}” v${pin}, which this version of the workflow runs, no longer exists: publish the workflow again`, { itemIndex: i });
         if (!agent) throw new NodeOperationError('Choose an agent — the selected one was deleted', { itemIndex: i });
-        if (!agent.published) throw new NodeOperationError(`Publish “${agent.name}” first`, { description: 'Workflows run the published version of an agent.', itemIndex: i });
+        if (source === 'published' && !agent.published) throw new NodeOperationError(`Publish “${agent.name}” first`, { description: 'Workflows run the published version of an agent.', itemIndex: i });
+        const runVersion: 'draft' | number = source === 'pinned' ? pin! : source === 'draft' ? 'draft' : agent.published!.version;
+        // Re-review: recorded before the input is checked, so a run that fails ("The message is empty") still carries its “workflow vN · agent vM” label.
+        recordRunAgent(ctx.getExecutionId(), { nodeId: node.id, agentId: agent.id, version: runVersion, source }); // AG21: both versions of a run
+        const runConfig = source === 'draft' ? configOf(agent) : source === 'pinned' ? agentVersionConfig(agentId, pin!)! : agent.published!.config;
         // A message that comes out empty ($fromAI with no argument, as when a roster pick starts the run here) falls back to the chat input.
         const chatInput = items[i]?.json?.chatInput;
         const message = (String(ctx.getNodeParameter('message', i) ?? '').trim() || (typeof chatInput === 'string' ? chatInput.trim() : '')).trim();
@@ -219,44 +273,122 @@ export const messageAgentNode = defineNode({
         const key = ctx.getNodeParameter<string>('conversation', i) === 'key' ? String(ctx.getNodeParameter('sessionKey', i) ?? '').trim() : '';
         const userId = `workflow:${ctx.getWorkflowId() ?? 'unknown'}`;
         // Links the session to this run and node, so the execution view can show the agent working.
-        const node = ctx.getNode();
         const execution = { workflowId: ctx.getWorkflowId() ?? 'unknown', executionId: ctx.getExecutionId(), nodeId: node.id, ...(node.name && { nodeName: node.name }) };
-        let session;
-        if (memory) {
-          // The connected memory holds the conversation: a new session starts from its history and saves back to it.
-          session = newSession(agent, { source: 'workflow', userId, version: agent.published.version });
-          session.messages = await memory.load(key || 'default');
+        // AG10: only the editor's chat can ask; the hosted chat page, webhooks, schedules and manual runs refuse as before.
+        // A model or tools connected here do not go through a decision, so with them the node refuses too.
+        // Only a run on the published config takes the overlay: an editor run on the draft (which already holds what moved) or a pinned version runs what it says, so askInChat, the router and the cache behave as they will after publish.
+        const pending = source === 'published' ? await moved(agent) : undefined;
+        const waitable = Boolean(ctx.putExecutionToWait) && !model && !tools.length && !pending;
+        // AG23: an autonomous fix session's editor run (the run body's `approvals: 'spotlight'`, kept on the execution record): Spotlight decides the calls that ask first.
+        const spotlightRun = editor && (ctx.getMode() === 'manual' || ctx.getMode() === 'chat') ? await spotlightRunOf(ctx.getExecutionId()) : undefined;
+        const spotlight = spotlightRun && {
+          by: { kind: 'spotlight' as const, userId: spotlightRun.userId, sessionId: spotlightRun.sessionId },
+          given: [...spotlightRun.destinations], // wave ag5 fix pass 2: the agents' own destinations are the client's snapshot from when the session started (in `destinations`), never the draft this session may have edited
+          canWait: waitable,
+        };
+        // AP02: a step saved without Tool Approvals keeps refusing (the descriptor's default is for steps placed from now on).
+        const setting = savedWithoutApprovals ? 'refuse' : ctx.getNodeParameter<string>('toolApprovals', i, 'refuse');
+        // AP02: a run nobody watches (not the editor's, not an MCP call or a tool call) that can pause waits in the approval inbox, when the host has one.
+        const inbox = !editor && !triggerWhy && inboxMode(ctx.getMode()) === 'inbox' && setting === 'askInChat' && waitable ? inboxPort() : undefined;
+        const refusedWhy = !editor && setting === 'askInChat' && waitable && triggerWhy ? REFUSE_WHY[triggerWhy] : undefined;
+        const askInChat = (setting === 'askInChat' && ctx.getMode() === 'chat' && waitable) || Boolean(spotlight?.canWait) || Boolean(inbox);
+        const onEvent = send && streamer(send, i, { id: agent.id, name: agent.name, ...(agent.avatar && { face: agent.avatar as unknown as JsonObject }) });
+        let result: Awaited<ReturnType<typeof runAgent>>;
+        if (waited && i === waited.itemIndex) {
+          // AG10: each decision goes to the session in order; the last one resumes the run.
+          const { decide } = await import('../agents/runtime');
+          const stored = agentStore.getSession(waited.sessionId);
+          const calls = stored?.pending?.calls ?? [];
+          // AP02: a wait the inbox holds is settled by the record, not by the resume's word (see inboxDecisions).
+          const settled = waited.inbox ? await inboxDecisions(ctx, waited.inbox, saved?.$resume, calls, new Map((stored?.timeline ?? []).flatMap((e) => (e.type === 'tool' ? [[e.callId, e.label] as const] : []))), i) : undefined;
+          const decisions = settled?.decisions ?? decisionsOf(saved?.$resume);
+          let resumed: Awaited<ReturnType<typeof decide>> | undefined;
+          send?.({ type: 'begin', itemIndex: i });
+          // Every edit is saved before the first decision, so no decision rewrites a stale copy of the session.
+          let edited = false;
+          for (const pendingCall of calls) {
+            const decision = decisions[pendingCall.callId];
+            if (!decision?.approved || !decision.input) continue;
+            // A remote agent's pause keeps its own state, so an edit cannot be applied there: say so rather than run it unedited.
+            if (pendingCall.remote) throw new NodeOperationError('The approval changed the input of a remote agent\'s call, which cannot be edited; approve it as it is', { itemIndex: i });
+            pendingCall.input = decision.input as typeof pendingCall.input;
+            edited = true;
+          }
+          if (edited && stored) agentStore.saveSession(stored);
+          for (const pendingCall of calls) {
+            const decision = decisions[pendingCall.callId];
+            if (!decision) continue;
+            if (settled && pendingCall.decision) continue; // AP02: a re-run never decides a call twice
+            resumed = await decide(agent, waited.sessionId, pendingCall.callId, decision.approved, { ...(decision.by && { by: decision.by }), ...(waited.inbox && { inbox: true as const }), ...settled?.extra[pendingCall.callId], toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) }, ...(onEvent && { onEvent }), ...(ctx.signal && { signal: ctx.signal }) });
+          }
+          if (!resumed || resumed.status !== 'resumed') throw new NodeOperationError('The approval was not decided for every tool call', { itemIndex: i });
+          result = resumed;
         } else {
-          const conversationKey = key ? `${userId}:${key}` : undefined;
-          const existing = conversationKey ? agentStore.findConversation(agent.id, conversationKey) : undefined;
-          session = (existing && { ...existing, version: agent.published.version }) ?? newSession(agent, { source: 'workflow', userId, version: agent.published.version, ...(conversationKey && { conversationKey }) });
+          let session;
+          if (memory) {
+            // The connected memory holds the conversation: a new session starts from its history and saves back to it.
+            session = newSession(agent, { source: 'workflow', userId, version: runVersion });
+            session.messages = await memory.load(key || 'default');
+          } else {
+            const conversationKey = key ? `${userId}:${key}` : undefined;
+            const existing = conversationKey ? agentStore.findConversation(agent.id, conversationKey) : undefined;
+            // AG10: a keyed conversation that waits for Approve or Reject takes no new message: the model would be sent an unanswered tool call.
+            // N6: a waiting run that was cancelled (or failed, or is gone) leaves nobody to decide: the orphan call is settled as cancelled and the conversation goes on.
+            if (existing && (existing.pending || existing.status === 'awaiting_approval') && (await orphaned(existing, (await import('../store')).store))) settleOrphan(existing, agentStore);
+            if (existing && (existing.pending || existing.status === 'awaiting_approval')) throw new NodeOperationError(`${agent.name} is waiting for Approve or Reject on its last tool call: decide that first, then send the next message`, { itemIndex: i });
+            session = (existing && { ...existing, version: runVersion }) ?? newSession(agent, { source: 'workflow', userId, version: runVersion, ...(conversationKey && { conversationKey }) });
+          }
+          session.execution = execution;
+          send?.({ type: 'begin', itemIndex: i });
+          result = await runAgent({
+            agent,
+            session,
+            message,
+            // AG10: 'ask' only in the editor's chat with Tool Approvals set to ask there.
+            approvals: spotlight ? 'spotlight' : askInChat ? 'ask' : 'deny',
+            ...(inbox && { inbox: true as const }), // AP02:
+            ...(refusedWhy && { refusedWhy }), // wave ap1: the hosted chat or an MCP trigger
+            ...(spotlight && { spotlight }), // AG23:
+            toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
+            ...(pending && { moved: pending }), // AG17:
+            ...((model || tools.length) && { flow: { ...(model && { model }), ...(tools.length && { tools, targets: flowTargets }) } }),
+            // The chat panel and streaming triggers get the agent's answers and tool calls as they happen.
+            ...(onEvent && { onEvent }),
+          });
         }
-        session.execution = execution;
-        send?.({ type: 'begin', itemIndex: i });
-        const result = await runAgent({
-          agent,
-          session,
-          message,
-          approvals: 'deny',
-          toolImages: { keep: Number(ctx.getNodeParameter('toolImagesKept', i, 2)) },
-          ...((model || tools.length) && { flow: { ...(model && { model }), ...(tools.length && { tools }) } }),
-          // The chat panel and streaming triggers get the agent's answers and tool calls as they happen.
-          ...(send && { onEvent: streamer(send, i, { id: agent.id, name: agent.name, ...(agent.avatar && { face: agent.avatar as unknown as JsonObject }) }) }),
-        });
+        // AG10: the agent stopped at a tool that needs approval: the run waits for the person in the chat, then this node runs again.
+        if (askInChat && result.reason === 'awaiting_approval' && result.session.pending) {
+          const labels = new Map(result.session.timeline.flatMap((e) => (e.type === 'tool' ? [[e.callId, e.label] as const] : [])));
+          const calls = result.session.pending.calls.filter((c) => !c.decision).map((c) => {
+            const subject = approvalSubject(c);
+            return { id: c.callId, name: c.remote ? subject.tool : (labels.get(c.callId) ?? c.tool), input: (c.review?.params ?? subject.input) as JsonObject /* AP02: masked */ };
+          });
+          send?.({ type: 'end', itemIndex: i });
+          // AP02: a run nobody watches: one inbox request per held call, and the wait ends with the request's expiry.
+          if (inbox) {
+            const opened = await openInbox(ctx, inbox, { agent, agentVersion: runVersion, session: result.session, labels, itemIndex: i });
+            ctx.setNodeState?.({ waiting: { kind: 'approval', itemIndex: i, sessionId: result.session.id, agentId: agent.id, out: out as unknown as JsonObject[], inbox: { ids: opened.ids, expiresAt: opened.expiresAt, minutes: opened.minutes } } as unknown as JsonObject });
+            await askForApproval(ctx, i, { ...approvalSettings(ctx, i, 'all'), channel: 'chat', timeoutMinutes: 0 }, calls, { agentApproval: { agent: agent.name }, inbox: { ids: opened.ids, expiresAt: opened.expiresAt } }, `${agent.name} wants to use ${calls.map((c) => c.name).join(', ')}`, opened.expiresAt);
+            return [out];
+          }
+          ctx.setNodeState?.({ waiting: { kind: 'approval', itemIndex: i, sessionId: result.session.id, agentId: agent.id, out: out as unknown as JsonObject[] } as unknown as JsonObject });
+          await askForApproval(ctx, i, approvalSettings(ctx, i, 'all'), calls, { agentApproval: { agent: agent.name } }, `${agent.name} wants to use ${calls.map((c) => c.name).join(', ')}`);
+          return [out];
+        }
         send?.({ type: 'end', itemIndex: i });
         if (result.reason === 'error') {
           const last = [...result.session.timeline].reverse().find((e) => e.type === 'error');
           throw new NodeOperationError(`${agent.name} failed: ${last?.type === 'error' ? last.message : 'unknown error'}`, { itemIndex: i });
         }
         if (memory) await memory.save(key || 'default', result.session.messages);
-        const steps = result.session.timeline.flatMap((e) => (e.type === 'tool' ? [{ tool: e.tool, kind: e.kind, status: e.status, ...(e.error && { error: e.error }) }] : []));
+        const steps = result.session.timeline.flatMap((e) => (e.type === 'tool' ? [{ tool: e.tool, kind: e.kind, status: e.status, ...(e.error && { error: e.error }), ...(e.decidedLine && { approvedBy: e.decidedLine }) /* AG23: */ }] : []));
         out.push({
           json: {
             reply: result.reply ?? null,
             sessionId: result.session.id,
             agentId: agent.id,
-            version: agent.published.version,
-            model: model ? `${model.provider}/${model.model}` : agent.published.config.model ? `${agent.published.config.model.provider}/${agent.published.config.model.model}` : null,
+            version: runVersion,
+            model: model ? `${model.provider}/${model.model}` : runConfig.model ? `${runConfig.model.provider}/${runConfig.model.model}` : null,
             endReason: result.reason,
             usage: { ...result.usage },
             steps,
@@ -274,15 +406,154 @@ export const messageAgentNode = defineNode({
     loadOptions: {
       async agents() {
         const { agentStore } = await import('../agents/store');
-        return agentStore.list().map((agent) => ({
-          name: agent.name,
-          value: agent.id,
-          description: agent.published ? `Published v${agent.published.version}` : 'Not published yet',
-        }));
+        // PC06: with a project in scope (the workflow being edited), only the agents available there.
+        const { tableScope } = await import('../datatables/projects');
+        const projects = await import('../projects');
+        const projectId = tableScope()?.projectId;
+        const all = agentStore.list();
+        const available = projectId ? projects.availableAgentIds(projectId, all.map((a) => a.id)) : undefined;
+        // PC13: and allowed there (the project's allow-list of agents).
+        const { getProjectSettings } = await import('../governance/scopes');
+        const settings = projectId ? getProjectSettings(projectId) : undefined;
+        return all
+          .filter((agent) => !available || available.has(agent.id))
+          .filter((agent) => !settings || !projectId || agentAllowedBy(settings, agent.id, projects.homeProjectId('agent', agent.id) === projectId))
+          .map((agent) => {
+            const state = agent.published ? `Published v${agent.published.version} · the editor tests the draft` : 'Not published yet'; // AG21: state
+            const home = projectId ? projects.homeProjectId('agent', agent.id) : undefined;
+            const from = home && home !== projectId ? projects.getProject(home)?.name : undefined;
+            return { name: agent.name, value: agent.id, description: from ? `From ${from} · ${state}` : state };
+          });
       },
     },
   },
 });
+
+/** AP02: whether the run's workflow has no value saved for this parameter of the node (the descriptor's default would apply). False when the graph is not found. */
+async function savedWithout(ctx: IExecuteContext, nodeId: string, name: string): Promise<boolean> {
+  const { workflow } = await runGraph(ctx.getExecutionId(), ctx.getWorkflowId());
+  const saved = workflow?.nodes.find((n) => n.id === nodeId);
+  return Boolean(saved) && !(name in (saved!.parameters ?? {}));
+}
+
+/** AP02: the time of day a settled line shows, in the host's zone. */
+const clock = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+/** AP02: one request per undecided call in the approval inbox (idempotent: a node that runs again gets the same ids and nudges nobody twice). */
+async function openInbox(
+  ctx: IExecuteContext,
+  port: NonNullable<ReturnType<typeof inboxPort>>,
+  run: { agent: Agent; agentVersion: number | 'draft'; session: AgentSession; labels: Map<string, string>; itemIndex: number },
+) {
+  const { runVersions } = await import('../agents/versions');
+  const { unattendedTrigger } = await import('../agents/unattended');
+  const { homeProjectId } = await import('../projects/store');
+  const executionId = ctx.getExecutionId();
+  const { record, workflow, workflowId: graphId } = await runGraph(executionId, ctx.getWorkflowId());
+  const workflowId = graphId ?? 'unknown';
+  const node = ctx.getNode();
+  const trigger = workflow?.nodes.filter((n) => !n.disabled).flatMap((n) => unattendedTrigger(n.type) ?? [])[0] ?? 'trigger';
+  const number = (() => {
+    try {
+      return runVersions(executionId, record)?.workflow.number;
+    } catch {
+      return undefined;
+    }
+  })();
+  const projectId = homeProjectId('workflow', workflowId);
+  const calls: InboxOpen[] = (run.session.pending?.calls ?? []).filter((c) => !c.decision).map((c) => ({
+    executionId,
+    callId: c.callId,
+    workflowId,
+    workflowName: workflow?.name ?? workflowId,
+    ...(number !== undefined && { workflowVersion: number }),
+    nodeId: node.id,
+    nodeName: node.name ?? node.id,
+    agentId: run.agent.id,
+    agentName: run.agent.name,
+    agentVersion: run.agentVersion,
+    sessionId: run.session.id,
+    tool: run.labels.get(c.callId) ?? c.tool,
+    params: (c.review?.params ?? maskParams(redactValue(c.input))) as Record<string, unknown>,
+    ...(c.review?.destination && { destination: c.review.destination }),
+    trigger,
+    ...(projectId && { projectId }),
+  }));
+  return port.open(calls);
+}
+
+/**
+ * AP02: the decisions of a resumed inbox wait, from the record (the truth), never from the resume's word alone. `approved` and
+ * `denied` are the record's; on a timeout a `waiting` record is settled `expired` (and if another door won the race, its word
+ * stands); an expired, denied or cancelled call is denied to the agent with the refusal as its result and the settled line as its
+ * decidedLine. An approval the record does not say fails closed: the node stops rather than run the call.
+ */
+async function inboxDecisions(
+  ctx: IExecuteContext,
+  wait: { ids: Record<string, string>; expiresAt: string; minutes: number },
+  resume: { kind: string; data?: JsonObject } | undefined,
+  calls: Array<{ callId: string; tool: string; decision?: 'approved' | 'denied'; input: Record<string, unknown> }>,
+  labels: Map<string, string>,
+  itemIndex: number,
+) {
+  const port = inboxPort();
+  if (!port) throw new NodeOperationError('This host has no approval inbox, so this approval cannot be settled', { itemIndex });
+  const decisions: ReturnType<typeof decisionsOf> = {};
+  const extra: Record<string, { line: string; refusal?: string }> = {};
+  const executionId = ctx.getExecutionId();
+  for (const call of calls) {
+    if (call.decision) continue;
+    let outcome = port.outcome(executionId, call.callId);
+    if (outcome?.status === 'waiting' || !outcome) {
+      if (resume?.kind === 'timeout' || !outcome) outcome = (await port.settle(executionId, call.callId, 'expired')).outcome;
+      // A deny the record does not say fails closed too (AP01's claim settles the record first); the throw leaves the request waiting.
+      else throw new NodeOperationError('The approval inbox has no decision for this tool call', { itemIndex });
+    }
+    const label = labels.get(call.callId) ?? call.tool;
+    const view = { status: outcome.status, tool: label, ...(outcome.byName && { decidedByName: outcome.byName }), ...(outcome.by && { decidedBy: outcome.by }), ...(outcome.via && { decidedVia: outcome.via }), ...(outcome.at && { decidedAt: outcome.at }) };
+    const line = settledLine(view, clock);
+    if (outcome.status === 'approved') {
+      decisions[call.callId] = { approved: true, ...(outcome.by && { by: outcome.by }), }; // an edited input is never carried: the inbox approved the review as shown (the doors are Approve and Deny)
+      extra[call.callId] = { line };
+    } else if (outcome.status === 'waiting') throw new NodeOperationError('The approval inbox has no decision for this tool call', { itemIndex });
+    else {
+      decisions[call.callId] = { approved: false, ...(outcome.by && { by: outcome.by }) };
+      extra[call.callId] = { line, refusal: refusedResult(outcome.status, label, outcome.byName ?? outcome.by, wait.minutes) };
+    }
+  }
+  return { decisions, extra };
+}
+
+/** AG23: the Spotlight test run this execution belongs to, if any (kept on its record by the run route; it survives a wait). */
+async function spotlightRunOf(executionId: string) {
+  const { liveExecution } = await import('../runner');
+  return (liveExecution(executionId) ?? (await (await import('../store')).store.loadExecution(executionId)))?.spotlightApprovals;
+}
+
+/**
+ * Whether nobody can decide this session's pending call any more: its execution record is gone, or was cancelled or failed.
+ * A record that is waiting, or running (an Approve is resuming it: the tool may already have run), is not an orphan.
+ */
+async function orphaned(session: AgentSession, store: typeof import('../store').store): Promise<boolean> {
+  const id = session.execution?.executionId;
+  if (!id) return false;
+  const record = await store.loadExecution(id);
+  return !record || record.status === 'canceled' || record.status === 'error';
+}
+
+/** A pending call nobody can decide any more: each is answered "cancelled", so the transcript has no unanswered tool call, and the session is idle. */
+function settleOrphan(session: AgentSession, agentStore: typeof import('../agents/store').agentStore): void {
+  const pending = session.pending;
+  if (pending) {
+    const answered = new Set(pending.results.map((r) => r.id));
+    const cancelled = pending.calls.filter((c) => !answered.has(c.callId)).map((c) => ({ id: c.callId, name: c.tool, content: 'Cancelled: the run waiting for approval was cancelled, so this call did not run.', isError: true }));
+    session.messages.push({ role: 'tool', results: [...pending.results, ...cancelled] });
+    for (const entry of session.timeline) if (entry.type === 'tool' && entry.status === 'awaiting_approval') Object.assign(entry, { status: 'denied', error: 'Cancelled: the run was cancelled' });
+  }
+  delete session.pending;
+  session.status = 'idle';
+  agentStore.saveSession(session);
+}
 
 /** An agent's timeline as the chat chunks of the AI Agent node: its answers, and its tool calls as they start and end. */
 export function streamer(send: NonNullable<IExecuteContext['sendChunk']>, itemIndex: number, agent?: StreamChunk['agent']) {
@@ -296,9 +567,10 @@ export function streamer(send: NonNullable<IExecuteContext['sendChunk']>, itemIn
       send({ type: 'item', itemIndex, ...label, content: `${wrote ? '\n\n' : ''}${entry.text}` });
       wrote = true;
     } else if (entry.type === 'tool') {
-      const status = entry.status === 'running' ? 'started' : entry.status === 'success' ? 'finished' : 'failed';
+      // A call waiting for a person is not a failure, and a denied one is a decision (the chat's step list reads 'Waiting for approval' and 'Denied').
+      const status = entry.status === 'running' ? 'started' : entry.status === 'success' ? 'finished' : entry.status === 'awaiting_approval' ? 'approval' : entry.status === 'denied' ? 'denied' : 'failed';
       const output = entry.error ?? (entry.output === undefined ? undefined : typeof entry.output === 'string' ? entry.output : JSON.stringify(entry.output));
-      send({ type: 'tool', itemIndex, ...label, tool: { id: entry.callId, name: entry.tool, status, input: entry.input as JsonObject, ...(output !== undefined && { output: output.slice(0, 2_000) }) } });
+      send({ type: 'tool', itemIndex, ...label, tool: { id: entry.callId, name: entry.tool, status, input: entry.input as JsonObject, ...(output !== undefined && { output: output.slice(0, entry.target?.knowledge ? 12_000 : 2_000) }), ...(entry.target && { target: entry.target }) } }); // AG14:
     }
   };
 }

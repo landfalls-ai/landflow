@@ -2,8 +2,7 @@
 import { z } from 'zod';
 import { requireUser } from '@/lib/server/auth/guard';
 import { rejectPromotion } from '@/lib/server/environments/approvals';
-import { ApprovalError } from '@/lib/server/governance/approvals';
-import { error, handler, json, parseBody } from '@/lib/server/http';
+import { handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ id: string }> };
@@ -16,10 +15,5 @@ export const POST = handler(async (request: Request, { params }: Ctx) => {
   const body = hasBody ? await parseBody(request, bodySchema) : { ok: true as const, data: {} as z.infer<typeof bodySchema> };
   if (!body.ok) return body.response;
   const user = await requireUser('settings:manage');
-  try {
-    return json({ request: rejectPromotion(id, user, body.data.comment) });
-  } catch (caught) {
-    if (caught instanceof ApprovalError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json({ request: rejectPromotion(id, user, body.data.comment) });
 });

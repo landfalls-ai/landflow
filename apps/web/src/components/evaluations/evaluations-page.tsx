@@ -1,14 +1,14 @@
 'use client';
 /**
- * A workflow's Evaluations tab (n8n's shape): the editor-style top bar with the Editor | Executions |
- * Evaluations switch, the evaluation runs on the left (run number, status, per-metric averages) and on
+ * A workflow's Tests tab: the editor-style top bar with the Editor | Runs |
+ * Tests switch, the evaluation runs on the left (run number, status, per-metric averages) and on
  * the right the selected run: metric tiles with their trend over runs, then the per-case results, each
  * linking its execution. "Compare with" puts two runs side by side; "AI Agent grading" holds the online
  * evaluation settings and scores of the workflow's AI Agent nodes.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight, Bot, ChevronRight, CircleStop, ExternalLink, FlaskConical, GitCompareArrows, Play, Table2, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bot, ChevronRight, CircleStop, ExternalLink, FlaskConical, GitCompareArrows, Play, Table2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
@@ -29,7 +29,7 @@ import { WorkflowTabs } from '../shell/workflow-tabs';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
-import { Select } from '../ui/inputs';
+import { Checkbox, Select } from '../ui/inputs';
 import { RUN_STATE, RunStateIcon, formatStamp, useNow, type RunState } from '../run/run-status';
 import { FileDataset, ScheduleCard } from './dataset-schedule';
 import { OnlineEvalPanel, type OnlineEvalPatch } from './online-eval-panel';
@@ -119,17 +119,8 @@ function RunCard({ run, selected, onClick, now }: { run: EvaluationRunSummary; s
 function TriggerCard({ overview, workflowId }: { overview?: EvaluationsOverview; workflowId: string }) {
   if (!overview) return <div className="h-[58px] rounded-[10px] border border-hair bg-sf animate-pulse-soft" />;
   const { trigger } = overview;
-  if (!trigger)
-    return (
-      <div className="rounded-[10px] border border-warnbd bg-warndim px-3 py-2 text-[12px] text-t2">
-        <div className="flex items-center gap-1.5 font-semibold text-warn">
-          <TriangleAlert className="size-3.5" /> No Evaluation Trigger
-        </div>
-        <p className="mt-0.5 leading-snug">
-          Add one in the <Link href={`/workflows/${workflowId}`} className="text-ac hover:underline">editor</Link> and point it at a Data Table (or an uploaded CSV or JSON file) of test cases.
-        </p>
-      </div>
-    );
+  // No trigger: the setup steps in the main pane say what to add, so there is no second warning here.
+  if (!trigger) return null;
   return (
     <div className="rounded-[10px] border border-hair bg-sf px-3 py-2 text-[12px]">
       <div className="flex items-center gap-1.5 text-t1">
@@ -202,7 +193,7 @@ function MetricTile({ name, summary, previous, history }: { name: string; summar
 function ExecutionLink({ workflowId, executionId }: { workflowId: string; executionId?: string }) {
   if (!executionId) return <span className="text-t3">—</span>;
   return (
-    <Link href={`/workflows/${workflowId}/executions/${executionId}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-ac hover:underline">
+    <Link href={`/workflows/${workflowId}/runs/${executionId}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-ac hover:underline">
       View <ExternalLink className="size-3" />
     </Link>
   );
@@ -394,7 +385,7 @@ function RunView({
                   {name}
                 </th>
               ))}
-              <th className="py-2 pl-2 pr-3 text-right font-semibold">Execution</th>
+              <th className="py-2 pl-2 pr-3 text-right font-semibold">Run</th>
             </tr>
           </thead>
           <tbody>
@@ -487,10 +478,7 @@ function CompareView({ comparison, workflowId, onSwap, onClose }: { comparison: 
       <div className="mb-2 mt-5 flex items-center gap-2">
         <h2 className="text-[14px] font-semibold text-t1">Cases</h2>
         <span className="text-[12px] text-t3">matched by Data Table row</span>
-        <label className="ml-auto flex cursor-pointer select-none items-center gap-1.5 text-[12px] text-t2">
-          <input type="checkbox" checked={changedOnly} onChange={(e) => setChangedOnly(e.target.checked)} className="size-3.5 cursor-pointer accent-ac2" />
-          Changed only
-        </label>
+        <Checkbox checked={changedOnly} onChange={setChangedOnly} label="Changed only" className="ml-auto text-[12px]" />
       </div>
       <div className="overflow-x-auto rounded-[12px] border border-hair bg-sf">
         <table className="w-full min-w-[720px] border-collapse text-[12px]">
@@ -503,7 +491,7 @@ function CompareView({ comparison, workflowId, onSwap, onClose }: { comparison: 
                   {name}
                 </th>
               ))}
-              <th className="py-2 pl-2 pr-3 text-right font-semibold">Executions</th>
+              <th className="py-2 pl-2 pr-3 text-right font-semibold">Runs</th>
             </tr>
           </thead>
           <tbody>
@@ -529,12 +517,12 @@ function CompareView({ comparison, workflowId, onSwap, onClose }: { comparison: 
                 <td className="whitespace-nowrap py-2 pl-2 pr-3 text-right align-top">
                   <span className="inline-flex items-center gap-2">
                     {c.a?.executionId && (
-                      <Link href={`/workflows/${workflowId}/executions/${c.a.executionId}`} className="text-ac hover:underline">
+                      <Link href={`/workflows/${workflowId}/runs/${c.a.executionId}`} className="text-ac hover:underline">
                         #{a.number}
                       </Link>
                     )}
                     {c.b?.executionId && (
-                      <Link href={`/workflows/${workflowId}/executions/${c.b.executionId}`} className="text-ac hover:underline">
+                      <Link href={`/workflows/${workflowId}/runs/${c.b.executionId}`} className="text-ac hover:underline">
                         #{b.number}
                       </Link>
                     )}
@@ -596,7 +584,7 @@ function OnlineView({ workflowId }: { workflowId: string }) {
                 report={node.report}
                 onSave={(patch) => save(node.nodeId, patch)}
                 fallbackLabel="The node’s chat model"
-                linkOf={(score) => (score.executionId ? { href: `/workflows/${workflowId}/executions/${score.executionId}`, label: 'Open execution' } : undefined)}
+                linkOf={(score) => (score.executionId ? { href: `/workflows/${workflowId}/runs/${score.executionId}`, label: 'Open run' } : undefined)}
               />
             </div>
           </section>
@@ -623,7 +611,7 @@ function SetupHint({ workflowId }: { workflowId: string }) {
         <FlaskConical className="size-5" />
       </div>
       <h1 className="mt-3 text-center text-[18px] font-semibold text-t1">Test this workflow against a dataset</h1>
-      <p className="mt-1 text-center text-[13px] text-t2">Evaluations run the workflow once per test case and score the results, so you can tell whether a change made it better or worse.</p>
+      <p className="mt-1 text-center text-[13px] text-t2">Tests run the workflow once per test case and score the results, so you can tell whether a change made it better or worse.</p>
       <ol className="mt-5 space-y-2">
         {steps.map(([title, text], i) => (
           <li key={title} className="flex gap-3 rounded-[12px] border border-hair bg-sf px-3.5 py-2.5">
@@ -636,7 +624,7 @@ function SetupHint({ workflowId }: { workflowId: string }) {
       </ol>
       <div className="mt-5 text-center">
         <Link href={`/workflows/${workflowId}`}>
-          <Button variant="primary">Open the editor</Button>
+          <Button variant="primary">Add an evaluation trigger</Button>
         </Link>
       </div>
     </div>
@@ -656,7 +644,7 @@ export function EvaluationsPage({ workflowId }: { workflowId: string }) {
 
   const loadOverview = useCallback(
     () =>
-      api<EvaluationsOverview>(`/api/workflows/${workflowId}/evaluations`)
+      api<EvaluationsOverview>(`/api/workflows/${workflowId}/evaluations`, { background: true })
         .then((o) => {
           setOverview(o);
           return o;
@@ -677,7 +665,7 @@ export function EvaluationsPage({ workflowId }: { workflowId: string }) {
 
   const loadDetail = useCallback(() => {
     if (!selectedId) return setDetail(undefined);
-    api<{ run: EvaluationRunDetail }>(`/api/workflows/${workflowId}/evaluations/${selectedId}`)
+    api<{ run: EvaluationRunDetail }>(`/api/workflows/${workflowId}/evaluations/${selectedId}`, { background: true })
       .then((r) => setDetail(r.run))
       .catch(() => setDetail(undefined));
   }, [workflowId, selectedId]);
@@ -751,7 +739,7 @@ export function EvaluationsPage({ workflowId }: { workflowId: string }) {
     main = overview.trigger ? (
       <EmptyState
         className="mt-16"
-        title="No evaluation runs yet"
+        title="No test runs yet"
         hint={`Run the workflow over ${overview.trigger.dataTableName ? `“${overview.trigger.dataTableName}”` : overview.trigger.source === 'file' ? 'the uploaded file (upload it first)' : 'its Data Table'}, one execution per row, and the scores show up here.`}
         action={
           <Button variant="primary" onClick={() => void start()} loading={starting} disabled={!canStart}>
@@ -787,13 +775,13 @@ export function EvaluationsPage({ workflowId }: { workflowId: string }) {
         </Link>
         <span className="max-w-[30%] truncate text-[15px] font-semibold text-t1">{workflow?.name ?? (workflowMissing ? 'Deleted workflow' : ' ')}</span>
         {workflow?.active && <Badge tone="success">Published</Badge>}
-        <WorkflowTabs workflowId={workflowId} active="evaluations" className="absolute left-1/2 -translate-x-1/2" />
+        <WorkflowTabs workflowId={workflowId} active="tests" className="absolute left-1/2 -translate-x-1/2" />
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-[300px_minmax(0,1fr)]">
         <aside className="flex min-h-0 flex-col border-r border-hair bg-sf2">
           <div className="shrink-0 space-y-2.5 px-4 pb-2 pt-3.5">
             <div className="flex items-center gap-2">
-              <h2 className="text-[15px] font-semibold text-t1">Evaluations</h2>
+              <h2 className="text-[15px] font-semibold text-t1">Tests</h2>
               {overview && <span className="font-mono text-[11px] text-t3">{runs.length}</span>}
               <Button size="sm" variant="primary" className="ml-auto" onClick={() => void start()} loading={starting} disabled={!canStart} title={running ? 'A run is in progress' : undefined}>
                 <Play className="size-3" /> Run

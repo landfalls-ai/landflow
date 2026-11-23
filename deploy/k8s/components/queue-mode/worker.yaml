@@ -45,6 +45,8 @@ spec:
           ports:
             - { name: health, containerPort: 5690 }
           env:
+            # The in-repo cluster runs development secrets; a real deployment sets production (docs/deployment.md).
+            - { name: LANDFLOW_PROFILE, value: development }
             - { name: LANDFLOW_ROLE, value: worker }
             - { name: LANDFLOW_EXECUTIONS_MODE, value: queue }
             - name: LANDFLOW_INSTANCE_ID
@@ -76,6 +78,8 @@ spec:
               valueFrom: { secretKeyRef: { name: landflow-minio, key: secret-access-key } }
             - name: LANDFLOW_ENCRYPTION_KEY
               valueFrom: { secretKeyRef: { name: landflow-queue, key: encryption-key } }
+            - name: LANDFLOW_ENCRYPTION_KEYS # the key ring, the same on every process; unset: the key above only
+              valueFrom: { secretKeyRef: { name: landflow-queue, key: encryption-keys, optional: true } }
             - name: LANDFLOW_BINARY_SECRET
               valueFrom: { secretKeyRef: { name: landflow-queue, key: binary-secret } }
             - name: LANDFLOW_REGISTRY_SECRET

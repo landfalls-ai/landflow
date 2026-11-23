@@ -2,6 +2,7 @@
  * How much of an event's content the journal keeps (`traceContent`, docs/run-trace.md): `full` keeps it whole but cuts an
  * event to 32 KB, `summaries` cuts every text to 400 characters, `off` keeps names, statuses and errors only.
  */
+import { SAW_MEMORY_MAX_ITEMS } from '../../shared/what-it-saw';
 import { JOURNAL_EVENT_MAX_BYTES, JOURNAL_SUMMARY_CHARS, type JournalEvent, type TraceContent } from '../../shared/run-trace';
 
 export const CUT = '…[cut]';
@@ -15,10 +16,10 @@ export function defaultContent(): TraceContent {
 /** A workflow's setting, else the instance's. */
 export const contentOf = (setting: TraceContent | undefined): TraceContent => (setting === 'full' || setting === 'summaries' || setting === 'off' ? setting : defaultContent());
 
-const cutText = (text: string, chars: number) => (text.length > chars ? `${text.slice(0, chars)}${CUT}` : text);
+export const cutText = (text: string, chars: number) => (text.length > chars ? `${text.slice(0, chars)}${CUT}` : text);
 
 /** Every string inside `value` cut to `chars` characters. */
-function cutStrings(value: unknown, chars: number): unknown {
+export function cutStrings(value: unknown, chars: number): unknown {
   if (typeof value === 'string') return cutText(value, chars);
   if (Array.isArray(value)) return value.map((item) => cutStrings(item, chars));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cutStrings(item, chars)]));
@@ -75,6 +76,37 @@ export function applyContent(event: JournalEvent, mode: TraceContent): JournalEv
   }
   const short = JOURNAL_SUMMARY_CHARS;
   const e = copy as unknown as Record<string, unknown> & { type: JournalEvent['type'] };
+  // What an agent saw (`attrs.saw`, docs/run-trace.md#what-it-saw): the block and persona are prompt content, so they follow the mode.
+  const saw = e.attrs && typeof e.attrs === 'object' ? (e.attrs as Record<string, unknown>).saw : undefined;
+  if (saw && typeof saw === 'object') {
+    // The memory the run was given: ids and short fields follow the mode (gone on `off`), the exact block only on `full`.
+    const m = saw as Record<string, unknown>;
+    if (mode === 'off') {
+      delete m.memory;
+      delete m.memoryText;
+    } else {
+      if (mode === 'summaries') delete m.memoryText;
+      if (Array.isArray(m.memory)) {
+        for (const source of m.memory as Array<Record<string, unknown>>) {
+          if (source && Array.isArray(source.items) && source.items.length > SAW_MEMORY_MAX_ITEMS) {
+            source.count = typeof source.count === 'number' ? source.count : source.items.length;
+            source.items = source.items.slice(0, SAW_MEMORY_MAX_ITEMS);
+          }
+        }
+      }
+    }
+  }
+  if (saw && typeof saw === 'object' && mode !== 'full') {
+    const s = saw as Record<string, unknown>;
+    if (mode === 'off') {
+      s.text = '';
+      s.persona = {};
+      s.withheld = true;
+    } else {
+      if (typeof s.text === 'string') s.text = cutText(s.text, short);
+      if (s.persona !== undefined) s.persona = cutStrings(s.persona, short);
+    }
+  }
   if (mode === 'off') {
     delete e.input;
     delete e.output;

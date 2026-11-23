@@ -96,6 +96,8 @@ export interface WorkflowConnection {
 export interface WorkflowSettings {
   /** Stop a run after this many seconds. */
   timeoutSeconds?: number;
+  /** The goal (`goal_…`) this workflow works for: its agents' project context names it. */
+  goalId?: string;
   /** Workflow whose Error Trigger runs when an execution of this one fails. */
   errorWorkflowId?: string;
   /** IANA time zone for schedules and `$now` (default: the host's). */
@@ -534,8 +536,15 @@ export interface ExecuteWorkflowOptions {
   loadSecrets?: (references: SecretReference[], node: WorkflowNode) => Promise<SecretValues>;
   /** Each resolved parameter value that read `$secrets` (per item), so the host can redact it like the secrets themselves. */
   onSecretParameter?: (value: unknown) => void;
+  /** This is a real, saved run: its node calls carry `secretRun` so the host can issue dynamic secrets (leases) to it. */
+  secretRun?: { workflowId?: string };
   /** Continue a waiting execution (same `executionId`); start options are ignored. */
   resume?: ResumeOptions;
+  // SP01: runs a node's (or sub-node's) work with the node known to the host, so a model call under it can name it
+  // even when OpenTelemetry's context manager is off. Nested nodes nest the calls.
+  // C14: `report` records a check or artifact on the node being wrapped (as `ctx.check` does), so host library code
+  // running under the node can put its own checks on the node's span.
+  aroundNode?: <T>(node: { id: string; name: string; type: string; report?: (record: NodeRecord) => void }, fn: () => Promise<T>) => Promise<T>;
   /** `$execution.resumeUrl` / `$execution.resumeFormUrl`: where a webhook or form wait of this run is resumed. */
   resumeUrls?: { webhook: string; form: string };
   /** Called before the first node and after every main-flow node that finished: the state to continue from after a crash. */

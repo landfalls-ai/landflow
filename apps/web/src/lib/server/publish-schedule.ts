@@ -11,8 +11,9 @@
  * live at its time with the requester as publisher. A schedule made while four-eyes was off, whose time comes after
  * it was switched on, becomes a publish request instead of going live (status `requested`).
  */
+import { guardAccessFlow } from './access/guard';
+import { isInstanceAdmin } from './projects/access';
 import { nanoid } from 'nanoid';
-import { can } from '../shared/auth';
 import type { ScheduledPublish } from '../shared/publish';
 import { recordAudit } from './audit';
 import { userNames, type UserRecord } from './auth/users';
@@ -25,17 +26,19 @@ import { singleton } from './singleton';
 import { store } from './store';
 import { logger } from './telemetry/logger';
 import { getVersion, recordVersion, versionFor } from './versions';
+import { HttpError } from './errors';
 
 const TICK_MS = 5_000;
 /** A schedule can be set at most this far ahead (a year). */
 const MAX_AHEAD_MS = 366 * 24 * 3600_000;
 
-export class ScheduleError extends Error {
+export class ScheduleError extends HttpError {
+  static readonly errorName: string = 'ScheduleError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 
@@ -94,6 +97,7 @@ export interface ScheduleAsk {
 
 /** Schedule a publish or unpublish. With four-eyes publishing on this also files the request that approves it. */
 export function schedulePublish(ask: ScheduleAsk): ScheduledPublish {
+  guardAccessFlow(ask.workflowId, ask.by);
   const workflow = store.getWorkflow(ask.workflowId);
   if (!workflow) throw new ScheduleError('Workflow not found', 404);
   const runAt = parseRunAt(ask.at);
@@ -170,7 +174,7 @@ export function cancelSchedule(id: string, user: Pick<UserRecord, 'id' | 'role'>
   const row = scheduleRow(id);
   if (!row || (workflowId && row.workflow_id !== workflowId)) throw new ScheduleError('Scheduled publish not found', 404);
   if (row.status !== 'pending' && row.status !== 'awaiting_approval') throw new ScheduleError(`This schedule is already ${row.status}`, 409);
-  if (user.id !== row.created_by && !can(user, 'settings:manage')) throw new ScheduleError('Only who scheduled it, or an owner or admin, can cancel it', 403);
+  if (user.id !== row.created_by && !isInstanceAdmin(user)) throw new ScheduleError('Only who scheduled it, or an owner or admin, can cancel it', 403);
   const next: ScheduleRow = { ...row, status: 'canceled', finished_at: new Date().toISOString(), result: `Canceled by ${userNames().get(user.id) ?? user.id}` };
   saveScheduleRow(next);
   if (row.request_id) {

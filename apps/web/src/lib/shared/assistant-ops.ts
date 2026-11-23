@@ -8,7 +8,8 @@
  * the registry; the editor applies them with it against its own node types.
  */
 import { nanoid } from 'nanoid';
-import { changeParameter, defaultParameters, defaultVersionOf, indexedPorts } from '@landflow/protocol';
+import { changeParameter, defaultParameters, defaultVersionOf, expandPorts, indexedPorts, remapExpandedConnections } from '@landflow/protocol';
+import { ASSUMED_BUBBLES, BUBBLE, bubbleFootprint } from './agent-bubbles'; // AG16
 import { delegatesOf, replaceWithTeam, turnIntoTeamBlocker } from './turn-into-team';
 import type { ConnectionType, NodeDescriptor, NodeRun, PropertyDescriptor, Workflow, WorkflowConnection, WorkflowNode } from './types';
 
@@ -30,6 +31,11 @@ export type AssistantOp =
       before?: string;
       /** Output of `after` to wire from (If/Switch-like nodes: 0 = first branch). */
       output?: number;
+      /**
+       * A Run an Agent node for an agent that doesn't exist yet (Spotlight's `newAgent`): the editor saves it as a draft
+       * when the change is applied and points the node at it; a person gives it tools and publishes it before it runs.
+       */
+      newAgent?: NewAgentSpec;
     }
   | { op: 'setParameters'; node: string; parameters: Record<string, unknown> }
   | { op: 'connect'; from: string; to: string; output?: number; input?: number; type?: ConnectionType }
@@ -41,10 +47,59 @@ export type AssistantOp =
    * team when the change is applied; the node's team is filled in then.
    */
   | { op: 'turnIntoTeam'; node: string }
+  /**
+   * AG17: change the agent a Run an Agent node runs (its model, tools, knowledge, instructions), never the node: nothing in the graph
+   * changes. Spotlight's agent change card shows it and a person applies it (components/editor/spotlight/agent-ask.ts `changeAgentCard`).
+   * `agentId` is resolved from the node when the op applies.
+   */
+  | { op: 'changeAgent'; node?: string; agentId?: string; /** A Run a Team node's team: the card changes its lead. */ teamId?: string; change: string }
   /** A node's run settings (retries, on error, timeout), not its parameters. */
   | { op: 'setNodeSettings'; node: string; settings: NodeSettingsPatch }
   /** The workflow's settings: its error workflow, timeout, automatic retries. */
   | { op: 'setWorkflowSettings'; settings: WorkflowSettingsPatch };
+
+/** A dedicated agent Spotlight proposes when none of the published ones fits a step (docs/assistant.md#agents-and-teams). */
+export interface NewAgentSpec {
+  name: string;
+  /** What it does, one or two sentences: the Agents page shows it and other flows find it by it. */
+  description: string;
+  /** Its system instructions: how it does the job. */
+  instructions: string;
+  /** SB05: the apps or actions it needs ("Linear: read issues"), for the Agent architect: at most 8, each cut to 80. */
+  tools?: string[];
+  /** SB05: the documents it answers from, for the architect to give it a knowledge base: cut to 200. */
+  knowledge?: string;
+  /** AG19: hints from the tenant (the architect keeps each when it fits, and says why when it does not): a model, an existing knowledge base, a folder the person named, node types found in the plugins. */
+  agentModel?: string;
+  knowledgeBase?: string;
+  knowledgeFolder?: string;
+  toolNodes?: Array<{ nodeType: string; operation?: string }>;
+}
+
+/** The node type that runs an agent as a step. */
+export const RUN_AGENT_TYPE = 'core.messageAgent';
+
+/** A model's `newAgent` fields, cut to size; undefined without a name. */
+export function newAgentSpec(o: Record<string, unknown> | undefined): NewAgentSpec | undefined {
+  const name = text(o?.name)?.slice(0, 80);
+  if (!name) return undefined;
+  // SB05: tools and knowledge, when the model said any.
+  const tools = Array.isArray(o?.tools) ? o.tools.flatMap((t) => text(t)?.slice(0, 80) ?? []).slice(0, 8) : [];
+  const knowledge = text(o?.knowledge)?.slice(0, 200);
+  // AG19: the tenant hints (`model`, `knowledgeBase`, `knowledgeFolder`, `toolNodes`), cut to size.
+  const agentModel = text(o?.model)?.slice(0, 100);
+  const knowledgeBase = text(o?.knowledgeBase)?.slice(0, 200);
+  const knowledgeFolder = text(o?.knowledgeFolder)?.slice(0, 200);
+  const toolNodes = Array.isArray(o?.toolNodes)
+    ? o.toolNodes.flatMap((t) => {
+        const r = t && typeof t === 'object' ? (t as Record<string, unknown>) : typeof t === 'string' ? { nodeType: t } : undefined;
+        const nodeType = text(r?.nodeType)?.slice(0, 120);
+        const operation = text(r?.operation)?.slice(0, 80);
+        return nodeType ? [{ nodeType, ...(operation && { operation }) }] : [];
+      }).slice(0, 8)
+    : [];
+  return { name, description: text(o?.description)?.slice(0, 500) ?? '', instructions: text(o?.instructions)?.slice(0, 4000) ?? '', ...(tools.length && { tools }), ...(knowledge && { knowledge }), ...(agentModel && { agentModel }), ...(knowledgeBase && { knowledgeBase }), ...(knowledgeFolder && { knowledgeFolder }), ...(toolNodes.length && { toolNodes }) /* AG19: */ };
+}
 
 /** The node settings an op may change. */
 export interface NodeSettingsPatch {
@@ -55,6 +110,8 @@ export interface NodeSettingsPatch {
   onError?: 'stop' | 'continue';
   timeoutSeconds?: number;
   alwaysOutputData?: boolean;
+  /** Run once for all input items, with the first item, instead of once per item. */
+  executeOnce?: boolean;
   disabled?: boolean;
 }
 
@@ -74,6 +131,7 @@ const NODE_SETTINGS: Record<keyof NodeSettingsPatch, 'boolean' | 'number' | 'onE
   onError: 'onError',
   timeoutSeconds: 'number',
   alwaysOutputData: 'boolean',
+  executeOnce: 'boolean',
   disabled: 'boolean',
 };
 const WORKFLOW_SETTINGS: Record<keyof WorkflowSettingsPatch, 'string' | 'number'> = {
@@ -83,14 +141,22 @@ const WORKFLOW_SETTINGS: Record<keyof WorkflowSettingsPatch, 'string' | 'number'
   retryBaseDelaySeconds: 'number',
 };
 
+// SB09: what a node's settings may be (the engine ignores or mishandles the rest): out of range is dropped and named by the caller.
+const NODE_RANGES: Record<string, (value: number) => boolean> = {
+  maxTries: (v) => Number.isInteger(v) && v >= 1 && v <= 10,
+  waitBetweenTriesMs: (v) => Number.isInteger(v) && v >= 0 && v <= 60_000,
+  timeoutSeconds: (v) => v >= 0.1 && v <= 86_400,
+};
+const NODE_RANGE_WORDS: Record<string, string> = { maxTries: 'a whole number from 1 to 10', waitBetweenTriesMs: 'a whole number from 0 to 60000 milliseconds', timeoutSeconds: '0.1 to 86400 seconds' };
+
 /** The settings of `raw` that `allowed` names, with the right types; undefined when none is left. */
-function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError' | 'backoff'>): T | undefined {
+function settingsOf<T>(raw: unknown, allowed: Record<string, 'boolean' | 'number' | 'string' | 'onError' | 'backoff'>, ranges?: Record<string, (value: number) => boolean>): T | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     const kind = allowed[key];
     if (kind === 'boolean' && typeof value === 'boolean') out[key] = value;
-    else if (kind === 'number' && typeof value === 'number' && Number.isFinite(value) && value >= 0) out[key] = value;
+    else if (kind === 'number' && typeof value === 'number' && Number.isFinite(value) && value >= 0 && (ranges?.[key]?.(value) ?? true)) out[key] = value; // SB09: a node setting's range
     else if (kind === 'string' && typeof value === 'string' && value.trim()) out[key] = value.trim();
     else if (kind === 'onError' && (value === 'stop' || value === 'continue')) out[key] = value;
     else if (kind === 'backoff' && (value === 'fixed' || value === 'exponential')) out[key] = value;
@@ -164,6 +230,7 @@ function parseOp(o: Record<string, unknown> | undefined): AssistantOp | undefine
         ...(text(o.after) && { after: text(o.after) }),
         ...(text(o.before) && { before: text(o.before) }),
         ...(index(o.output) !== undefined && { output: index(o.output) }),
+        ...(type === RUN_AGENT_TYPE && newAgentSpec(record(o.newAgent)) && { newAgent: newAgentSpec(record(o.newAgent)) }),
       };
     }
     case 'setParameters':
@@ -189,6 +256,29 @@ function parseOp(o: Record<string, unknown> | undefined): AssistantOp | undefine
     }
     case 'turnIntoTeam':
       return node ? { op: 'turnIntoTeam', node } : undefined;
+    case 'changeAgent': {
+      // AG17: the change in the person's words (1–2000 characters) and the node or the agent it is for.
+      const change = text(o.change)?.trim();
+      const agentId = text(o.agentId);
+      if (!change || change.length > 2000 || (!node && !agentId)) return undefined;
+      return { op: 'changeAgent', ...(node && { node }), ...(agentId && { agentId }), change };
+    }
+    case 'newAgent': {
+      // A new agent and the Run an Agent node that runs it: an addNode the editor finishes by saving the agent.
+      const spec = newAgentSpec(record(o.agent) ?? o);
+      if (!spec) return undefined;
+      return {
+        op: 'addNode',
+        type: RUN_AGENT_TYPE,
+        name: text(o.nodeName) ?? spec.name,
+        newAgent: spec,
+        ...(text(o.ref) && { ref: text(o.ref) }),
+        ...(record(o.parameters) && { parameters: record(o.parameters) }),
+        ...(text(o.after) && { after: text(o.after) }),
+        ...(text(o.before) && { before: text(o.before) }),
+        ...(index(o.output) !== undefined && { output: index(o.output) }),
+      };
+    }
     case 'setNodeSettings': {
       const settings = settingsOf<NodeSettingsPatch>(o.settings, NODE_SETTINGS);
       return node && settings ? { op: 'setNodeSettings', node, settings } : undefined;
@@ -313,7 +403,7 @@ function planConnection(
   const type = wanted.type ?? (sd.kind === 'subnode' ? sd.supplies : td.kind === 'subnode' ? td.supplies : undefined) ?? 'main';
 
   if (type === 'main') {
-    const outputs = sd.outputs.filter((p) => p.type === 'main');
+    const outputs = expandPorts(sd.outputs, source.parameters).filter((p) => p.type === 'main');
     const inputs = td.inputs.filter((p) => p.type === 'main');
     const output = wanted.output ?? 0;
     if (!outputs.length) return `“${source.name}” has no output to connect from`;
@@ -328,10 +418,25 @@ function planConnection(
 
   const fits = (from: NodeDescriptor, to: NodeDescriptor) =>
     to.inputs.some((p) => p.type === type) && (from.supplies === type || from.outputs.some((p) => p.type === type) || (type === 'ai_tool' && Boolean(from.usableAsTool)));
-  if (fits(sd, td)) return { type, source, target, sourceIndex: 0, targetIndex: 0 };
-  // Models often wire the agent to its sub-node; the edge runs sub-node → agent.
-  if (fits(td, sd)) return { type, source: target, target: source, sourceIndex: 0, targetIndex: 0 };
-  return `“${source.name}” can’t be attached to “${target.name}” as ${type}`;
+  const planned: PlannedConnection | undefined = fits(sd, td)
+    ? { type, source, target, sourceIndex: 0, targetIndex: 0 }
+    : // Models often wire the agent to its sub-node; the edge runs sub-node → agent.
+      fits(td, sd)
+      ? { type, source: target, target: source, sourceIndex: 0, targetIndex: 0 }
+      : undefined;
+  if (!planned) return `“${source.name}” can’t be attached to “${target.name}” as ${type}`;
+  // AG17: a Run an Agent / Run a Team node runs a saved agent: its model, memory and tools are the agent's, so wiring them here is refused.
+  const bound = boundAgentRef(planned.target);
+  if (bound) return `“${planned.target.name}” runs the agent “${bound}”: its model, memory and tools are the agent’s. Change the agent instead (changeAgent).`;
+  return planned;
+}
+
+/** AG17: the plain agent (or team) id a Run an Agent / Run a Team node is bound to; undefined for an expression, an empty id or any other node. */
+export function boundAgentRef(node: Pick<WorkflowNode, 'type' | 'parameters'>): string | undefined {
+  const plain = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
+  if (node.type === 'core.messageAgent' && plain(node.parameters?.agentId)) return node.parameters.agentId.trim();
+  if (node.type === 'core.runTeam' && plain(node.parameters?.teamId)) return node.parameters.teamId.trim();
+  return undefined;
 }
 
 /** Add a planned connection; a port with maxConnections drops its oldest edge, as in the editor. */
@@ -358,10 +463,38 @@ function addConnection(workflow: Workflow, lookup: DescriptorLookup, plan: Plann
 const overlaps = (workflow: Workflow, x: number, y: number, self: string) =>
   workflow.nodes.some((n) => n.id !== self && Math.abs(n.position[0] - x) < 100 && Math.abs(n.position[1] - y) < 90);
 
-/** The first spot from (x, y) that no other node covers, stepping down (or right, for sub-nodes). */
+/**
+ * AG16: the box a node bound to a saved agent (a Run an Agent node with a plain `agentId`, a Run a Team node with a plain `teamId`)
+ * keeps clear for its bubbles. Placement here is pure and has no agent data, so it assumes `ASSUMED_BUBBLES` of them.
+ */
+function bubbleBox(n: WorkflowNode): { x0: number; x1: number; y0: number; y1: number } | undefined {
+  const plain = (v: unknown) => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
+  const bound = (n.type === 'core.messageAgent' && plain(n.parameters?.agentId)) || (n.type === 'core.runTeam' && plain(n.parameters?.teamId));
+  if (!bound) return undefined;
+  const fp = bubbleFootprint(240, ASSUMED_BUBBLES);
+  return { x0: n.position[0] + fp.left, x1: n.position[0] + fp.right, y0: n.position[1] + BUBBLE.below, y1: n.position[1] + fp.bottom };
+}
+
+/** A spot a node of the usual size (88 px) at (x, y) would take inside a bound node's bubble box, as that box; else undefined. */
+const inBubbles = (workflow: Workflow, x: number, y: number, self: string) =>
+  workflow.nodes
+    .filter((n) => n.id !== self)
+    .map(bubbleBox)
+    .find((b) => b && x < b.x1 && x + 88 > b.x0 && y < b.y1 && y + 88 > b.y0);
+
+/** The first spot from (x, y) that no other node covers, stepping down (or right, for sub-nodes); never inside a bound node's bubbles (right of them, + 40, for a spot stepping down). */
 function freeSpot(workflow: Workflow, x: number, y: number, self: string, step: [number, number] = [0, ROW]): [number, number] {
   let [px, py] = [x, y];
-  for (let i = 0; i < 12 && overlaps(workflow, px, py, self); i++) [px, py] = [px + step[0], py + step[1]];
+  for (let i = 0; i < 12; i++) {
+    const box = inBubbles(workflow, px, py, self);
+    if (box) {
+      if (step[1]) px = box.x1 + 40;
+      else [px, py] = [px, box.y1 + 24];
+      continue;
+    }
+    if (!overlaps(workflow, px, py, self)) break;
+    [px, py] = [px + step[0], py + step[1]];
+  }
   return [px, py];
 }
 
@@ -378,7 +511,7 @@ function placeAdded(workflow: Workflow, lookup: DescriptorLookup, id: string): [
   if (incoming && byId(incoming.source)) {
     const parent = byId(incoming.source)!;
     const parentDescriptor = lookup(parent.type);
-    const branchOffset = parentDescriptor && parentDescriptor.outputs.filter((p) => p.type === 'main').length > 1 ? incoming.sourceIndex * ROW : 0;
+    const branchOffset = parentDescriptor && expandPorts(parentDescriptor.outputs, parent.parameters).filter((p) => p.type === 'main').length > 1 ? incoming.sourceIndex * ROW : 0;
     return freeSpot(workflow, parent.position[0] + COLUMN, parent.position[1] + branchOffset, id);
   }
   const others = workflow.nodes.filter((n) => n.id !== id);
@@ -424,7 +557,9 @@ function insertBefore(
 
 /** An inserted node takes its target's place; the target and everything after it move one column right. */
 function makeRoom(workflow: Workflow, id: string, target: string): Workflow {
-  const anchor = workflow.nodes.find((n) => n.id === target)!;
+  const anchor = workflow.nodes.find((n) => n.id === target);
+  // The node to go in front of isn't there (removed by an earlier op of the same change): nothing to move.
+  if (!anchor) return workflow;
   const moved = new Set<string>();
   const queue = [target];
   while (queue.length) {
@@ -540,6 +675,7 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
           ...(after && { after: handle(after) }),
           ...(before && { before: handle(before) }),
           ...(after && op.output !== undefined && { output: op.output }),
+          ...(op.newAgent && op.type === RUN_AGENT_TYPE && { newAgent: op.newAgent }),
         });
         break;
       }
@@ -565,6 +701,13 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
           break;
         }
         wf = { ...wf, nodes: wf.nodes.map((n) => (n.id === node.id ? { ...n, parameters: merged.parameters } : n)) };
+        // A node whose outputs follow its parameters (Decide): each connection stays on the output of the same name.
+        if (descriptor.outputs?.some((p) => p.expand)) {
+          const mine = (c: WorkflowConnection) => c.source === node.id && c.type === 'main';
+          const moved = remapExpandedConnections(node.parameters, merged.parameters, wf.connections.filter(mine));
+          for (const gone of wf.connections.filter((c) => mine(c) && !moved.some((m) => m.id === c.id))) dropped.push(`connection “${node.name}” → “${wf.nodes.find((n) => n.id === gone.target)?.name ?? gone.target}” (its output no longer exists)`);
+          wf = { ...wf, connections: [...wf.connections.filter((c) => !mine(c)), ...moved] };
+        }
         applied.push({ op: 'setParameters', node: handle(node), parameters: Object.fromEntries(merged.applied.map((key) => [key, ranged.patch[key]])) });
         break;
       }
@@ -693,12 +836,44 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
         break;
       }
 
+      case 'changeAgent': {
+        // AG17: nothing in the graph changes; the op names the agent for Spotlight's change card.
+        const node = op.node ? find(op.node) : undefined;
+        if (op.node && !node) {
+          dropped.push(`change the agent of “${op.node}”: no such node`);
+          break;
+        }
+        const plain = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '' && !v.trim().startsWith('=') && !v.includes('{{');
+        const agentId = op.agentId ?? (node?.type === RUN_AGENT_TYPE && plain(node.parameters?.agentId) ? node.parameters.agentId.trim() : undefined);
+        // A Run a Team node stands for its lead: the card reads the team and picks the lead (changeAgentCard).
+        const teamId = !agentId && node?.type === 'core.runTeam' && plain(node.parameters?.teamId) ? node.parameters.teamId.trim() : undefined;
+        if (teamId) {
+          applied.push({ op: 'changeAgent', node: handle(node!), teamId, change: op.change });
+          break;
+        }
+        if (!agentId) {
+          dropped.push(node ? `change the agent of “${node.name}”: it has no agent chosen yet` : 'change the agent: no agent given');
+          break;
+        }
+        applied.push({ op: 'changeAgent', ...(node && { node: handle(node) }), agentId, change: op.change });
+        break;
+      }
+
       case 'setNodeSettings': {
         const node = find(op.node);
-        const settings = settingsOf<NodeSettingsPatch>(op.settings, NODE_SETTINGS);
+        // SB09: ranges, then retry means retry: tries above 1 (or a backoff or a wait) turn retryOnFail on, and retryOnFail false with tries above 1 contradicts itself.
+        const settings = settingsOf<NodeSettingsPatch>(op.settings, NODE_SETTINGS, NODE_RANGES);
+        const outOfRange = node ? Object.entries(op.settings).filter(([key, value]) => NODE_RANGES[key] && typeof value === 'number' && (settings as Record<string, unknown> | undefined)?.[key] === undefined) : [];
+        for (const [key, value] of outOfRange) dropped.push(`“${node?.name}”: ${key} ${value} is out of range (use ${NODE_RANGE_WORDS[key]})`);
         if (!node || !settings) {
-          dropped.push(node ? `settings of “${node.name}”: nothing to change` : `settings: no node “${op.node}”`);
+          if (!outOfRange.length) dropped.push(node ? `settings of “${node.name}”: nothing to change` : `settings: no node “${op.node}”`);
           break;
+        }
+        if (settings.retryOnFail === false && (settings.maxTries ?? 0) > 1) {
+          dropped.push(`“${node.name}”: maxTries ${settings.maxTries} with retryOnFail false contradict each other (turn retry on, or leave the tries out)`);
+          delete settings.maxTries;
+        } else if (settings.retryOnFail === undefined && ((settings.maxTries ?? 0) > 1 || settings.retryBackoff || settings.waitBetweenTriesMs !== undefined)) {
+          settings.retryOnFail = true;
         }
         wf = { ...wf, nodes: wf.nodes.map((n) => (n.id === node.id ? { ...n, ...settings } : n)) };
         applied.push({ op: 'setNodeSettings', node: handle(node), settings });
@@ -721,7 +896,7 @@ export function applyOps(workflow: Workflow, ops: AssistantOp[], lookup: Descrip
   // Lay out new nodes once their connections are known, in the order they were added.
   for (const id of added) {
     const target = insertions.get(id);
-    wf = target ? makeRoom(wf, id, target) : { ...wf, nodes: wf.nodes.map((n) => (n.id === id ? { ...n, position: placeAdded(wf, lookup, id) } : n)) };
+    wf = target && wf.nodes.some((n) => n.id === target) ? makeRoom(wf, id, target) : { ...wf, nodes: wf.nodes.map((n) => (n.id === id ? { ...n, position: placeAdded(wf, lookup, id) } : n)) };
   }
   return { workflow: wf, applied, dropped, ignored, added };
 }
@@ -760,6 +935,9 @@ export function structuralWarnings(before: Workflow, after: Workflow, lookup: De
     if (!descriptor || descriptor.kind === 'trigger') continue;
     if (existed.has(node.id)) {
       if (fed(before, node.id) && !fed(after, node.id) && !attached(node.id)) warnings.push(`“${node.name}” no longer receives any input`);
+      // An output that is gone (the options of a Decide were edited) with a connection still on it.
+      const count = expandPorts(descriptor.outputs, node.parameters).filter((p) => p.type === 'main').length;
+      for (const c of after.connections.filter((x) => x.source === node.id && x.type === 'main' && (x.sourceIndex ?? 0) >= count)) warnings.push(`“${node.name}” is connected from output ${c.sourceIndex ?? 0} to “${name(c.target)}”, but it only has ${count} outputs`);
       const now = inputs(after, node.id);
       // An edge back from something downstream closes a loop (docs/assistant.md): a second input by design.
       const closesLoop = now.filter((c) => !before.connections.some((b) => b.id === c.id)).every((c) => downstream(after, node.id).has(c.source));
@@ -814,7 +992,7 @@ export function wiringWarnings(before: Workflow, after: Workflow, lookup: Descri
   for (const source of after.nodes) {
     const descriptor = lookup(source.type);
     const outs = new Set(after.connections.filter((c) => c.source === source.id && c.type === 'main').map((c) => c.sourceIndex ?? 0));
-    const branches = BRANCH_TYPES.has(source.type) || (descriptor?.outputs.filter((p) => p.type === 'main').length ?? 0) > 1;
+    const branches = BRANCH_TYPES.has(source.type) || (descriptor ? expandPorts(descriptor.outputs, source.parameters).filter((p) => p.type === 'main').length : 0) > 1;
     if (!branches || outs.size < 2) continue;
     for (const c of after.connections.filter((x) => x.source === source.id && x.type === 'main' && isNew(x))) {
       // A Merge joins branches on purpose.
@@ -1091,10 +1269,45 @@ export interface DiffLine {
   text: string;
 }
 
+/**
+ * A parameter's value as a person reads it: a Set's `{"values":[{"name":"tagged","value":true}]}` is `tagged = true`,
+ * a list of items is their values, an object its first keys. JSON only for what has no shape to read.
+ */
+export function readableValue(value: unknown, depth = 0, whole = false): string { // SB08: `whole` shows values whole, for the diff
+  if (value === null || value === undefined) return 'empty';
+  if (typeof value !== 'object') return String(value);
+  if (depth > 3 && !whole) return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    if (!value.length) return 'none';
+    const named = value.every((v) => v && typeof v === 'object' && !Array.isArray(v) && 'name' in v);
+    const shown = (whole ? value : value.slice(0, 3)).map((v) => (named ? `${String((v as Record<string, unknown>).name)} = ${readableValue((v as Record<string, unknown>).value ?? (v as Record<string, unknown>).type, depth + 1, whole)}` : readableValue(v, depth + 1, whole)));
+    return shown.join(', ') + (!whole && value.length > 3 ? ` +${value.length - 3} more` : '');
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (!entries.length) return 'empty';
+  // A wrapper with one key (`values`, `conditions`, `options`): what it holds.
+  if (entries.length === 1) return readableValue(entries[0][1], depth + 1, whole);
+  const shown = (whole ? entries : entries.slice(0, 3)).map(([key, inner]) => `${key}: ${readableValue(inner, depth + 1, whole)}`);
+  return shown.join(', ') + (!whole && entries.length > 3 ? ` +${entries.length - 3} more` : '');
+}
+
 const preview = (value: unknown) => {
-  const shown = typeof value === 'string' ? value : JSON.stringify(value);
-  return shown.length > 48 ? `${shown.slice(0, 47)}…` : shown;
+  const shown = readableValue(value);
+  return shown.length > 64 ? `${shown.slice(0, 63)}…` : shown;
 };
+
+/** A parameter that is a list of named values (a Set's fields), unwrapped from a one-key wrapper: those, else none. */
+const namedItems = (value: unknown): unknown[] | undefined => {
+  let inner = value;
+  if (inner && typeof inner === 'object' && !Array.isArray(inner) && Object.keys(inner).length === 1) inner = Object.values(inner)[0];
+  return Array.isArray(inner) && inner.length && inner.every((v) => v && typeof v === 'object' && !Array.isArray(v) && 'name' in v) ? inner : undefined;
+};
+
+/** Parameters as `key = value` pairs; a Set's fields as their own `name = value` pairs. */
+const pairs = (parameters: Record<string, unknown>) =>
+  Object.entries(parameters)
+    .map(([key, value]) => (namedItems(value) ? preview(value) : `${key} = ${preview(value)}`))
+    .join(', ');
 
 /** One readable line per op: + node, ~ params, → connection, − removed, ✎ renamed. */
 export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): DiffLine[] {
@@ -1104,6 +1317,11 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
     switch (op.op) {
       case 'addNode': {
         const label = op.name ?? lookup?.(op.type)?.displayName ?? op.type;
+        if (op.newAgent) {
+          if (op.ref) names.set(op.ref, label);
+          const at = op.before ? ` before “${name(op.before)}”` : op.after ? ` after “${name(op.after)}”` : '';
+          return { sign: '+', text: `new agent “${op.newAgent.name}” (saved as a draft) and a Run an Agent step for it${at}${op.newAgent.description ? ` · ${preview(op.newAgent.description)}` : ''}` };
+        }
         if (op.ref) names.set(op.ref, label);
         const kind = lookup?.(op.type)?.displayName;
         const where = op.before
@@ -1111,16 +1329,14 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
           : op.after
             ? ` after “${name(op.after)}”${op.output ? ` (output ${op.output})` : ''}`
             : '';
-        const params = Object.entries(op.parameters ?? {}).slice(0, 3);
-        const set = params.length ? ` · ${params.map(([key, value]) => `${key} = ${preview(value)}`).join(', ')}` : '';
+        const params = Object.fromEntries(Object.entries(op.parameters ?? {}).slice(0, 3));
+        const set = Object.keys(params).length ? ` · ${pairs(params)}` : '';
         return { sign: '+', text: `“${label}”${kind && kind !== label ? ` (${kind})` : ''}${where}${set}` };
       }
       case 'setParameters':
         return {
           sign: '~',
-          text: `“${name(op.node)}”: ${Object.entries(op.parameters)
-            .map(([key, value]) => `${key} = ${preview(value)}`)
-            .join(', ')}`,
+          text: `“${name(op.node)}”: ${pairs(op.parameters)}`,
         };
       case 'connect':
         return { sign: '→', text: `“${name(op.from)}” → “${name(op.to)}”${op.type && op.type !== 'main' ? ` as ${op.type.replace('ai_', '')}` : op.output ? ` (output ${op.output})` : ''}` };
@@ -1133,12 +1349,202 @@ export function describeOps(ops: AssistantOp[], lookup?: DescriptorLookup): Diff
         return { sign: '✎', text: `“${name(op.node)}” → “${op.name}”` };
       case 'turnIntoTeam':
         return { sign: '~', text: `“${name(op.node)}” and the agents under it become a team (one Run a Team node)` };
+      case 'changeAgent':
+        return { sign: '~', text: `Change ${op.node ? name(op.node) : (op.agentId ?? 'the agent')}: ${op.change}` }; // AG17:
       case 'setNodeSettings':
         return { sign: '~', text: `“${name(op.node)}” settings: ${Object.entries(op.settings).map(([key, value]) => `${key} = ${preview(value)}`).join(', ')}` };
       case 'setWorkflowSettings':
         return { sign: '~', text: `workflow settings: ${Object.entries(op.settings).map(([key, value]) => `${key} = ${preview(value)}`).join(', ')}` };
     }
   });
+}
+
+// SB08: a real diff before Apply: what each touched step was and what it becomes.
+export interface FieldDiff {
+  key: string;
+  label: string;
+  /** What was there; none for a step the change adds. */
+  before?: string;
+  /** What it becomes; none for a value that goes away. */
+  after?: string;
+  /** Over 120 characters on either side, or with a line break: the card folds it behind "Show all". */
+  long: boolean;
+}
+
+export interface StepDiff {
+  /** The step's name after the change (the old one is `was` for a rename). */
+  node: string;
+  kind: 'added' | 'changed' | 'removed' | 'renamed';
+  was?: string;
+  fields: FieldDiff[];
+  /** "→ A → B" for a connection that appears, "− A → B" for one that goes. */
+  wires: string[];
+}
+
+export interface ChangeDiff {
+  steps: StepDiff[];
+  /** Steps of the workflow no op touches. */
+  untouched: number;
+  /** Workflow settings that change. */
+  workflow?: FieldDiff[];
+}
+
+const SETTING_LABELS: Record<string, string> = {
+  retryOnFail: 'Retry on fail',
+  maxTries: 'Max tries',
+  waitBetweenTriesMs: 'Wait between tries (ms)',
+  retryBackoff: 'Retry backoff',
+  onError: 'On error',
+  timeoutSeconds: 'Timeout (seconds)',
+  alwaysOutputData: 'Always output data',
+  executeOnce: 'Execute once',
+  disabled: 'Disabled',
+};
+const WORKFLOW_SETTING_LABELS: Record<string, string> = {
+  errorWorkflowId: 'Error workflow',
+  timeoutSeconds: 'Timeout (seconds)',
+  retryMaxAttempts: 'Retry attempts',
+  retryBaseDelaySeconds: 'Retry delay (seconds)',
+};
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a === '' ? null : (a ?? null)) === JSON.stringify(b === '' ? null : (b ?? null));
+const settingText = (value: unknown) => (value === undefined || value === null ? 'default' : typeof value === 'boolean' ? (value ? 'on' : 'off') : String(value));
+const flagText = (value: unknown) => (typeof value === 'boolean' || value === undefined ? (value ? 'on' : 'off') : String(value));
+
+function field(key: string, label: string, before: string | undefined, after: string | undefined): FieldDiff {
+  const text = `${before ?? ''}${after ?? ''}`;
+  return { key, label, ...(before !== undefined && { before }), ...(after !== undefined && { after }), long: (before?.length ?? 0) > 120 || (after?.length ?? 0) > 120 || /\n/.test(text) };
+}
+
+/**
+ * What `ops` would change in `before`, per step and value, read by applying them (`applyOps`, the same rules as Apply):
+ * each touched step's parameters (named as the node panel names them), settings, credentials and wires, the old and the
+ * new value whole, and how many steps stay as they are. Pure: the card calls it with the canvas and the proposal's ops.
+ */
+export function diffOps(before: Workflow, ops: AssistantOp[] | AssistantOp[][], lookup?: DescriptorLookup): ChangeDiff {
+  const find = lookup ?? (() => undefined);
+  // Ops grouped by proposal chain the way Apply does: one `applyOps` per proposal (its own refs), each on the last result.
+  const groups: AssistantOp[][] = ops.length > 0 && Array.isArray(ops[0]) ? (ops as AssistantOp[][]) : [ops as AssistantOp[]];
+  const after = groups.reduce((wf, g) => applyOps(wf, g, find).workflow, before);
+  const wasById = new Map(before.nodes.map((n) => [n.id, n]));
+  const nowById = new Map(after.nodes.map((n) => [n.id, n]));
+  const nameOf = (id: string) => nowById.get(id)?.name ?? wasById.get(id)?.name ?? id;
+  const edgeKey = (c: WorkflowConnection) => `${c.type}|${c.source}:${c.sourceIndex}|${c.target}:${c.targetIndex}`;
+  const wasEdges = new Set(before.connections.map(edgeKey));
+  const nowEdges = new Set(after.connections.map(edgeKey));
+  const appeared = after.connections.filter((c) => !wasEdges.has(edgeKey(c)));
+  const gone = before.connections.filter((c) => !nowEdges.has(edgeKey(c)));
+  const isAdded = (id: string) => !wasById.has(id) && nowById.has(id);
+  const arrow = (c: WorkflowConnection) => `${nameOf(c.source)} → ${nameOf(c.target)}${c.type !== 'main' ? ` (${c.type.replace('ai_', '')})` : ''}`;
+
+  /** Wires by the step they are shown under. */
+  const wires = new Map<string, string[]>();
+  const show = (id: string, text: string) => wires.set(id, [...(wires.get(id) ?? []), text]);
+  for (const c of appeared) show(isAdded(c.target) ? c.target : c.source, `→ ${arrow(c)}`);
+  for (const c of gone) {
+    if (!nowById.has(c.source) || !nowById.has(c.target)) continue;
+    // A connection an added step now sits in is shown under that step.
+    const between = after.nodes.find((n) => isAdded(n.id) && after.connections.some((e) => e.source === c.source && e.target === n.id) && after.connections.some((e) => e.source === n.id && e.target === c.target));
+    show(between?.id ?? c.source, `− ${arrow(c)}`);
+  }
+
+  const steps: StepDiff[] = [];
+  const fieldsOf = (was: WorkflowNode | undefined, now: WorkflowNode): FieldDiff[] => {
+    const descriptor = find(now.type);
+    const props = descriptor?.properties ?? [];
+    const defaults = was || !descriptor ? {} : defaultParameters(descriptor);
+    const keys = [...new Set([...props.map((p) => p.name), ...Object.keys(was?.parameters ?? {}), ...Object.keys(now.parameters)])].filter((k) => k in (was?.parameters ?? {}) || k in now.parameters);
+    const out: FieldDiff[] = [];
+    for (const key of keys) {
+      const a = was?.parameters[key] ?? (was ? undefined : defaults[key]);
+      const b = now.parameters[key];
+      if (sameValue(a, b)) continue;
+      const prop = props.find((p) => p.name === key);
+      const label = prop?.displayName ?? key;
+      // An option reads as its name, as the node panel shows it ("None → Generic Credential Type").
+      const shown = (v: unknown) => (v !== null && typeof v !== 'object' ? prop?.options?.find((o) => 'value' in o && o.value === v)?.name : undefined) ?? readableValue(v, 0, true);
+      out.push(field(key, label, was ? shown(a) : undefined, b === undefined ? 'empty' : shown(b)));
+    }
+    for (const key of Object.keys(SETTING_LABELS)) {
+      const a = (was as unknown as Record<string, unknown> | undefined)?.[key];
+      const b = (now as unknown as Record<string, unknown>)[key];
+      if (sameValue(a, b)) continue;
+      const render = typeof (a ?? b) === 'boolean' || key === 'retryOnFail' ? flagText : settingText;
+      out.push(field(`setting.${key}`, SETTING_LABELS[key], was ? render(a) : undefined, render(b)));
+    }
+    for (const type of new Set([...Object.keys(was?.credentials ?? {}), ...Object.keys(now.credentials ?? {})])) {
+      const a = was?.credentials?.[type]?.name;
+      const b = now.credentials?.[type]?.name;
+      if (a === b) continue;
+      out.push(field(`credential.${type}`, `Credential (${type})`, was ? (a ?? 'none') : undefined, b ?? 'none'));
+    }
+    return out;
+  };
+
+  for (const now of after.nodes) {
+    const was = wasById.get(now.id);
+    const w = wires.get(now.id) ?? [];
+    if (!was) {
+      steps.push({ node: now.name, kind: 'added', fields: fieldsOf(undefined, now), wires: w });
+      continue;
+    }
+    const fields = fieldsOf(was, now);
+    const renamed = was.name !== now.name;
+    if (!renamed && !fields.length && !w.length) continue;
+    steps.push({ node: now.name, kind: renamed ? 'renamed' : 'changed', ...(renamed && { was: was.name }), fields, wires: w });
+  }
+  for (const was of before.nodes) {
+    if (!nowById.has(was.id)) steps.push({ node: was.name, kind: 'removed', fields: [], wires: wires.get(was.id) ?? [] });
+  }
+
+  const touched = steps.filter((s) => s.kind !== 'added').length;
+  const flow: FieldDiff[] = [];
+  for (const key of Object.keys(WORKFLOW_SETTING_LABELS)) {
+    const a = (before.settings as Record<string, unknown> | undefined)?.[key];
+    const b = (after.settings as Record<string, unknown> | undefined)?.[key];
+    if (!sameValue(a, b)) flow.push(field(`workflow.${key}`, WORKFLOW_SETTING_LABELS[key], settingText(a), settingText(b)));
+  }
+  return { steps, untouched: Math.max(0, before.nodes.length - touched), ...(flow.length && { workflow: flow }) };
+}
+
+/**
+ * What a change did, in a few words and the past tense, read from its ops rather than the model's summary: the title of
+ * Spotlight's fix rows and node bubbles ("Set channel on “Post to Slack”", "Added “Format Message” before “Post to Slack”").
+ */
+export function opsTitle(ops: AssistantOp[]): string {
+  const one = (op: AssistantOp): string => {
+    switch (op.op) {
+      case 'addNode':
+        if (op.newAgent) return `Added the agent “${op.newAgent.name}”`;
+        return `Added “${op.name ?? op.type}”${op.before ? ` before “${op.before}”` : op.after ? ` after “${op.after}”` : ''}`;
+      case 'setParameters': {
+        const keys = Object.keys(op.parameters);
+        return keys.length && keys.length <= 2 ? `Set ${keys.join(' and ')} on “${op.node}”` : `Changed ${keys.length} settings on “${op.node}”`;
+      }
+      case 'setNodeSettings':
+        return `Changed how “${op.node}” runs`;
+      case 'connect':
+        return `Connected “${op.from}” to “${op.to}”`;
+      case 'disconnect':
+        return `Disconnected “${op.from}” from “${op.to}”`;
+      case 'removeNode':
+        return `Removed “${op.node}”`;
+      case 'renameNode':
+        return `Renamed “${op.node}” to “${op.name}”`;
+      case 'turnIntoTeam':
+        return `Turned “${op.node}” into a team`;
+      case 'changeAgent':
+        return `Change ${op.node ?? op.agentId ?? 'the agent'}: ${op.change}`; // AG17:
+      case 'setWorkflowSettings':
+        return 'Changed the workflow settings';
+    }
+  };
+  if (!ops.length) return 'Changed nothing';
+  if (ops.length === 1) return one(ops[0]);
+  const nodes = new Set(ops.map((op) => ('node' in op ? op.node : op.op === 'connect' || op.op === 'disconnect' ? op.to : op.op === 'addNode' ? (op.before ?? op.after) : undefined)));
+  const [only] = nodes;
+  if (nodes.size === 1 && only) return `Changed ${ops.length} things at “${only}”`;
+  return `${one(ops[0])}, and ${ops.length - 1} more`;
 }
 
 // ---------------------------------------------------------------------------

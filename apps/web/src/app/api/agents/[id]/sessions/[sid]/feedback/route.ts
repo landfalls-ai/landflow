@@ -8,6 +8,8 @@
 import { z } from 'zod';
 import { agentStore } from '@/lib/server/agents/store';
 import { cleanComment, listAgentFeedback, setFeedback } from '@/lib/server/chat-feedback';
+import { canContinueSession, canReadSession } from '@/lib/server/agents/session-scope';
+import { routeActor } from '@/lib/server/projects/http';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
@@ -17,8 +19,9 @@ const bodySchema = z.object({ entryId: z.string().min(1).max(200), rating: z.enu
 
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id, sid } = await params;
+  // PC13: a session's ratings follow the session (agents/session-scope.ts).
   const session = agentStore.getSession(sid);
-  if (!session || session.agentId !== id) return error('Session not found', 404);
+  if (!session || session.agentId !== id || !canReadSession(routeActor(), session)) return error('Session not found', 404);
   return json({ feedback: listAgentFeedback(id, sid) });
 });
 
@@ -27,7 +30,7 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, bodySchema);
   if (!body.ok) return body.response;
   const session = agentStore.getSession(sid);
-  if (!session || session.agentId !== id) return error('Session not found', 404);
+  if (!session || session.agentId !== id || !canContinueSession(routeActor(), session)) return error('Session not found', 404);
   if (!session.timeline.some((entry) => entry.id === body.data.entryId && entry.type === 'assistant')) return error('That entry is not a reply of this session', 404);
   const feedback = setFeedback({ kind: 'agent', agentId: id, sessionId: sid, entryId: body.data.entryId }, body.data.rating, { comment: cleanComment(body.data.comment), source: 'api' });
   return json({ feedback: feedback ?? null });

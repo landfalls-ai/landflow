@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo, transportLabel } from '@/lib/client/format';
+import { DevOnly } from '@/lib/client/developer-details';
 import type { McpToolsResponse, McpToolView } from '@/lib/shared/mcp';
 import type { PluginSummary } from '@/lib/shared/types';
 import type { BrokerQueueStats, TransportAutoSummary, TransportObjective, TransportPolicy, TransportReason } from '@/lib/shared/transports';
@@ -348,14 +349,19 @@ function LeaseBar({ expiresAt }: { expiresAt?: string }) {
   );
 }
 
-/** How many node icons a folded card shows before "+N". */
-const TILE_NODES = 7;
+/** How many node chips a card shows before "+N" (a plugin can have 70 or more). */
+export const NODE_CHIPS = 12;
+
+/** The first {@link NODE_CHIPS} nodes and how many are left out. */
+export function chipsToShow<T>(nodes: readonly T[], limit = NODE_CHIPS): { shown: T[]; more: number } {
+  const shown = nodes.slice(0, limit);
+  return { shown, more: nodes.length - shown.length };
+}
 
 /** A folded card: icon, name, status, two lines of description and the nodes' icons. Clicking it unfolds the card. */
 function PluginTile({ plugin, onToggle }: { plugin: PluginSummary; onToggle: () => void }) {
   const builtin = plugin.source === 'builtin';
-  const shown = plugin.nodes.slice(0, TILE_NODES);
-  const more = plugin.nodes.length - shown.length;
+  const { shown, more } = chipsToShow(plugin.nodes);
   return (
     <button
       onClick={onToggle}
@@ -379,7 +385,7 @@ function PluginTile({ plugin, onToggle }: { plugin: PluginSummary; onToggle: () 
         <ChevronDown className="size-3.5 shrink-0 text-t3 transition-colors duration-[120ms] group-hover:text-t1" strokeWidth={1.7} />
       </div>
       <p className="line-clamp-2 min-h-[2lh] text-[12px] leading-[1.45] text-t2">{plugin.info.description || <span className="text-t3">No description</span>}</p>
-      <div className="mt-auto flex w-full min-w-0 items-center gap-1">
+      <div className="mt-auto flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-1.5">
         {shown.map((node) => {
           const color = descriptorColor(node, plugin.info.color);
           return (
@@ -389,10 +395,12 @@ function PluginTile({ plugin, onToggle }: { plugin: PluginSummary; onToggle: () 
           );
         })}
         {more > 0 && <span className="pl-0.5 font-mono text-[11px] text-t3">+{more}</span>}
-        <span className="ml-auto flex shrink-0 items-center gap-1">
-          <LanguageBadge language={plugin.info.language} />
-          <TransportBadge transport={builtin ? 'in-process' : plugin.transport} />
-        </span>
+        <DevOnly>
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            <LanguageBadge language={plugin.info.language} />
+            <TransportBadge transport={builtin ? 'in-process' : plugin.transport} />
+          </span>
+        </DevOnly>
       </div>
     </button>
   );
@@ -410,6 +418,7 @@ export function PluginCard({ plugin, onChange, expanded = true, onToggle }: { pl
 function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; onChange: (plugins: PluginSummary[]) => void; onToggle?: () => void }) {
   const builtin = plugin.source === 'builtin';
   const [busy, setBusy] = useState(false);
+  const [allNodes, setAllNodes] = useState(false);
   // Discovery sources besides the first one (a plugin can be announced and discovered), and Kubernetes namespaces.
   const otherSources = [...new Set(plugin.endpoints.map((e) => e.source))].filter((source) => source !== plugin.source);
   const namespaces = [...new Set(plugin.endpoints.flatMap((e) => (e.origin ? [e.origin.namespace] : [])))];
@@ -445,7 +454,9 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
             </span>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <LanguageBadge language={plugin.info.language} />
+            <DevOnly>
+              <LanguageBadge language={plugin.info.language} />
+            </DevOnly>
             <Badge tone="muted">{plugin.source}</Badge>
             {otherSources.map((source) => (
               <Badge key={source} tone="muted">
@@ -457,7 +468,11 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
                 ns/{namespace}
               </Badge>
             ))}
-            {plugin.info.sdk && <span className="font-mono text-[11px] text-t3">{plugin.info.sdk.name}</span>}
+            {plugin.info.sdk && (
+              <DevOnly>
+                <span className="font-mono text-[11px] text-t3">{plugin.info.sdk.name}</span>
+              </DevOnly>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
@@ -480,55 +495,57 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
       </div>
       {plugin.info.description && <p className="-mt-1 px-4 pb-3 text-[13px] text-t2">{plugin.info.description}</p>}
 
-      {/* endpoints */}
-      <div className="divide-y divide-hair border-t border-hair">
-        {builtin ? (
-          <div className="flex items-center gap-2 px-4 py-2 text-[12px] text-t3">
-            <TransportBadge transport="in-process" /> loaded into the host: same INodeType interface, zero network hops
-          </div>
-        ) : (
-          plugin.endpoints.map((endpoint) => {
-            const active = endpoint.endpoint === plugin.activeEndpoint;
-            return (
-              <div key={endpoint.endpoint} title={endpoint.lastError} className={cn('flex items-center gap-2 px-4 py-2', active && 'bg-sf2')}>
-                <StatusDot status={endpoint.status} />
-                <TransportBadge transport={endpoint.transport} />
-                <span className="truncate font-mono text-[12px] text-t1">{endpoint.endpoint}</span>
-                {active && <Badge tone="accent">active</Badge>}
-                {endpoint.origin && (
-                  <span className="shrink-0 truncate font-mono text-[11px] text-t3" title={`Kubernetes Service ${endpoint.origin.service} in namespace ${endpoint.origin.namespace}`}>
-                    {endpoint.origin.namespace}/{endpoint.origin.service}
-                  </span>
-                )}
-                <span className="ml-auto flex shrink-0 items-center gap-3">
-                  {endpoint.auto && endpoint.auto.breaker !== 'closed' && (
-                    <Badge tone="muted" className={cn(endpoint.auto.breaker === 'open' ? 'text-rd' : 'text-warn')} title={BREAKER_TITLE[endpoint.auto.breaker]}>
-                      breaker {endpoint.auto.breaker}
-                    </Badge>
-                  )}
-                  {endpoint.auto && endpoint.auto.inflight > 0 && (
-                    <span className="font-mono text-[11px] tabular-nums text-t3" title="Calls in flight on this endpoint">
-                      {endpoint.auto.inflight} in flight
+      <DevOnly>
+        {/* endpoints */}
+        <div className="divide-y divide-hair border-t border-hair">
+          {builtin ? (
+            <div className="flex items-center gap-2 px-4 py-2 text-[12px] text-t3">
+              <TransportBadge transport="in-process" /> loaded into the host: same INodeType interface, zero network hops
+            </div>
+          ) : (
+            plugin.endpoints.map((endpoint) => {
+              const active = endpoint.endpoint === plugin.activeEndpoint;
+              return (
+                <div key={endpoint.endpoint} title={endpoint.lastError} className={cn('flex items-center gap-2 px-4 py-2', active && 'bg-sf2')}>
+                  <StatusDot status={endpoint.status} />
+                  <TransportBadge transport={endpoint.transport} />
+                  <span className="truncate font-mono text-[12px] text-t1">{endpoint.endpoint}</span>
+                  {active && <Badge tone="accent">active</Badge>}
+                  {endpoint.origin && (
+                    <span className="shrink-0 truncate font-mono text-[11px] text-t3" title={`Kubernetes Service ${endpoint.origin.service} in namespace ${endpoint.origin.namespace}`}>
+                      {endpoint.origin.namespace}/{endpoint.origin.service}
                     </span>
                   )}
-                  <QueueNumbers stats={endpoint.queue} />
-                  {endpoint.latencyMs !== undefined && <span className="font-mono text-[11px] tabular-nums text-t3">{endpoint.latencyMs}ms</span>}
-                  {endpoint.source === 'announce' && endpoint.status === 'online' ? <LeaseBar expiresAt={endpoint.leaseExpiresAt} /> : <span className="text-[12px] text-t3">{timeAgo(endpoint.lastSeen)}</span>}
-                </span>
-              </div>
-            );
-          })
-        )}
-      </div>
+                  <span className="ml-auto flex shrink-0 items-center gap-3">
+                    {endpoint.auto && endpoint.auto.breaker !== 'closed' && (
+                      <Badge tone="muted" className={cn(endpoint.auto.breaker === 'open' ? 'text-rd' : 'text-warn')} title={BREAKER_TITLE[endpoint.auto.breaker]}>
+                        breaker {endpoint.auto.breaker}
+                      </Badge>
+                    )}
+                    {endpoint.auto && endpoint.auto.inflight > 0 && (
+                      <span className="font-mono text-[11px] tabular-nums text-t3" title="Calls in flight on this endpoint">
+                        {endpoint.auto.inflight} in flight
+                      </span>
+                    )}
+                    <QueueNumbers stats={endpoint.queue} />
+                    {endpoint.latencyMs !== undefined && <span className="font-mono text-[11px] tabular-nums text-t3">{endpoint.latencyMs}ms</span>}
+                    {endpoint.source === 'announce' && endpoint.status === 'online' ? <LeaseBar expiresAt={endpoint.leaseExpiresAt} /> : <span className="text-[12px] text-t3">{timeAgo(endpoint.lastSeen)}</span>}
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </div>
 
-      {!builtin && plugin.transports && plugin.transports.length > 0 && <TransportPolicyPicker plugin={plugin} onChange={onChange} />}
+        {!builtin && plugin.transports && plugin.transports.length > 0 && <TransportPolicyPicker plugin={plugin} onChange={onChange} />}
+      </DevOnly>
 
       <McpExposure plugin={plugin} onChange={onChange} />
 
       {/* nodes */}
       {plugin.nodes.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 border-t border-hair px-4 py-3">
-          {plugin.nodes.map((node) => (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-hair px-4 py-3">
+          {(allNodes ? plugin.nodes : chipsToShow(plugin.nodes).shown).map((node) => (
             <span
               key={node.name}
               title={node.description}
@@ -539,6 +556,11 @@ function PluginDetail({ plugin, onChange, onToggle }: { plugin: PluginSummary; o
               {node.usableAsTool && <span className="font-mono text-[11px] text-t3">tool</span>}
             </span>
           ))}
+          {plugin.nodes.length > NODE_CHIPS && (
+            <button onClick={() => setAllNodes((v) => !v)} aria-expanded={allNodes} className="rounded-md px-1.5 py-0.5 font-mono text-[12px] text-t3 hover:text-t1">
+              {allNodes ? 'Show fewer' : `+${chipsToShow(plugin.nodes).more} more`}
+            </button>
+          )}
         </div>
       )}
     </div>

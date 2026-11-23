@@ -1,6 +1,6 @@
 'use client';
 /**
- * An approval with its evidence (docs/run-trace.md#an-approval-with-its-evidence), drawn in the new look only: when a run waits
+ * An approval with its evidence (docs/run-trace.md#an-approval-with-its-evidence): when a run waits
  * for a person to approve a tool, the card says in the member's own words what it wants and recommends, shows the case (what
  * the tool acts on and its input made readable), lists what the member looked at (each row leads to its place in the Run
  * Trace), and offers buttons named by the action: "Post review & approve", Edit, Deny. Edit opens the input; "Approve with these
@@ -10,7 +10,12 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Check, ChevronRight, Clock, FileDiff, FlaskConical, Gauge, Hourglass, Pencil, Repeat, ShieldCheck, Timer, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { decideAsk } from '@/lib/client/run-controls';
-import { decideToolApprovals } from '@/lib/client/run-trace';
+import { decideToolApprovals, refreshNeedsYou } from '@/lib/client/run-trace';
+import { approveRequest, denyRequest, inboxClock, refreshApprovalInbox, useExecutionRequests, versionName, waitText } from '@/lib/client/approval-inbox'; // AP03:
+import { settledLine, type InboxRequestView } from '@/lib/shared/approval-inbox'; // AP03:
+import { judgeTitle } from '@/lib/shared/judge'; // C13:
+import { JudgeEvidenceView } from '../home/judge-evidence'; // C13:
+import { TicketLinks } from '../home/ticket-links'; // C12:
 import { approvalCase, editedInput, VERDICT_LABEL, type ApprovalCase, type ApprovalWait, type CaseEdit, type ReviewVerdict } from '@/lib/shared/approval-case';
 import { approvalEvidence, type EvidenceLink, type EvidenceRow, type EvidenceTone, type NeedFace } from '@/lib/shared/approval-evidence';
 import type { RunChanges } from '@/lib/shared/run-changes';
@@ -122,14 +127,39 @@ export function ApprovalCard({
   const rows = useMemo(() => approvalEvidence(model, wait, { ...(changes && { changes }), ...(profile && { profile }) }), [model, wait, changes, profile]);
   const [draft, setDraft] = useState<CaseEdit>();
   const [busy, setBusy] = useState<'approve' | 'deny'>();
+  // AP03: a wait that is an inbox request reads its own lines and decides through the inbox claim (docs/approval-inbox.md).
+  const requests = useExecutionRequests(executionId, wait.spanId);
+  const [closed, setClosed] = useState<string>();
+  const [done, setDone] = useState<string>(); // 'Approved' | 'Denied' when the answer carried no view
+  const [settled, setSettled] = useState<InboxRequestView>(); // the card's own outcome: what the decision answered
   const edited = draft ? editedInput(c, draft) : undefined;
   const actor = memberActor(model, c.member, wait.actor);
   const who = c.member ?? wait.actor.name;
   const verb = c.verb;
 
+  const found = c.callId ? requests.find((r) => r.callId === c.callId) : undefined; // AP03: by call only, never "any waiting"
+  const request = settled ?? found;
+  const inbox = !closed && !done && request?.status === 'waiting' ? request : undefined; // AP03:
+
   const send = async (approved: boolean, edit?: ApprovalEdit) => {
     setBusy(approved ? 'approve' : 'deny');
     try {
+      if (inbox) {
+        // AP03: the same claim as Needs you: a race answers with who won, never a second decision.
+        const answer = await (approved ? approveRequest : denyRequest)(inbox.id);
+        refreshApprovalInbox();
+        refreshNeedsYou();
+        if (answer.closed) {
+          setClosed(answer.closed);
+          toast.message(answer.closed);
+        } else {
+          if (answer.view) setSettled(answer.view);
+          else setDone(approved ? 'Approved' : 'Denied'); // a 200 without a view: the decision stands, said in a settled tone (not the warn 'closed' one)
+          toast.success(approved ? 'Approved' : 'Denied');
+        }
+        onDecided?.();
+        return;
+      }
       if (decide) await decide(approved, { ...edit, ...(c.callId && { callId: c.callId }) });
       else {
         const done = c.ask ? Boolean(await decideAsk(executionId, c.ask, approved, edit?.command)) : await decideToolApprovals(executionId, approved, undefined, { ...(edit?.input && { input: edit.input }), ...(c.callId && { callId: c.callId }) });
@@ -164,13 +194,44 @@ export function ApprovalCard({
           </span>
         </span>
         <div className="min-w-0 flex-1">
+          {request?.kind === 'judge' ? (
+            <div className="text-[14px] leading-5 text-t1" data-testid="approval-judge-title">
+              {judgeTitle(request.tool, request.evidence?.fallbackReason ?? 'no decision', request.evidence?.confidence)}
+            </div>
+          ) : (
           <div className="text-[14px] leading-5 text-t1">
             <b>{who}</b> <span className="text-t2">wants to {c.kind === 'command' ? 'run' : 'use'}</span> <span className="font-mono font-semibold" data-testid="approval-tool">{c.toolName}</span>
             {c.target && <span className="text-t2" data-testid="approval-target"> on {c.target}</span>}
           </div>
-          <div className="font-mono text-[11px] tabular-nums text-t3">waiting since {clock(wait.since)}</div>
+          )}
+          {request ? (
+            <div className="text-[11.5px] leading-4 text-t3" data-testid="approval-inbox-line">
+              {inbox ? waitText({ requestedAt: inbox.requestedAt, expiresAt: inbox.expiresAt }) : request.status === 'waiting' ? '' : settledLine(request, inboxClock)}
+            </div>
+          ) : (
+            <div className="font-mono text-[11px] tabular-nums text-t3">waiting since {clock(wait.since)}</div>
+          )}
+          <TicketLinks tickets={request?.tickets} className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-t3" />
         </div>
       </header>
+      {request && (
+        <p className="mt-2 text-[12px] text-t2 [overflow-wrap:anywhere]" data-testid="approval-inbox-facts">
+          {request.kind !== 'judge' && <>{versionName(request.agentName, request.agentVersion)} · </>}{versionName(request.workflowName, request.workflowVersion)}
+          {request.destination && <span> · goes to {request.destination.replace(/^to\b[:\s]+/i, '')}</span>}
+        </p>
+      )}
+      {request?.kind === 'judge' && request.evidence && <div className="mt-3"><JudgeEvidenceView evidence={request.evidence} /></div>}
+      {inbox && !inbox.canDecide && <p className="mt-2 text-[12px] text-t3">Only people who can run this workflow decide it.</p>}
+      {closed && (
+        <p className="mt-2 text-[12.5px] font-medium text-warn" role="status" data-testid="approval-closed">
+          {closed}
+        </p>
+      )}
+      {done && (
+        <p className="mt-2 text-[12.5px] font-medium text-t2" role="status" data-testid="approval-done">
+          {done}
+        </p>
+      )}
 
       {c.words && (
         <div className="mt-3">
@@ -216,7 +277,7 @@ export function ApprovalCard({
       )}
 
       <div className="mt-3.5 flex flex-wrap gap-2">
-        {draft ? (
+        {(request || done) && (!inbox || !inbox.canDecide) ? null /* AP03: settled, or not yours to decide: Details stays */ : draft ? (
           <>
             <Button variant="primary" loading={busy === 'approve'} disabled={Boolean(busy) || !edited || !edited.ok || !edited.changed} onClick={approveEdited} data-testid="approval-approve-edited">
               <Check className="size-3.5" strokeWidth={3} /> Approve with these changes
@@ -231,7 +292,7 @@ export function ApprovalCard({
               <Check className="size-3.5" strokeWidth={3} /> {verb}
             </Button>
             {/* Nothing to edit when the tool takes no input. */}
-            {(c.rows.length > 0 || c.edit.kind !== 'json') && (
+            {!request && !wait.attrs.inbox && (c.rows.length > 0 || c.edit.kind !== 'json') && ( /* AP03: the inbox decides what was asked, not an edit of it */
               <Button variant="outline" disabled={Boolean(busy)} onClick={() => setDraft(c.edit)} data-testid="approval-edit">
                 <Pencil className="size-3.5" /> Edit
               </Button>

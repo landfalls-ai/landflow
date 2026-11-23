@@ -14,6 +14,7 @@ Microsoft Teams channel of an agent (`/api/teams/...`). This resource is `agent-
 | Field | |
 |---|---|
 | `name`, `goal`, `description` | the goal is what the team is for; every request inside the team carries it |
+| `goalId` | a goal in the goals tree (`goal_…`) the team works for: the project context of its members names it ([agents.md](agents.md#project-context)); a value that is not a goal id is dropped |
 | `members[]` | `kind: 'agent'` (`agentId`) or `kind: 'a2a'` (`parameters` of the A2A Agent node: `agentUrl`, `authentication`, `options`; `credentials`) |
 | per member | `id`, `title` (how its manager calls it), `role` (a sentence: when to ask it), `reportsTo`, `reviews[]`, `consults[]` (peers it **may consult**), `budgetTokens`, `questionsTo` (`manager`, the default, or `person`); a Landflow agent member may have `model` (provider, model, credential: the model it runs on in this team instead of its agent's) |
 
@@ -43,17 +44,30 @@ to** the member's manager first (who may pass them on to a person), or straight 
 
 ## Member cards
 
-In the new look ([the look](ui-review.md#the-look)) the team page shows one card per member above the chart: a large face,
+The team page shows one card per member above the chart: a large face,
 the team's name (small, muted) over the member's title, up to three **what I do** lines (the persona's own, else the first
 sentences of its mission or instructions; see [the persona](agents.md#the-persona)), and chips for where it runs (its model,
 or **Claude Code · kagent** for a remote member or an agent deployed on kagent), **Consults** (the members it may consult or
 hand over to), its budget and how its last turn went (tokens used, **Over budget** or **Not asked last run**, from the same
 last-run data as the Last run card). While a run goes on, the member at work is outlined in its colour with a pulsing glow
 and **Working…**. A tap opens the agent's page. On a phone the cards are a sideways scroll-snap carousel; from `sm` they wrap
-in a row. The classic look draws the page without them. Code: `components/agents/member-cards.tsx`.
+in a row. Code: `components/agents/member-cards.tsx`.
 
-Above the cards, also in the new look: the team's run as a timeline while it works, and its last run as one line (in →
+Above the cards: the team's run as a timeline while it works, and its last run as one line (in →
 who → out) once it is over ([run-trace.md](run-trace.md#a-run-as-a-timeline)).
+
+## Picking members
+
+The member dialog's **Agent** list shows the agents available in the team's project: its own, those shared with it
+and those shared with every project. A shared one says "Shared from <project>". An agent already on the team stays
+listed even when it is no longer available, marked "Not available in this project", and saving never removes a member.
+If the list of available agents can't be loaded, the dialog lists every agent, as it did before.
+
+## Goal
+
+The **Project goal** field picks which of the project's goals the team serves; empty means the project's goal
+([projects-and-goals.md](projects-and-goals.md#picking-a-goal-for-a-workflow-or-team)). It is not the team's **Goal**
+text, which says what the team is for.
 
 ## The chart
 
@@ -63,7 +77,7 @@ phone, two from `sm`, three from `lg`. A card has a header (face, title, where i
 kagent** or **Remote agent over A2A**), what it does in up to three lines, and a footer with **Reviews**, **Reviewed by**,
 **May consult** (a dashed chip, for a standing line between peers that is not a reporting line), the budget and where questions go (**Reports to** only outside the chart), so cards in a row line up. A remote member
 that calls a Landflow agent on kagent (its address is that agent's on kagent's controller, `…/agents/<namespace>/<name>`)
-wears that agent's face, here, on the Teams cards, above the Run a Team node and in Run Trace; any other remote member
+wears that agent's face, here, above the Run a Team node and in Run Trace; any other remote member
 gets the A2A radio icon.
 Tap a card to edit it in a sheet; **+ Add a report** on a manager adds a member under it. A new member reports to the lead
 unless asked otherwise (the first one becomes the lead). Removing a member hands its reports to its manager and drops it
@@ -153,7 +167,7 @@ member's face and title above it.
 
 ### The team node in the editor
 
-In the new look ([ui-review.md](ui-review.md#the-look)) the node's panel and the node itself show the team as the team
+The node's panel and the node itself show the team as the team
 page does, so a team is set up seeing who will work (`components/editor/team-node-panel.tsx`; the words and the split of
 the fields are pure, in `lib/shared/team-node.ts`, tested in `test/team-node.test.ts`):
 
@@ -175,7 +189,7 @@ the fields are pure, in `lib/shared/team-node.ts`, tested in `test/team-node.tes
   node as before. Its slots read **Lead's model**, **Lead's memory** and **Lead's tools**, since what is connected there
   goes to the lead.
 
-The classic look keeps the generic form and the strip. Either way an options field with nothing chosen says *Choose a
+An options field with nothing chosen says *Choose a
 team…* instead of showing its first option ([protocol.md](protocol.md)): a new node used to look set to a team it hadn't
 saved.
 
@@ -193,8 +207,11 @@ saved.
 3. A **remote** member is called over [A2A](a2a.md) with the tool of the `a2a` capability, keeping **one A2A conversation
    per member for the run** (its context id lives on its manager's session). The title, not the card's name, is what the
    journal and the trace call it.
-4. **Goal ancestry.** Every request a member gets starts with `Team goal: …` and `<manager>'s current task: …` (the
-   manager's own task, cut to 600 characters), then the message. An answer to a remote member's question goes as it is.
+4. **Goal ancestry.** Every request a member gets starts with the project line (`Project “P” · goal: G`, when the team's run is in a
+   project with goals), then `Team goal: …` and `<manager>'s current task: …` (the
+   manager's own task, cut to 600 characters), then the message. A remote member's first request in the run also carries the compact project block, once
+   ([a2a.md](a2a.md#project-context)); the team's project is the context of that call, replacing the manager agent's own for it.
+   An answer to a remote member's question goes as it is.
 5. **Questions.** A remote member's question goes to its manager by default (`questionsTo: manager`): the manager gets it as
    the tool result and answers with its next call to the same member. With `questionsTo: person` **the run waits for a
    person**: the question passes up to the lead (through every manager in between), the node pauses on a form (`<Member>
@@ -221,7 +238,7 @@ saved.
    **Approval** check on the Run Trace: who decided, what for which member, and when. Outside a flow (a run that can't wait)
    the tool is refused as before and the run leaves by **Needs a person** with `Developer wanted to use Post update, which
    needs a person's approval`.
-   In the new look the approval is a decision card with the member's reasons and the evidence it looked at, and **Edit**
+   The approval is a decision card with the member's reasons and the evidence it looked at, and **Edit**
    lets the person change the input (a review's verdict and text, a command, or JSON) before approving: the tool runs with
    the edit, and the Approval check says "with changes" ([run-trace.md](run-trace.md#an-approval-with-its-evidence)).
 6. **Reviews.** A review is seen to by the nearest manager of both the reviewer and the reviewed (their own manager when
@@ -385,7 +402,7 @@ team node runs again with the lead told to ask only that member the same message
 ### Turn into a team
 
 On a canvas, a selected **Run an Agent** node that has **A2A Agent** (or Run an Agent) nodes attached as tools gets a
-**Turn into a team** button in its toolbar. It saves a team (the lead is that agent; each delegating tool is a member
+**Turn into a team** item under its toolbar's ⋯ and in its right-click menu. It saves a team (the lead is that agent; each delegating tool is a member
 reporting to it, titled by the node's name, with its notes or tool description as the role, its URL, options and
 credential references, and `questionsTo: person` when the node sent questions to a person), publishes it when it can, and
 swaps the lead and those tools for one Run a Team node in the same place and under the same name, so connections and
@@ -402,7 +419,7 @@ id. A model that writes the team's name or its lead's title where the id goes ("
 builder's "Describe the workflow you want") gets the same list and the same fix (`withTeamId` in
 `lib/shared/agent-teams.ts`): before, it wrote `Release notes desk team` as the id and the run failed with *the selected
 one was deleted*. It has a `turnIntoTeam` op (`{"op":"turnIntoTeam","node":"<lead>"}`) for "turn the Tech Lead and its agents into a
-team": applying the proposal does what the toolbar button does.
+team": applying the proposal does what that menu item does.
 
 ### What is not enforced
 
@@ -410,5 +427,5 @@ team": applying the proposal does what the toolbar button does.
 - A reviewer that manages the member it reviews (or reports to it) isn't held to the review; a verdict is read from a
   `VERDICT:` line only.
 - A middle manager's own budget is enforced for agents asked as members; the lead's is checked by the session limit.
-- Heartbeats and a task backlog are not built. Consults and hand-offs are made by Landflow agent members only (a remote member has no tools to ask a peer with), and the model decides when to use them: nothing forces a consult.
+- Heartbeats are not built, and a team has no backlog of its own (work with an assignee and a wake-up is a [project task](projects-and-goals.md#tasks)). Consults and hand-offs are made by Landflow agent members only (a remote member has no tools to ask a peer with), and the model decides when to use them: nothing forces a consult.
 - A tool approval is for the tools Landflow runs (an agent's, or connected to the node). A Claude Code member on kagent keeps its own guard (the landflow-harness mod) and its approvals are still refused in a flow.

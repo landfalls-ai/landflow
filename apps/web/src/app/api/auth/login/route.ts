@@ -1,11 +1,12 @@
 /**
- * POST /api/auth/login { email, password } (public): sign in with a password; sets the session cookie. Failed
+ * POST /api/auth/login { email, password } (public): sign in with a password; sets the session cookie, or answers 202 `{ mfaRequired, methods, challenge }` without one for a user with a second factor (finish with POST /api/auth/mfa/verify). Failed
  * attempts are limited per email and per IP (429 with `retryAfter` seconds); a wrong email takes as long as a wrong
  * password.
  */
 import { z } from 'zod';
-import { clientIp, findUserByEmail, loginLimits, normalizeEmail, signedInResponse, verifyPassword } from '@/lib/server/auth';
+import { clientIp, findUserByEmail, hasConfirmedFactor, loginLimits, normalizeEmail, secondStepResponse, signedInResponse, verifyPassword } from '@/lib/server/auth';
 import { dummyHash } from '@/lib/server/auth/passwords';
+import { localSignInAllowed, localSignInMode } from '@/lib/server/auth/local-sign-in';
 import { DEACTIVATED_MESSAGE } from '@/lib/server/auth/sessions';
 import { error, handler, parseBody } from '@/lib/server/http';
 import { logger } from '@/lib/server/telemetry';
@@ -35,11 +36,24 @@ export const POST = handler(async (request: Request) => {
     recordAudit({ action: 'auth.sign_in_failed', outcome: 'failure', actor: 'anonymous', target: { type: 'user', ...(user && { id: user.id }), name: email }, summary: `Failed sign-in for ${email}`, details: { email, reason, method: 'password' } });
     return error('Wrong email or password', 401);
   }
-  await limits.email.reset(email);
+  // A user with a second factor keeps their failed-attempt count until the second step succeeds, so guessing codes isn't free after the password.
+  const second = hasConfirmedFactor(user.id);
+  if (!second) await limits.email.reset(email);
   // Deactivated (SCIM): the right password still doesn't sign them in.
   if (user.disabledAt) {
     recordAudit({ action: 'auth.sign_in_failed', outcome: 'denied', actor: 'anonymous', target: { type: 'user', id: user.id, name: email }, summary: `Sign-in for ${email} refused: deactivated`, details: { email, reason: 'deactivated', method: 'password' } });
     return error(DEACTIVATED_MESSAGE, 403);
+  }
+  // LANDFLOW_LOCAL_SIGN_IN: checked after the password so a refusal does not tell a stranger which emails exist.
+  if (!localSignInAllowed(user)) {
+    const mode = localSignInMode();
+    recordAudit({ action: 'auth.sign_in_failed', outcome: 'denied', actor: 'anonymous', target: { type: 'user', id: user.id, name: email }, summary: `Password sign-in for ${email} refused: local sign-in is ${mode}`, details: { email, reason: 'local-sign-in-disabled', method: 'password' } });
+    return error('Password sign-in is turned off on this instance. Use single sign-on.', 403);
+  }
+  // C16: a correct password is not a sign-in yet when the user has a second factor: 202 and a challenge, no cookie.
+  if (second) {
+    logger.info('second factor asked', { 'landflow.user.id': user.id });
+    return secondStepResponse(user, 'password');
   }
   logger.info('signed in', { 'landflow.user.id': user.id, 'landflow.auth.method': 'password' });
   return signedInResponse(request, user, 'password');

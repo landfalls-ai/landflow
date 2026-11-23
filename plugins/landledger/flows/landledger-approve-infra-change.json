@@ -1,0 +1,653 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Landledger: approve an infrastructure change",
+    "description": "A form (or a pull request webhook) asks for an infrastructure change with its monthly cost: this flow's key raises an infra_change request in Landledger naming the person, who confirms it in their own Landledger session (the flow posts the link) before the cost center’s approvers see it. When they decide, the flow checks the request is its own (this key raised it, from a run of this workflow) and approved, then goes on to the step that applies the change (a placeholder to fill) and a Slack post; a rejection is posted with the approver’s comment.",
+    "categories": [
+      "finance",
+      "devops"
+    ],
+    "credentials": [
+      {
+        "id": "landledger",
+        "type": "landledger.landledgerApi",
+        "name": "Landledger (requests)",
+        "description": "Landledger's API URL (in the cluster http://landledger-api.landflow-dev.svc.cluster.local:4810, on this machine http://127.0.0.1:4810) and an ll_ key with read and requests:write. Never decisions:relay or admin."
+      },
+      {
+        "id": "landledgerWebhooks",
+        "type": "landledger.landledgerApi",
+        "name": "Landledger (webhooks)",
+        "description": "Landledger's API URL (in the cluster http://landledger-api.landflow-dev.svc.cluster.local:4810, on this machine http://127.0.0.1:4810) and an ll_ key with webhooks:write only: the Landledger Trigger subscribes itself on publish and keeps the signing secret Landledger returns (never shown). Or the whsec_ secret of a webhook an admin made, in Webhook Signing Secret."
+      },
+      {
+        "id": "slack",
+        "type": "messaging.slackApi",
+        "name": "Slack bot",
+        "description": "A bot token (xoxb-…) with chat:write, invited to #infra-changes."
+      },
+      {
+        "id": "webhook",
+        "type": "core.httpHeaderAuth",
+        "name": "Webhook secret",
+        "description": "The header (e.g. X-Webhook-Token) and secret your CI sends with a pull request’s cost."
+      }
+    ],
+    "setup": [
+      "Pick or add **Landledger (requests)**: the API URL and an `ll_` key with `read` and `requests:write` (never `decisions:relay` or `admin`).",
+      "Pick or add **Landledger (webhooks)** for **Landledger events**: a key of its own with only `webhooks:write`. Publishing subscribes it and keeps the signing secret; or put the `whsec_` secret of a webhook an admin made in its Webhook Signing Secret.",
+      "Pick the **Slack bot** for the posts and set their channel (#infra-changes).",
+      "Ask with the form at `/form/infra-change`, or let CI post the same fields to the **Pull request webhook** with the **Webhook secret** header. The form is a public URL, so the email it names is a claim: Landledger holds the request until that person confirms it in their own session, and **Post the confirm link** tells them where.",
+      "**Ours to act on?** trusts a decision only for a request this flow's key raised from a run of this workflow (the **Landledger infra requests** table records each), approved now; anything else ends in **Not this flow's: refused**.",
+      "Replace **Apply the change** with what applies it (merge, deploy, comment on the PR), then add Landledger **Request → Mark Applied** so the request reads applied.",
+      "Publish: the form and webhook go live and Landledger starts sending request.needs_confirmation and request.decided to this flow (it must reach `LANDFLOW_PUBLIC_URL`)."
+    ],
+    "dataTables": [
+      {
+        "name": "Landledger infra requests",
+        "columns": [
+          {
+            "name": "request_id",
+            "type": "string"
+          },
+          {
+            "name": "execution_id",
+            "type": "string"
+          },
+          {
+            "name": "workflow_id",
+            "type": "string"
+          },
+          {
+            "name": "title",
+            "type": "string"
+          },
+          {
+            "name": "person",
+            "type": "string"
+          },
+          {
+            "name": "raised_at",
+            "type": "date"
+          }
+        ]
+      }
+    ],
+    "workflow": {
+      "name": "Landledger: approve an infrastructure change",
+      "description": "A form or pull request webhook raises an infra_change request in Landledger for the named person to confirm; the approved decision of a request this flow raised is applied (placeholder), a rejection posted, anything else refused.",
+      "nodes": [
+        {
+          "id": "form",
+          "name": "Infra change form",
+          "type": "core.formTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            0
+          ],
+          "parameters": {
+            "path": "infra-change",
+            "formTitle": "Approve an infrastructure change",
+            "formDescription": "Landledger asks the person named to confirm the request in their own session, then the cost center’s approvers; you hear back in #infra-changes.",
+            "formFields": {
+              "values": [
+                {
+                  "fieldLabel": "What changes",
+                  "fieldType": "text",
+                  "requiredField": true,
+                  "fieldName": "title",
+                  "placeholder": "Add a second Postgres replica"
+                },
+                {
+                  "fieldLabel": "Cost center",
+                  "fieldType": "text",
+                  "requiredField": true,
+                  "fieldName": "costCenter",
+                  "placeholder": "ENG-PLATFORM"
+                },
+                {
+                  "fieldLabel": "Monthly amount (USD)",
+                  "fieldType": "number",
+                  "requiredField": true,
+                  "fieldName": "monthlyAmount"
+                },
+                {
+                  "fieldLabel": "Who asks (their Landbright email; they confirm it in Landledger)",
+                  "fieldType": "email",
+                  "requiredField": true,
+                  "fieldName": "requester"
+                },
+                {
+                  "fieldLabel": "Pull request",
+                  "fieldType": "text",
+                  "fieldName": "pullRequestUrl",
+                  "placeholder": "https://github.com/landfalls-ai/infra/pull/42"
+                },
+                {
+                  "fieldLabel": "Note",
+                  "fieldType": "textarea",
+                  "fieldName": "note"
+                }
+              ]
+            },
+            "responseMode": "onReceived",
+            "options": {
+              "buttonLabel": "Ask for approval",
+              "formSubmittedText": "Sent to Landledger. The person named confirms it there (Requests → To confirm; the link is posted in #infra-changes), then the approvers have it."
+            }
+          },
+          "notes": "The form is a public URL: Landflow does not know who submitted it, so the email is a claim. Landledger holds the request in awaiting_confirmation until that person confirms it in their own session."
+        },
+        {
+          "id": "hook",
+          "name": "Pull request webhook",
+          "type": "core.webhook",
+          "typeVersion": 1,
+          "position": [
+            0,
+            220
+          ],
+          "parameters": {
+            "path": "infra-change",
+            "method": "POST",
+            "authentication": "headerAuth",
+            "respond": "immediately"
+          },
+          "credentials": {
+            "httpHeaderAuth": {
+              "id": "webhook",
+              "name": "Webhook secret"
+            }
+          },
+          "notes": "A CI job posts { title, costCenter, monthlyAmount, requester, pullRequestUrl, note, basis } when a pull request adds infrastructure cost."
+        },
+        {
+          "id": "shape",
+          "name": "Shape the request",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            280,
+            100
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// A form submission ({ title, costCenter, monthlyAmount, note, requester, pullRequestUrl }) or a pull request\n// webhook (the same fields in its body, e.g. from a CI job that sized the change): one shape for Landledger.\n// The person named is not taken at their word: Landledger asks them to confirm the request in their own session.\nconst src = $json.body ?? $json;\nconst amount = Number(src.monthlyAmount ?? src.amount ?? 0);\nif (!(amount > 0)) throw new Error('A monthly amount above zero is needed');\nconst title = String(src.title ?? '').trim();\nif (title.length < 3) throw new Error('A title of 3 characters or more is needed');\nconst requester = String(src.requester ?? src.email ?? '').trim().toLowerCase();\nif (!requester) throw new Error('Who asks? Give their Landbright email: they confirm the request in Landledger');\nconst pullRequestUrl = String(src.pullRequestUrl ?? src.pull_request?.html_url ?? '').trim();\nreturn {\n  title,\n  costCenter: String(src.costCenter ?? '').trim().toUpperCase(),\n  amount: amount.toFixed(2),\n  note: String(src.note ?? '').trim(),\n  requester,\n  pullRequestUrl,\n  source: $json.body ? 'pull request' : 'form',\n  evidence: {\n    lines: [{ label: title, amount: amount.toFixed(2) }],\n    basis: String(src.basis ?? (pullRequestUrl ? 'Sized in the pull request' : 'Sized by the requester in the form')),\n    links: pullRequestUrl ? [{ label: 'Pull request', url: pullRequestUrl }] : [],\n  },\n};"
+          }
+        },
+        {
+          "id": "create",
+          "name": "Ask Landledger",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            560,
+            100
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "create",
+            "kind": "infra_change",
+            "title": "{{ $json.title }}",
+            "costCenter": "{{ $json.costCenter }}",
+            "amount": "{{ $json.amount }}",
+            "currency": "USD",
+            "recurrence": "monthly",
+            "requestedBy": "person",
+            "requester": "{{ $json.requester }}",
+            "note": "{{ $json.note }}",
+            "evidence": "{{ $json.evidence }}",
+            "requestFields": {
+              "pullRequestUrl": "{{ $json.pullRequestUrl }}",
+              "originTitle": "Approve an infrastructure change ({{ $json.source }})"
+            }
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          },
+          "notes": "Raised by this flow's key naming the person: Landledger keeps it awaiting_confirmation until they confirm it, then asks the approvers. The answer comes back through Landledger events below."
+        },
+        {
+          "id": "remember",
+          "name": "Remember the request",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "position": [
+            840,
+            100
+          ],
+          "parameters": {
+            "operation": "insert",
+            "dataTableId": "Landledger infra requests",
+            "mappingMode": "defineBelow",
+            "columns": {
+              "column": [
+                {
+                  "column": "request_id",
+                  "value": "{{ $json.request.id }}"
+                },
+                {
+                  "column": "execution_id",
+                  "value": "{{ $execution.id }}"
+                },
+                {
+                  "column": "workflow_id",
+                  "value": "{{ $workflow.id }}"
+                },
+                {
+                  "column": "title",
+                  "value": "{{ $json.request.title }}"
+                },
+                {
+                  "column": "person",
+                  "value": "{{ $('Shape the request').item.json.requester }}"
+                },
+                {
+                  "column": "raised_at",
+                  "value": "{{ new Date().toISOString() }}"
+                }
+              ]
+            }
+          },
+          "notes": "Which run of this workflow raised which request: a decision is trusted only for a request recorded here by the run its origin names."
+        },
+        {
+          "id": "events",
+          "name": "Landledger events",
+          "type": "landledger.landledgerTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            520
+          ],
+          "parameters": {
+            "events": [
+              "request.needs_confirmation",
+              "request.decided"
+            ],
+            "kinds": "infra_change",
+            "costCenters": ""
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledgerWebhooks",
+              "name": "Landledger (webhooks)"
+            }
+          }
+        },
+        {
+          "id": "kindOf",
+          "name": "Which event",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "position": [
+            280,
+            520
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ $json.type === 'request.needs_confirmation' ? 0 : 1 }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "findAsked",
+          "name": "Raised here?",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "position": [
+            560,
+            400
+          ],
+          "parameters": {
+            "operation": "get",
+            "dataTableId": "Landledger infra requests",
+            "matchType": "allConditions",
+            "filters": {
+              "conditions": [
+                {
+                  "keyName": "request_id",
+                  "condition": "eq",
+                  "keyValue": "{{ $json.requestId }}"
+                }
+              ]
+            },
+            "limit": 1
+          },
+          "notes": "Only requests this workflow raised: another flow's confirmation passes by."
+        },
+        {
+          "id": "tellConfirm",
+          "name": "Post the confirm link",
+          "type": "messaging.slack",
+          "typeVersion": 1,
+          "position": [
+            840,
+            400
+          ],
+          "parameters": {
+            "resource": "message",
+            "operation": "post",
+            "channelId": "#infra-changes",
+            "text": "📝 *{{ $('Landledger events').item.json.request.number }}* {{ $('Landledger events').item.json.request.title }} waits for {{ $('Landledger events').item.json.person.name }} to confirm it in Landledger before the approvers see it: {{ $('Landledger events').item.json.url }}"
+          },
+          "credentials": {
+            "slackApi": {
+              "id": "slack",
+              "name": "Slack bot"
+            }
+          }
+        },
+        {
+          "id": "get",
+          "name": "Get the request",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            560,
+            640
+          ],
+          "parameters": {
+            "resource": "request",
+            "operation": "get",
+            "requestId": "{{ $json.requestId }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          },
+          "notes": "Read it fresh from Landledger: the webhook's copy is not what the checks trust."
+        },
+        {
+          "id": "me",
+          "name": "Who is this flow",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            840,
+            640
+          ],
+          "parameters": {
+            "resource": "key",
+            "operation": "me"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (requests)"
+            }
+          },
+          "notes": "This flow's key: a request it raised carries createdBy.id equal to this id."
+        },
+        {
+          "id": "find",
+          "name": "Find the run that raised it",
+          "type": "core.dataTable",
+          "typeVersion": 1,
+          "position": [
+            1120,
+            640
+          ],
+          "parameters": {
+            "operation": "get",
+            "dataTableId": "Landledger infra requests",
+            "matchType": "allConditions",
+            "filters": {
+              "conditions": [
+                {
+                  "keyName": "request_id",
+                  "condition": "eq",
+                  "keyValue": "{{ $('Get the request').item.json.request.id }}"
+                }
+              ]
+            },
+            "limit": 1
+          },
+          "alwaysOutputData": true
+        },
+        {
+          "id": "check",
+          "name": "Ours to act on?",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            1400,
+            640
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// Trust a decision only for a request this flow raised: created by this flow's own key (createdBy against the key's\n// identity), an infra_change, and recorded by a run of this workflow whose execution is the request's origin. Anything\n// else (another key, a forged origin, a request this workflow never raised) is refused, whatever the webhook says.\nconst event = $('Landledger events').first().json;\nconst detail = $('Get the request').first().json;\nconst r = detail.request;\nconst me = $('Who is this flow').first().json;\nconst row = $input.all().map((i) => i.json).find((x) => x.request_id === r.id);\nconst problems = [];\nif (r.createdBy?.kind !== 'key' || !me.id || r.createdBy.id !== me.id) problems.push(`raised by ${r.createdBy?.name ?? 'someone else'}, not this flow's key (${me.name ?? 'unknown'})`);\nif (r.kind !== 'infra_change') problems.push(`a ${r.kind} request, not an infra_change`);\nif (r.origin?.type !== 'landflow_run' || r.origin.workflowId !== $workflow.id) problems.push('its origin is another workflow');\nelse if (!row) problems.push('no run of this workflow raised it');\nelse if (row.execution_id !== r.origin.executionId) problems.push(`its origin names run ${r.origin.executionId}, but run ${row.execution_id} raised it`);\nconst ours = problems.length === 0;\nif (ours && event.outcome === 'approved' && r.status !== 'approved') problems.push(`Landledger says it is ${r.status} now, not approved`);\nconst why = problems.join('; ');\n// 0: approved and ours → apply; 1: rejected, cancelled or expired and ours → tell; 2: refused.\nconst route = !ours ? 2 : event.outcome === 'approved' ? (r.status === 'approved' ? 0 : 2) : 1;\nreturn [{ json: { ...detail, outcome: event.outcome, decision: event.decision ?? null, ours, why, route } }];"
+          }
+        },
+        {
+          "id": "route",
+          "name": "Approved, decided or refused",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "position": [
+            1680,
+            640
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ $json.route }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "apply",
+          "name": "Apply the change",
+          "type": "core.noOp",
+          "typeVersion": 1,
+          "position": [
+            1960,
+            520
+          ],
+          "parameters": {},
+          "notes": "Placeholder: put the step that applies the change here (merge the pull request, run the pipeline, comment on the PR with the GitHub node), then a Landledger Request → Mark Applied with the request id."
+        },
+        {
+          "id": "tellApproved",
+          "name": "Post the approval",
+          "type": "messaging.slack",
+          "typeVersion": 1,
+          "position": [
+            2240,
+            520
+          ],
+          "parameters": {
+            "resource": "message",
+            "operation": "post",
+            "channelId": "#infra-changes",
+            "text": "✅ *{{ $json.request.number }} approved:* {{ $json.request.title }} ({{ $json.request.costCenter.code }}, {{ Number($json.request.amount.amount).toFixed(2) }} {{ $json.request.amount.currency }} a month){{ ($json.request.related ?? []).find((r) => r.type === 'pull_request') ? '\\nPull request: ' + $json.request.related.find((r) => r.type === 'pull_request').url : '' }}\n{{ ($json.request.decisions ?? []).map((d) => d.person.name + (d.via === 'relay' ? ' (in Slack)' : '') + (d.comment ? ': ' + d.comment : '')).join('\\n') }}"
+          },
+          "credentials": {
+            "slackApi": {
+              "id": "slack",
+              "name": "Slack bot"
+            }
+          }
+        },
+        {
+          "id": "tellRejected",
+          "name": "Tell the requester",
+          "type": "messaging.slack",
+          "typeVersion": 1,
+          "position": [
+            1960,
+            700
+          ],
+          "parameters": {
+            "resource": "message",
+            "operation": "post",
+            "channelId": "#infra-changes",
+            "text": "❌ *{{ $json.request.number }} {{ $json.outcome }}:* {{ $json.request.title }} ({{ $json.request.costCenter.code }}){{ $json.decision ? '\\n' + $json.decision.person.name + ': ' + ($json.decision.comment || 'no comment') : '' }}"
+          },
+          "credentials": {
+            "slackApi": {
+              "id": "slack",
+              "name": "Slack bot"
+            }
+          }
+        },
+        {
+          "id": "refused",
+          "name": "Not this flow's: refused",
+          "type": "core.noOp",
+          "typeVersion": 1,
+          "position": [
+            1960,
+            880
+          ],
+          "parameters": {},
+          "notes": "Ours to act on? says why: another key raised it, its origin is forged or another workflow's, it is not an infra_change, or it is not approved any more. Nothing is applied."
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "form",
+          "sourceIndex": 0,
+          "target": "shape",
+          "targetIndex": 0
+        },
+        {
+          "id": "c2",
+          "type": "main",
+          "source": "hook",
+          "sourceIndex": 0,
+          "target": "shape",
+          "targetIndex": 0
+        },
+        {
+          "id": "c3",
+          "type": "main",
+          "source": "shape",
+          "sourceIndex": 0,
+          "target": "create",
+          "targetIndex": 0
+        },
+        {
+          "id": "c4",
+          "type": "main",
+          "source": "create",
+          "sourceIndex": 0,
+          "target": "remember",
+          "targetIndex": 0
+        },
+        {
+          "id": "c5",
+          "type": "main",
+          "source": "events",
+          "sourceIndex": 0,
+          "target": "kindOf",
+          "targetIndex": 0
+        },
+        {
+          "id": "c6",
+          "type": "main",
+          "source": "kindOf",
+          "sourceIndex": 0,
+          "target": "findAsked",
+          "targetIndex": 0
+        },
+        {
+          "id": "c7",
+          "type": "main",
+          "source": "findAsked",
+          "sourceIndex": 0,
+          "target": "tellConfirm",
+          "targetIndex": 0
+        },
+        {
+          "id": "c8",
+          "type": "main",
+          "source": "kindOf",
+          "sourceIndex": 1,
+          "target": "get",
+          "targetIndex": 0
+        },
+        {
+          "id": "c9",
+          "type": "main",
+          "source": "get",
+          "sourceIndex": 0,
+          "target": "me",
+          "targetIndex": 0
+        },
+        {
+          "id": "c10",
+          "type": "main",
+          "source": "me",
+          "sourceIndex": 0,
+          "target": "find",
+          "targetIndex": 0
+        },
+        {
+          "id": "c11",
+          "type": "main",
+          "source": "find",
+          "sourceIndex": 0,
+          "target": "check",
+          "targetIndex": 0
+        },
+        {
+          "id": "c12",
+          "type": "main",
+          "source": "check",
+          "sourceIndex": 0,
+          "target": "route",
+          "targetIndex": 0
+        },
+        {
+          "id": "c13",
+          "type": "main",
+          "source": "route",
+          "sourceIndex": 0,
+          "target": "apply",
+          "targetIndex": 0
+        },
+        {
+          "id": "c14",
+          "type": "main",
+          "source": "apply",
+          "sourceIndex": 0,
+          "target": "tellApproved",
+          "targetIndex": 0
+        },
+        {
+          "id": "c15",
+          "type": "main",
+          "source": "route",
+          "sourceIndex": 1,
+          "target": "tellRejected",
+          "targetIndex": 0
+        },
+        {
+          "id": "c16",
+          "type": "main",
+          "source": "route",
+          "sourceIndex": 2,
+          "target": "refused",
+          "targetIndex": 0
+        }
+      ],
+      "groups": [],
+      "stickyNotes": []
+    }
+  }
+}

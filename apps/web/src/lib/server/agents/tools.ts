@@ -6,9 +6,12 @@
  * plus built-in tools for skills and cross-session memory.
  */
 import { defaultVersionOf, PROTOCOL_VERSION, type ExecuteRequest, type JsonObject, type NodeItem } from '@landflow/protocol';
-import { ExpressionResolver, isToolOutputWithImages, type ToolImage, REASON_DESCRIPTION, deriveToolSchema, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
+import { ExpressionResolver, isToolOutputWithImages, type ToolImage, REASON_DESCRIPTION, deriveToolSchema, toolInputItem, toToolName, withReason, type AgentTool, type ToolSpec } from '@landflow/engine';
 import { binaryAccessFor } from '../binary/access';
+import { withProjectContext } from '../nodes/a2a';
 import { binaryToolImages } from '../nodes/tool-images';
+import { currentRunContext } from '../project-context/seam';
+import { practicesIndexFor, recordRemoteCitations, withPracticesIndex, type PracticesIndex } from '../practices/remote';
 import { holdSessionImages } from './session-images';
 import type {
   A2aAgentToolConfig,
@@ -17,6 +20,7 @@ import type {
   AgentSession,
   AgentTraceSummary,
   McpServerToolConfig,
+  NodeKnowledgeBaseConfig,
   NodeToolConfig,
   PendingCall,
   RemoteRun,
@@ -24,6 +28,8 @@ import type {
   ToolKind,
   WorkflowToolConfig,
 } from '../../shared/agents';
+import { isNodeKnowledge } from '../../shared/agents';
+import { readsByQuery, writesOutside } from '../../shared/run-check';
 import type { ExecutionRecord } from '../../shared/types';
 import {
   answerMessage,
@@ -47,10 +53,15 @@ import {
   type OutgoingMessage,
   cancelTask as cancelRemoteTask,
 } from '../a2a/client';
+import { ProviderBlockedError, blockedOf, countBlocked } from '../a2a/blocked';
 import { traceFor, usageOfTrace, withMarker } from '../a2a/agent-trace';
 import { callAgent, landflowTags, remoteRunOf, throttled } from '../a2a/traced';
 import { credentials } from '../credentials/vault';
-import { agentToolsFrom, endpointFrom, listMcpTools, resourceAndPromptTools, selectTools } from '../mcp/client';
+import { safeEndpoint, type ToolTarget } from '../../shared/tool-target'; // AG14:
+import { targetOfA2a, targetOfAgent, targetOfMcp, targetOfNode, targetOfWorkflow } from './tool-target'; // AG14:
+import { agentToolsFrom, endpointFrom, listMcpTools, resourceAndPromptTools, selectTools, type McpEndpoint } from '../mcp/client';
+import type { Tool as McpTool } from '@modelcontextprotocol/client';
+import { heldLine, holdChangedTools, mcpSubject } from '../trust/mcp-tools'; // C27:
 import { githubMcpUrl, githubToolsOf, isGithubPreset } from '../mcp/github';
 import { registry } from '../plugins/registry';
 import { workflowForCall } from '../publish';
@@ -59,13 +70,30 @@ import { parameterSecrets, rememberResolvedParameters } from '../secrets/resolve
 import { store } from '../store';
 import { variables } from '../variables';
 import { knowledgeTool } from './knowledge';
+import { homeProjectId } from '../projects/store'; // C21:
 import { agentStore } from './store';
+import { MemoryNotFoundError } from '../memory';
+import { memoryKeyLine, withMemoryKey } from '../kagent/memory-line';
+import { forgetAgentMemory, rememberMemory } from './memory';
+import { callDestinations } from './spotlight-approvals'; // AG23:
 
 export const WORKFLOW_TRIGGER = 'core.workflowTrigger';
+
+/**
+ * Who a workflow an agent's tool runs is run for: the workflow run the agent works in (its sub-execution: it takes that
+ * run's starter, and the briefing nodes check that run), or the person who asked (`startedBy`). Empty: nobody, so the
+ * run has no starter (runner/run.ts never takes one from the request around it for a tool call).
+ */
+export interface ToolCaller {
+  execution?: { executionId: string; nodeId?: string };
+  startedBy?: string;
+}
 
 export interface ToolContext {
   agent: Agent;
   session: AgentSession;
+  /** Whose memory this run reads and writes (the session's user unless the request names another person). */
+  memoryUser?: string;
   /** 0 for the agent the user talks to; +1 per delegation. */
   depth: number;
   /** How deep delegation may go in this run tree. */
@@ -81,6 +109,8 @@ export interface ToolContext {
   /** The model's id for this call, and the journal span it is recorded under (set by the runtime while a run is journaled). */
   callId?: string;
   callSpan?: string;
+  /** Who the workflows its tools start are run for (see ToolCaller). */
+  caller?: ToolCaller;
 }
 
 /**
@@ -94,6 +124,8 @@ export interface ToolOutcome {
   output: unknown;
   /** Images the tool returned (a screenshot): inline bytes or references; the runtime stores them and shows them to a model that sees. */
   images?: ToolImage[];
+  /** AG14: what this call reached, when only the call knows it (a knowledge search's document count). */
+  target?: ToolTarget;
   workflowId?: string;
   executionId?: string;
   childAgentId?: string;
@@ -109,14 +141,40 @@ export interface BuiltTool extends ToolSpec {
   /** What the builder calls it. */
   label: string;
   nodeType?: string;
+  /** AG14: what the tool reaches (the credential or system and where), set when it is built from its config; never a secret. */
+  target?: ToolTarget;
+  /** AG14: the target when the model gives the place (an HTTP Request's URL): per call, from the call's input. */
+  targetOf?(input: Record<string, unknown>): ToolTarget | undefined;
   requireApproval: boolean;
+  /** C09: the call removes something a person can only bring back by hand (a forgotten memory); never a read. */
+  destructive?: boolean;
   /** A knowledge base search: what it returns is what the output guardrail's grounded check judges an answer against. */
   knowledge?: boolean;
   invoke(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome>;
+  /** A node tool that takes only what its schema offered ($fromAI, toolInputSchema): the call's input without the rest, so an approval card shows what runs. */
+  shownInput?(input: Record<string, unknown>): Record<string, unknown>;
+  /**
+   * A tool configured as a read whose call would not be one (the model passed another operation, or SQL that changes data): the
+   * reason to hold it for a person, decided per call on the effective parameters. Undefined when the call may run.
+   */
+  holdReason?(input: Record<string, unknown>, ctx: ToolContext): Promise<string | undefined>;
+  /** AP02: the parameters this call would run with (the tool's fixed parameters, then the arguments its schema offered), for the approval inbox. Absent: the shown input. */
+  effectiveInput?(input: Record<string, unknown>, ctx: ToolContext): Promise<Record<string, unknown>>;
+  /** AG23: where this call would go (what Spotlight checks before it approves a call that asks first): per call, on the parameters it would run with. Absent: the tool names no destination. */
+  destinationsOf?(input: Record<string, unknown>, ctx: ToolContext): Promise<string[]>;
   /** After a pause (ToolOutcome.pause): send the person's decision and carry on. */
   resume?(state: Record<string, unknown>, approved: boolean, ctx: ToolContext, answer?: string): Promise<ToolOutcome>;
   /** A remote agent: stop the task it works on (A2A CancelTask), so a person can redirect it (agent-teams/pause.ts). */
   cancelTask?(taskId: string): Promise<void>;
+}
+
+/** AG14: what a call reached: the per-call target (the model's URL), else the one set when the tool was built. */
+export function targetOfCall(tool: BuiltTool, input: Record<string, unknown>): ToolTarget | undefined {
+  try {
+    return tool.targetOf?.(input) ?? tool.target;
+  } catch {
+    return tool.target;
+  }
 }
 
 export interface Toolset {
@@ -132,12 +190,20 @@ export function buildTools(agent: Agent, config: AgentConfig, mcp: Toolset = { t
   for (const tool of config.tools) {
     if (tool.type === 'mcp' || tool.type === 'a2a') continue;
     const built =
-      tool.type === 'node' ? nodeTool(tool) : tool.type === 'workflow' ? workflowTool(tool) : tool.type === 'knowledge' ? knowledgeTool(tool) : subAgentTool(tool, agent);
+      tool.type === 'node'
+        ? nodeTool(tool)
+        : tool.type === 'workflow'
+          ? workflowTool(tool)
+          : tool.type === 'knowledge'
+            ? isNodeKnowledge(tool)
+              ? nodeKnowledgeTool(tool)
+              : knowledgeTool(tool, { asProject: homeProjectId('agent', agent.id), subject: 'agent' }) // C21: the agent's home project asks
+            : subAgentTool(tool, agent);
     if ('error' in built) unavailable.push(built.error);
     else tools.push(built);
   }
   if (config.skills.length) tools.push(...skillTools(config));
-  if (config.memory.crossSession) tools.push(rememberTool());
+  if (config.memory.crossSession) tools.push(rememberTool(), forgetMemoryTool());
   return { tools: dedupe(tools), unavailable };
 }
 
@@ -151,25 +217,29 @@ export function dedupe(tools: BuiltTool[]): BuiltTool[] {
 }
 
 /** buildTools plus the tools of the agent's MCP servers and A2A agents, read from each (in parallel), and the flow's. */
-export async function buildToolset(agent: Agent, config: AgentConfig, flow: AgentTool[] = []): Promise<Toolset> {
+export async function buildToolset(agent: Agent, config: AgentConfig, flow: AgentTool[] = [], flowTargets?: Map<string, ToolTarget>): Promise<Toolset> {
   const listed = await Promise.all(
-    config.tools.flatMap((tool) => (tool.type === 'mcp' ? [mcpServerTools(tool)] : tool.type === 'a2a' ? [a2aAgentTool(tool).then((t) => ('error' in t ? t : [t]))] : [])),
+    config.tools.flatMap((tool) => (tool.type === 'mcp' ? [mcpServerTools(tool, config.holdChangedTools ? { agentId: agent.id } : undefined)] : tool.type === 'a2a' ? [a2aAgentTool(tool).then((t) => ('error' in t ? t : { tools: [t], notes: [] }))] : [])),
   );
   const remote: Toolset = { tools: [], unavailable: [] };
   for (const result of listed) {
     if ('error' in result) remote.unavailable.push(result.error);
-    else remote.tools.push(...result);
+    else {
+      remote.tools.push(...result.tools);
+      remote.unavailable.push(...result.notes); // C27: tools held for review
+    }
   }
   const built = buildTools(agent, config, remote);
-  return flow.length ? { ...built, tools: dedupe([...built.tools, ...flow.map(flowTool)]) } : built;
+  return flow.length ? { ...built, tools: dedupe([...built.tools, ...flow.map((tool) => flowTool(tool, flowTargets?.get(tool.name)))]) } : built;
 }
 
 /**
  * A tool connected to the agent's node in a workflow (Run an Agent): a tool node or a vector store searched as a tool.
  * The engine runs it as the node's sub-node, so it lights up on the canvas like an AI Agent's tools.
  */
-export function flowTool(tool: AgentTool): BuiltTool {
+export function flowTool(tool: AgentTool, target?: ToolTarget): BuiltTool {
   return {
+    ...(target && { target }), // AG14: what the wired sub-node reaches
     name: tool.name,
     description: tool.description,
     inputSchema: tool.inputSchema,
@@ -190,35 +260,55 @@ export function flowTool(tool: AgentTool): BuiltTool {
 
 export const MCP_CLIENT_TOOL = 'core.mcpClientTool';
 
-/** Each tool an MCP server lists (after the include filter), with the server's schema. */
-async function mcpServerTools(config: McpServerToolConfig): Promise<BuiltTool[] | { error: string }> {
+/** One MCP server config, reached: its endpoint and the tools it lists after the include filter (GitHub's: after its allow-list). */
+export async function listMcpConfigTools(config: McpServerToolConfig): Promise<{ endpoint: McpEndpoint; parameters: Record<string, unknown>; github: boolean; selected: McpTool[] } | { error: string }> {
   const resolved = registry.resolve(MCP_CLIENT_TOOL);
   if ('error' in resolved) return { error: `${config.name}: ${resolved.error}` };
+  const github = isGithubPreset(config);
+  // GitHub's server: the bundled one unless the agent names another; always a bearer token, which is the credential.
+  const parameters = github
+    ? { ...config.parameters, authentication: 'bearerAuth', endpointUrl: String(config.parameters.endpointUrl ?? '').trim() || githubMcpUrl() }
+    : config.parameters;
+  const resolveSecrets = () => credentials.resolveFor({ type: MCP_CLIENT_TOOL, credentials: config.credentials, parameters }, resolved.descriptor);
+  // An OAuth2 credential's token is renewed before the call (it may have expired since the last run).
+  const secrets = (await credentials.freshen(resolveSecrets())) ?? resolveSecrets();
+  const endpoint = endpointFrom(parameters, secrets);
+  // A 401 mid-run (the token was revoked or expired early): renew it by force and use the new header once.
+  if (parameters.authentication === 'mcpOAuth2') {
+    endpoint.reauth = async () => {
+      const renewed = await credentials.freshen(resolveSecrets(), true);
+      return renewed ? endpointFrom(parameters, renewed).headers : undefined;
+    };
+  }
+  const { include, includeTools, excludeTools } = parameters;
+  // GitHub's server: only what the agent's access allows, whatever the server lists (lib/server/mcp/github.ts).
+  const selected = github ? githubToolsOf(config, await listMcpTools(endpoint)) : selectTools(await listMcpTools(endpoint), include, includeTools, excludeTools);
+  return { endpoint, parameters, github, selected };
+}
+
+/**
+ * Each tool an MCP server lists (after the include filter), with the server's schema. `hold` (C27, the agent's "Hold changed MCP
+ * tools" switch): a tool whose content changed since the agent was published is not offered; it joins the run's notices instead.
+ */
+async function mcpServerTools(config: McpServerToolConfig, hold?: { agentId: string }): Promise<{ tools: BuiltTool[]; notes: string[] } | { error: string }> {
   try {
-    const github = isGithubPreset(config);
-    // GitHub's server: the bundled one unless the agent names another; always a bearer token, which is the credential.
-    const parameters = github
-      ? { ...config.parameters, authentication: 'bearerAuth', endpointUrl: String(config.parameters.endpointUrl ?? '').trim() || githubMcpUrl() }
-      : config.parameters;
-    const resolveSecrets = () => credentials.resolveFor({ type: MCP_CLIENT_TOOL, credentials: config.credentials, parameters }, resolved.descriptor);
-    // An OAuth2 credential's token is renewed before the call (it may have expired since the last run).
-    const secrets = (await credentials.freshen(resolveSecrets())) ?? resolveSecrets();
-    const endpoint = endpointFrom(parameters, secrets);
-    // A 401 mid-run (the token was revoked or expired early): renew it by force and use the new header once.
-    if (parameters.authentication === 'mcpOAuth2') {
-      endpoint.reauth = async () => {
-        const renewed = await credentials.freshen(resolveSecrets(), true);
-        return renewed ? endpointFrom(parameters, renewed).headers : undefined;
-      };
+    const listed = await listMcpConfigTools(config);
+    if ('error' in listed) return listed;
+    const { endpoint, parameters, github } = listed;
+    const { extras } = parameters;
+    let selected = listed.selected;
+    const notes: string[] = [];
+    if (hold) {
+      const result = holdChangedTools(mcpSubject(hold.agentId, config.id), selected, { takesAll: !github && parameters.include !== 'selected' });
+      selected = result.offered;
+      notes.push(...result.held.map((change) => heldLine(config.name, change)), ...(result.note ? [`${config.name}: ${result.note}`] : []));
     }
-    const { include, includeTools, excludeTools, extras } = parameters;
     const tools = [
-      // GitHub's server: only what the agent's access allows, whatever the server lists (lib/server/mcp/github.ts).
-      ...agentToolsFrom(endpoint, github ? githubToolsOf(config, await listMcpTools(endpoint)) : selectTools(await listMcpTools(endpoint), include, includeTools, excludeTools)),
+      ...agentToolsFrom(endpoint, selected),
       // Resources and prompts as tools (list_resources, read_resource, list_prompts, get_prompt), when the server config asks.
       ...(github ? [] : resourceAndPromptTools(endpoint, Array.isArray(extras) ? extras.map(String) : [])),
     ];
-    return tools.map((tool) => ({
+    const built = tools.map((tool): BuiltTool => ({
       // Shown with the MCP Client Tool's icon in the timeline.
       kind: 'node' as const,
       nodeType: MCP_CLIENT_TOOL,
@@ -226,11 +316,13 @@ async function mcpServerTools(config: McpServerToolConfig): Promise<BuiltTool[] 
       label: `${config.name} · ${tool.name}`,
       description: tool.description,
       inputSchema: tool.inputSchema,
+      target: targetOfMcp(config.name, parameters, config.credentials), // AG14:
       requireApproval: Boolean(config.requireApproval),
       async invoke(input, ctx) {
         return { output: await tool.invoke(input, ctx.signal) };
       },
     }));
+    return { tools: built, notes };
   } catch (error) {
     return { error: `${config.name}: ${(error as Error).message}` };
   }
@@ -281,7 +373,7 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
   } catch (error) {
     return { error: `${config.name}: ${(error as Error).message}` };
   }
-  const options = (config.parameters.options ?? {}) as { humanInTheLoop?: boolean };
+  const options = (config.parameters.options ?? {}) as { humanInTheLoop?: boolean; projectContext?: string; practices?: 'on' | 'off' };
   const extensions = options.humanInTheLoop !== false && supportsExtension(card, KAGENT_HITL_EXTENSION) ? [KAGENT_HITL_EXTENSION] : [];
   const name = toToolName(`ask_${config.name}`);
 
@@ -290,6 +382,24 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
    * landflow-harness mod reports what it does to a trace for this call (a2a/agent-trace.ts): its real usage, cost, tool
    * calls and guardrail stops replace the estimate.
    */
+  /** The practices indexed to a session's conversation, kept until the answer that completes it (a pause or a question comes first). A pause carries them in its saved state; a question to the caller keeps them in memory for this run only (a restart loses them, and `practice_cite` still records). */
+  const indexed = new Map<string, PracticesIndex>();
+  /** Records the citations of an answer that completes the conversation; a pause or a question to the caller keeps the index for the answer to come. */
+  function settle(outcome: ToolOutcome, ctx: ToolContext): ToolOutcome {
+    const index = indexed.get(ctx.session.id);
+    if (!index) return outcome;
+    // A pause ends this run: the resume is a new run with a new tool, so the index travels in the saved state.
+    if (outcome.pause) {
+      outcome.pause.remote.state = { ...outcome.pause.remote.state, practices: index };
+      return outcome;
+    }
+    // The task is still open (a question with or without the extension): the answer to come completes it.
+    if (ctx.session.remoteContexts?.[config.id]?.taskId) return outcome;
+    indexed.delete(ctx.session.id);
+    recordRemoteCitations(index, typeof outcome.output === 'string' ? outcome.output : JSON.stringify(outcome.output ?? ''), ctx.session.execution?.executionId);
+    return outcome;
+  }
+
   async function run(message: OutgoingMessage, ctx: ToolContext, rejections = 0): Promise<ToolOutcome> {
     const metadata = { ...landflowTags({ 'agent.id': ctx.agent.id, 'session.id': ctx.session.id, 'run.id': ctx.runId }), ...message.metadata };
     // In a run the member's asks (a push to main its guard puts to a person) show under this request.
@@ -314,6 +424,14 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
     const state = task.status.state;
     if (state === 'TASK_STATE_COMPLETED') return { output: replyOf(result) ?? `(${card.name} gave no answer)`, remote };
     if (state === 'TASK_STATE_FAILED' || state === 'TASK_STATE_REJECTED' || state === 'TASK_STATE_CANCELED') {
+      // C05: a provider limit is Blocked: the trace is told (state blocked, with the kind), and the error carries it to the caller.
+      const verdict = blockedOf(task);
+      if (verdict.blocked) {
+        countBlocked(verdict.kind, 'a2a');
+        const blockedRun: RemoteRun = { ...remote, state: 'blocked', blocked: { kind: verdict.kind, message: verdict.message, label: verdict.label } };
+        progress?.(blockedRun);
+        throw new ProviderBlockedError(card.name, verdict.kind, verdict.message, verdict.label);
+      }
       throw new Error(`${card.name}: the task ${stateName(state)}${statusText(task) ? `: ${statusText(task)}` : ''}`);
     }
     if (state === 'TASK_STATE_AUTH_REQUIRED') throw new Error(`${card.name} needs credentials Landflow can't give it${statusText(task) ? `: ${statusText(task)}` : ''}`);
@@ -361,6 +479,7 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
   return {
     kind: 'a2a',
     nodeType: A2A_AGENT,
+    target: targetOfA2a(config.name, config.parameters, config.credentials), // AG14:
     name,
     label: config.name,
     description: describeCard(card, config.useWhen),
@@ -382,19 +501,32 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
       const known = ctx.session.remoteContexts?.[config.id];
       if (known?.taskId && known.question) {
         const request: Extract<HitlRequest, { type: 'ask_user_request' }> = { type: 'ask_user_request', id: known.question.id, questions: known.question.questions };
-        return run(answerMessage({ id: known.taskId, contextId: known.contextId }, request, [text]), ctx);
+        return settle(await run(answerMessage({ id: known.taskId, contextId: known.contextId }, request, [text]), ctx), ctx);
       }
-      return run({ text, ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
+      // The first message of a conversation carries the project's compact block (docs/a2a.md); follow-ups go as they are, and the capability's option Project context: Off sends nothing.
+      const fresh = !known?.contextId && !known?.taskId && options.projectContext !== 'off';
+      // PR07: a Landflow agent on kagent also gets the index of the practices that apply, after the project block the text may already begin with (a team's runtime puts it there).
+      const brandNew = !known?.contextId && !known?.taskId;
+      const index = brandNew ? practicesIndexFor(config.parameters.agentUrl as string, options.practices, text) : undefined;
+      const block = currentRunContext()?.compact;
+      // C09: and the signed memory key of this session's person, after the practices index.
+      const keyLine = brandNew ? memoryKeyLine(config.parameters.agentUrl as string, ctx.memoryUser ?? ctx.session.userId) : undefined;
+      const { text: sent, tags } = withProjectContext(withMemoryKey(withPracticesIndex(text, index?.text ?? '', block), keyLine), fresh ? currentRunContext() : undefined);
+      if (index) indexed.set(ctx.session.id, index);
+      const outcome = await run({ text: sent, ...(keyLine && { keyLine }), ...(Object.keys(tags).length > 0 && { metadata: tags }), ...(known?.contextId && { contextId: known.contextId }), ...(known?.taskId && { taskId: known.taskId }) }, ctx);
+      return settle(outcome, ctx);
     },
     async resume(state, approved, ctx, answer) {
+      const carried = (state as { practices?: PracticesIndex }).practices;
+      if (carried) indexed.set(ctx.session.id, carried);
       const { taskId, contextId, request, question } = state as { taskId: string; contextId: string; request?: Extract<HitlRequest, { type: 'tool_approval_request' }>; question?: { id: string; questions: string[] } };
       // A question a person answered: the answer goes to the same task (as a plain reply when the agent asked without the extension).
       if (question) {
         const text = answer?.trim() || 'No one answered: carry on with what you have and say what is still open.';
-        if (!question.id) return run({ text, contextId, taskId }, ctx);
-        return run(answerMessage({ id: taskId, contextId }, { type: 'ask_user_request', id: question.id, questions: question.questions }, [text]), ctx);
+        if (!question.id) return settle(await run({ text, contextId, taskId }, ctx), ctx);
+        return settle(await run(answerMessage({ id: taskId, contextId }, { type: 'ask_user_request', id: question.id, questions: question.questions }, [text]), ctx), ctx);
       }
-      return run(approvalMessage({ id: taskId, contextId }, request!, approved, approved ? undefined : 'A person rejected this tool call.'), ctx);
+      return settle(await run(approvalMessage({ id: taskId, contextId }, request!, approved, approved ? undefined : 'A person rejected this tool call.'), ctx), ctx);
     },
   };
 }
@@ -403,25 +535,41 @@ export async function a2aAgentTool(config: A2aAgentToolConfig, toolOptions: A2aT
 // Plugin nodes
 // ---------------------------------------------------------------------------
 
+/** Whether a call's parameters only read: the operation the plugin marks idempotent, an Execute Query that is one SELECT (SQLite), else the shared heuristic. */
+function callReads(descriptor: { properties: Array<{ name: string; default?: unknown; options?: Array<{ value: unknown; idempotent?: boolean }> }> }, nodeType: string, parameters: Record<string, unknown>): boolean {
+  const property = descriptor.properties.find((p) => p.name === 'operation');
+  const operation = parameters.operation ?? property?.default;
+  if (operation === 'executeQuery' && nodeType === 'databases.sqlite') return readsByQuery({ ...parameters, operation }, nodeType);
+  if (property?.options?.some((o) => o.idempotent === true) && typeof operation === 'string') return property.options.find((o) => o.value === operation)?.idempotent === true;
+  return !writesOutside({ type: nodeType, parameters: { ...parameters, ...(operation !== undefined && { operation }) } });
+}
+
+/** The SQLite credential as a read-only connection (the plugin's Read Only: mode=ro, _query_only=1); a file it would create is never made. */
+export function readOnlyCreds<T extends Record<string, JsonObject>>(creds: T): Partial<T> {
+  return creds.sqlite ? ({ sqlite: { ...creds.sqlite, readOnly: true, createIfMissing: false } } as unknown as Partial<T>) : {};
+}
+
 function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
   const resolved = registry.resolve(config.nodeType);
   if ('error' in resolved) return { error: `${config.name}: ${resolved.error}` };
   const { descriptor } = resolved;
   const skip = new Set(descriptor.properties.filter((p) => p.noDataExpression || p.type === 'code').map((p) => p.name));
-  return {
-    kind: 'node',
-    name: toToolName(config.name),
-    label: config.name,
-    nodeType: config.nodeType,
-    description: config.description || descriptor.toolDescription || descriptor.description,
-    inputSchema: descriptor.delegates ? withReason(deriveToolSchema(descriptor, config.parameters)) : deriveToolSchema(descriptor, config.parameters),
-    requireApproval: Boolean(config.requireApproval),
-    async invoke(given, ctx) {
+  const derived = descriptor.delegates ? withReason(deriveToolSchema(descriptor, config.parameters)) : deriveToolSchema(descriptor, config.parameters);
+  // A tool configured as a read (no approval, and its stored parameters only read) keeps its operation: the model may not offer another.
+  const isRead = !config.requireApproval && callReads(descriptor, config.nodeType, config.parameters);
+  const pinned = isRead && (derived.properties as Record<string, unknown> | undefined)?.operation !== undefined;
+  const inputSchema: JsonObject = pinned
+    ? { ...derived, properties: Object.fromEntries(Object.entries(derived.properties as Record<string, unknown>).filter(([k]) => k !== 'operation')) as JsonObject, ...(Array.isArray(derived.required) && { required: (derived.required as string[]).filter((k) => k !== 'operation') }) }
+    : derived;
+  /** The parameters a call runs with: the stored ones resolved, then the arguments the schema offered over them. */
+  async function effectiveOf(given: Record<string, unknown>, ctx: ToolContext) {
       // A delegating node's `reason` is for the record (the timeline shows the call's input), not for the node.
       const { reason: _reason, ...rest } = given;
       const input = descriptor.delegates ? rest : given;
       // The arguments are the node's one input item; $fromAI() reads them and same-named parameters take them.
-      const items: NodeItem[] = [{ json: input as JsonObject }];
+      // AG03: with the generated `item` argument, that is the item and the other arguments are the overrides.
+      const { json: itemJson, rest: toolArgs } = toolInputItem(inputSchema, input);
+      const items: NodeItem[] = [{ json: itemJson }];
       // $secrets in the tool's parameters, when Settings → External secrets allows it.
       const secrets = await parameterSecrets(config.parameters, skip);
       const resolver = new ExpressionResolver({
@@ -430,15 +578,60 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
         workflow: { id: `agent:${ctx.agent.id}`, name: ctx.agent.name },
         execution: { id: ctx.runId, mode: 'tool' },
         parameters: config.parameters,
-        toolArgs: input,
+        toolArgs,
         variables: variables.forWorkflow(`agent:${ctx.agent.id}`),
         ...(secrets && { secrets }),
       });
-      const overrides = Object.fromEntries(Object.entries(input).filter(([key]) => descriptor.properties.some((p) => p.name === key)));
+      // AG08: only an argument the tool's own schema offered overrides a parameter (a To the design fixed is not one a $fromAI or toolInputSchema tool takes).
+      const offered = (inputSchema.properties ?? {}) as Record<string, unknown>;
+      const overrides = Object.fromEntries(Object.entries(toolArgs).filter(([key]) => key in offered && descriptor.properties.some((p) => p.name === key)));
       const resolvedParameters = resolver.resolveParameters(config.parameters, 0, skip);
       if (secrets) rememberResolvedParameters(config.parameters, resolvedParameters, skip);
       const parameters = { ...resolvedParameters, ...overrides } as JsonObject;
-      const creds = credentials.resolveFor({ type: config.nodeType, credentials: config.credentials, parameters: config.parameters }, descriptor);
+    return { parameters, items };
+  }
+  return {
+    kind: 'node',
+    name: toToolName(config.name),
+    label: config.name,
+    nodeType: config.nodeType,
+    // AG14: where the call goes, from the credential and the node's own parameters; a URL the model gives (HTTP Request) is read per call.
+    target: targetOfNode(config.nodeType, config.credentials, config.parameters),
+    ...(descriptor.properties.some((p) => p.name === 'url') && !safeEndpoint(config.parameters.url) && {
+      targetOf: (given: Record<string, unknown>) => targetOfNode(config.nodeType, config.credentials, { ...config.parameters, url: given.url }),
+    }),
+    description: config.description || descriptor.toolDescription || descriptor.description,
+    inputSchema,
+    requireApproval: Boolean(config.requireApproval),
+    // AG08: the arguments the tool's schema did not offer are never used, so they are not shown for approval either.
+    ...((descriptor.toolInputSchema || JSON.stringify(config.parameters).includes('$fromAI')) && {
+      shownInput: (given: Record<string, unknown>) => Object.fromEntries(Object.entries(given).filter(([key]) => key in ((inputSchema.properties ?? {}) as Record<string, unknown>))),
+    }),
+    ...(isRead && {
+      async holdReason(given: Record<string, unknown>, ctx: ToolContext) {
+        const { parameters } = await effectiveOf(given, ctx);
+        // An operation the call names is judged as named, though a pinned schema would not apply it.
+        const judged = { ...parameters, ...(typeof given.operation === 'string' && { operation: given.operation }), ...(typeof given.method === 'string' && { method: given.method.toUpperCase() }) };
+        if (callReads(descriptor, config.nodeType, judged)) return undefined;
+        const what = judged.operation === 'executeQuery' ? 'SQL that is not one read-only SELECT' : judged.operation !== undefined ? `the operation “${String(judged.operation)}”` : judged.method !== undefined ? `the ${String(judged.method)} method` : 'a change';
+        return `“${config.name}” is a read-only tool, and this call asked for ${what}.`;
+      },
+    }),
+    // AP02:
+    async effectiveInput(given: Record<string, unknown>, ctx: ToolContext) {
+      return (await effectiveOf(given, ctx)).parameters;
+    },
+    // AG23:
+    async destinationsOf(given: Record<string, unknown>, ctx: ToolContext) {
+      const { parameters } = await effectiveOf(given, ctx);
+      // Wave ag5 fix pass 2: the parameters the call really runs with (the configured or pinned operation, and only the arguments the schema offered), never the model's own `operation` or `method` when the schema did not offer them: a stand-in the person gave for a create must not approve a commit.
+      return callDestinations(config.nodeType, parameters);
+    },
+    async invoke(given, ctx) {
+      const { parameters, items } = await effectiveOf(given, ctx);
+      const creds = { ...credentials.resolveFor({ type: config.nodeType, credentials: config.credentials, parameters: config.parameters }, descriptor) };
+      // A read tool on SQLite reaches the file through a read-only connection, whatever the call asks (defence in depth).
+      if (isRead && config.nodeType === 'databases.sqlite') Object.assign(creds, readOnlyCreds(creds));
       const request: ExecuteRequest = {
         protocol: PROTOCOL_VERSION,
         // Also where the host writes the files an in-process node stores (a screenshot): the execution's or the session's scope.
@@ -459,6 +652,48 @@ function nodeTool(config: NodeToolConfig): BuiltTool | { error: string } {
       // A screenshot the node attaches (item.binary) reaches the model as an image, up to four per call.
       const images = out.flatMap((item) => binaryToolImages(item.binary)).slice(0, 4);
       return { output: out.length === 1 ? out[0].json : out.map((item) => item.json), ...(images.length && { images }) };
+    },
+  };
+}
+
+/** The knowledge tool's argument: what the model asks. */
+const KNOWLEDGE_QUERY_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: { query: { type: 'string', description: 'What to look for, in natural language' } },
+  required: ['query'],
+};
+
+/** A node's answer as knowledge results: `{ results }` as it is, else each item as one result. */
+export function knowledgeResults(output: unknown): { results: unknown[] } {
+  if (output && typeof output === 'object' && !Array.isArray(output) && Array.isArray((output as { results?: unknown }).results)) return { results: (output as { results: unknown[] }).results };
+  const items = Array.isArray(output) ? output : output === undefined || output === null ? [] : [output];
+  return { results: items.map((item) => (item && typeof item === 'object' && 'pageContent' in item ? item : { pageContent: typeof item === 'string' ? item : JSON.stringify(item), metadata: {} })) };
+}
+
+/**
+ * A knowledge base a plugin node answers (Clickland's knowledge search): the node runs on the same path as a node tool,
+ * with its fixed parameters and the question in `queryParameter`, and the model sees `{ query }` in, `{ results }` out.
+ * `knowledge: true`, so the grounded-answer guardrail judges answers against what it returned.
+ */
+export function nodeKnowledgeTool(config: NodeKnowledgeBaseConfig): BuiltTool | { error: string } {
+  const label = config.name || config.nodeType || 'Knowledge base';
+  if (!config.nodeType?.trim()) return { error: `${label}: no plugin node set` };
+  const queryParameter = config.queryParameter?.trim() || 'query';
+  const built = nodeTool({ id: config.id, type: 'node', name: config.name || 'search_knowledge_base', description: config.description, nodeType: config.nodeType, parameters: { ...(config.parameters as JsonObject) }, ...(config.credentials && { credentials: config.credentials }) });
+  if ('error' in built) return { error: `${label}: ${built.error.replace(/^[^:]*: /, '')}` };
+  const resolved = registry.resolve(config.nodeType);
+  if (!('error' in resolved) && !resolved.descriptor.properties.some((p) => p.name === queryParameter)) return { error: `${label}: ${config.nodeType} has no “${queryParameter}” parameter for the question` };
+  return {
+    ...built,
+    knowledge: true,
+    label,
+    description: config.description || built.description,
+    inputSchema: KNOWLEDGE_QUERY_SCHEMA,
+    requireApproval: Boolean(config.requireApproval),
+    ...(built.holdReason && { holdReason: (input: Record<string, unknown>, ctx: ToolContext) => built.holdReason!({ [queryParameter]: String(input.query ?? '') }, ctx) }),
+    async invoke(input, ctx) {
+      const outcome = await built.invoke({ [queryParameter]: String(input.query ?? '') }, ctx);
+      return { ...outcome, output: knowledgeResults(outcome.output) };
     },
   };
 }
@@ -513,6 +748,7 @@ function workflowTool(config: WorkflowToolConfig): BuiltTool | { error: string }
   if (!info.eligible) return { error: `${config.name}: ${info.reason}` };
   return {
     kind: 'workflow',
+    target: targetOfWorkflow(info.workflow.name), // AG14:
     name: toToolName(config.name || info.workflow.name),
     label: config.name || info.workflow.name,
     description: config.description || info.workflow.description || `Run the “${info.workflow.name}” workflow`,
@@ -522,7 +758,10 @@ function workflowTool(config: WorkflowToolConfig): BuiltTool | { error: string }
       // Read the workflow again: it may have been edited since the run started.
       const current = workflowToolInfo(config.workflowId);
       if (!current.eligible) throw new Error(current.reason);
-      const record = await runWorkflow({ workflow: current.workflow, mode: 'tool', startNodeId: current.trigger.id, triggerItems: [{ json: input as JsonObject }], signal: ctx.signal });
+      // Run for the agent's caller (ToolCaller), never for whoever's request is around the call.
+      const caller = ctx.caller ?? {};
+      const runFor = caller.execution ? { parent: caller.execution } : caller.startedBy ? { startedBy: caller.startedBy } : {};
+      const record = await runWorkflow({ workflow: current.workflow, mode: 'tool', startNodeId: current.trigger.id, triggerItems: [{ json: input as JsonObject }], signal: ctx.signal, ...runFor });
       if (record.status === 'error') throw new Error(`Workflow failed: ${record.error?.message ?? 'unknown error'} (execution ${record.executionId})`);
       // A Wait (or form page) in the workflow: it goes on in the background; the tool can't wait for it.
       if (record.status === 'waiting') {
@@ -547,6 +786,7 @@ function subAgentTool(config: SubAgentConfig, self: Agent): BuiltTool | { error:
   if (target.id === self.id) return { error: `${target.name} can't delegate to itself` };
   return {
     kind: 'agent',
+    target: targetOfAgent(target.name), // AG14:
     name: toToolName(`ask_${target.name}`),
     label: target.name,
     description: config.useWhen || target.description || `Delegate a task to the ${target.name} agent and get its answer`,
@@ -628,14 +868,53 @@ function rememberTool(): BuiltTool {
     name: 'remember',
     label: 'Remember',
     description:
-      'Save a durable fact about the user you are talking to (a preference, a decision, ongoing work) so you know it in later sessions. Not for one-off details.',
-    inputSchema: { type: 'object', properties: { fact: { type: 'string', description: 'One short sentence' } }, required: ['fact'] },
+      'Save a durable fact about the user you are talking to (a preference, a decision, ongoing work) so you know it in later sessions. Not for one-off details. Set static for things that stay true (a name, a role). To correct a memory, pass replaces with its id from your memory block instead of adding a second.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fact: { type: 'string', description: 'One short sentence' },
+        static: { type: 'boolean', description: 'A stable fact (name, role, preference) to keep in front of you every session' },
+        replaces: { type: 'string', description: 'The id (m_…) of the memory this corrects' },
+      },
+      required: ['fact'],
+    },
     requireApproval: false,
     async invoke(input, ctx) {
       const fact = String(input.fact ?? '').trim();
       if (!fact) throw new Error('"fact" is empty');
-      const notes = agentStore.remember(ctx.agent.id, ctx.session.userId, fact.slice(0, 500));
-      return { output: `Saved. You now remember ${notes.length} fact(s) about this user.` };
+      const replaces = typeof input.replaces === 'string' && input.replaces.trim() ? input.replaces.trim() : undefined;
+      const { outcome, count, item } = await rememberMemory(ctx.agent.id, ctx.memoryUser ?? ctx.session.userId, { fact, static: input.static === true, ...(replaces && { replaces }) });
+      const said = outcome === 'replaced' ? `Replaced ${replaces} (now version ${item.version ?? 2}).` : outcome === 'refreshed' ? 'Already remembered; refreshed.' : 'Saved.';
+      return { output: `${said} You now remember ${count} fact(s) about this user.` };
+    },
+  };
+}
+
+function forgetMemoryTool(): BuiltTool {
+  return {
+    kind: 'memory',
+    name: 'forget_memory',
+    label: 'Forget',
+    description: 'Forget one memory about the user you are talking to (its id is in your memory block), with the reason. Use it when the user asks you to forget something or it is no longer true. It only forgets this user’s memories.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The id (m_…) of the memory' }, reason: { type: 'string', description: 'Why it is forgotten' } },
+      required: ['id', 'reason'],
+    },
+    // Destructive (a person can restore it from the agent page); a project's Ask rule for memory tools holds it like any write.
+    destructive: true,
+    requireApproval: false,
+    async invoke(input, ctx) {
+      const id = String(input.id ?? '').trim();
+      const reason = String(input.reason ?? '').trim();
+      if (!id || !reason) throw new Error('"id" and "reason" are both needed');
+      try {
+        await forgetAgentMemory(ctx.agent.id, ctx.memoryUser ?? ctx.session.userId, id, reason, ctx.memoryUser ?? ctx.session.userId);
+      } catch (error) {
+        if (error instanceof MemoryNotFoundError) throw new Error(`Memory ${id} not found`);
+        throw error;
+      }
+      return { output: `Forgot ${id}.` };
     },
   };
 }

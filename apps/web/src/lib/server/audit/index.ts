@@ -11,7 +11,10 @@
  * Inside an API request the event gets the request's principal (user, API key id), client address, user agent,
  * request id, method and route pattern (./context); elsewhere (schedules, triggers, workers) the actor is the system.
  * Details are flat ids, names and counts: keys that look secret are dropped, and nothing reads request bodies.
- * Recording never throws: a failure is logged and the action goes on.
+ * Recording never throws by default: a failure is logged, counted (`landflow.audit.write_failures`, ./metrics) and the
+ * action goes on. With `LANDFLOW_AUDIT_FAIL_CLOSED=true`, a call that passes `{ required: true }` (role changes, API keys,
+ * credentials, audit settings, SCIM provisioning) throws `AuditUnavailableError` (503) instead, and its call site orders
+ * the change so it does not happen without its event.
  *
  * Publishes, rollbacks and unpublishes are recorded from the publish timeline (lib/server/publications.ts), so every
  * path that publishes is covered; plugin registrations and removals from the registry's events (lib/server/bus.ts).
@@ -23,11 +26,15 @@ import { requestAuth } from '../auth/context';
 import { getUser } from '../auth/users';
 import { bus } from '../bus';
 import { database } from '../db';
+import { registryAudit } from '../plugins/registry-audit';
 import { onPublicationChanged, publishLog } from '../publications';
 import { singleton } from '../singleton';
 import { SECRET_KEY } from '../telemetry/config';
 import { logger } from '../telemetry/logger';
+import { auditFailClosed } from '../config/audit';
+import { HttpError } from '../errors';
 import { auditRequestContext } from './context';
+import { ensureAuditMetrics, recordAuditWriteFailure } from './metrics';
 import { emitAuditLog } from './otel';
 import { targetProject } from './project';
 import { getAuditSettings } from './settings';
@@ -57,6 +64,50 @@ export interface AuditInput {
   at?: Date;
 }
 
+/** The audit log could not store a required event (fail-closed mode): the change was refused. */
+export class AuditUnavailableError extends HttpError {
+  static readonly errorName: string = 'AuditUnavailableError';
+  constructor(options: { cause?: unknown } = {}) {
+    super('The audit log is unavailable, so this change was not made', 503, { cause: options.cause });
+  }
+}
+
+export interface AuditOptions {
+  /** A high-value change: in fail-closed mode a storage failure throws `AuditUnavailableError` instead of being swallowed. */
+  required?: boolean;
+}
+
+const requiredScope = () => singleton('audit-required-scope', () => ({ depth: 0 }));
+
+/**
+ * Run a database change and its audit events as one transaction in which every event is required: with
+ * `LANDFLOW_AUDIT_FAIL_CLOSED` a storage failure throws `AuditUnavailableError` and the change rolls back with it.
+ * Without the setting it is a plain transaction. `fn` is synchronous, as for `database().transaction()`.
+ */
+export function auditedTransaction<T>(fn: () => T): T {
+  const scope = requiredScope();
+  scope.depth++;
+  try {
+    return database().transaction(fn);
+  } finally {
+    scope.depth--;
+  }
+}
+
+/**
+ * A change that is not a database write (credentials in the files config store). Fail-closed: the event is recorded
+ * first and a failure refuses the change. Otherwise the change runs and its event follows (`input` gets its result).
+ */
+export function auditedChange<T>(input: (result: T | undefined) => AuditInput, change: () => T): T {
+  if (auditFailClosed()) {
+    recordAudit(input(undefined), { required: true });
+    return change();
+  }
+  const result = change();
+  recordAudit(input(result));
+  return result;
+}
+
 const MAX_TEXT = 500;
 const MAX_LIST = 50;
 /** A Landflow API key or MCP token, should one ever reach a detail value. */
@@ -73,12 +124,16 @@ export function newAuditId(at = Date.now()): string {
 
 const clip = (text: string) => (text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT - 1)}…` : text).replace(TOKEN, '[redacted]');
 
-/** Details as flat AuditValues: secret-looking keys go, nested objects become JSON text, strings and lists are clipped. */
+/**
+ * Details as flat AuditValues: secret-looking keys go (a number or boolean under one stays, as in the logger and spans:
+ * `{ credentials: 3 }` is a count, not a secret), nested objects become JSON text, strings and lists are clipped.
+ */
 export function cleanDetails(details: Record<string, unknown> | undefined): Record<string, AuditValue> | undefined {
   if (!details) return undefined;
   const out: Record<string, AuditValue> = {};
   for (const [key, value] of Object.entries(details)) {
-    if (value === undefined || SECRET_KEY.test(key)) continue;
+    if (value === undefined) continue;
+    if (SECRET_KEY.test(key) && typeof value !== 'number' && typeof value !== 'boolean') continue;
     if (value === null || typeof value === 'boolean') out[key] = value;
     else if (typeof value === 'number') out[key] = Number.isFinite(value) ? value : String(value);
     else if (typeof value === 'string') out[key] = clip(value);
@@ -128,9 +183,14 @@ export function setOutboxKick(fn: (() => void) | undefined) {
   kick().fn = fn;
 }
 
-/** Record an audit event (see the module comment). Returns it, or undefined when it could not be stored. */
-export function recordAudit(input: AuditInput): AuditEvent | undefined {
+/**
+ * Record an audit event (see the module comment). Returns it, or undefined when it could not be stored. A `required`
+ * event in fail-closed mode throws instead; call it inside the change's `database().transaction()` (the insert joins
+ * it, so the throw rolls the change back) or before a change that is not a database write.
+ */
+export function recordAudit(input: AuditInput, options: AuditOptions = {}): AuditEvent | undefined {
   ensureListeners();
+  ensureAuditMetrics();
   const ctx = auditRequestContext();
   try {
     const at = input.at ?? new Date();
@@ -172,6 +232,8 @@ export function recordAudit(input: AuditInput): AuditEvent | undefined {
     return event;
   } catch (error) {
     logger.error('could not record an audit event', { error, 'landflow.audit.action': input.action });
+    recordAuditWriteFailure(input.action);
+    if ((options.required ?? requiredScope().depth > 0) && auditFailClosed()) throw new AuditUnavailableError({ cause: error });
     return undefined;
   }
 }
@@ -254,6 +316,13 @@ export function ensureListeners() {
   if (state.started) return;
   state.started = true;
   onPublicationChanged((workflowId) => auditPublication(workflowId));
+  registryAudit.subscribe((event) => {
+    if (event.type === 'plugin.endpoint_added') {
+      recordAudit({ action: 'plugin.endpoint_added', target: { type: 'plugin', id: event.pluginId }, summary: `${AUDIT_ACTIONS['plugin.endpoint_added']}: ${event.pluginId} at ${event.endpoint}`, details: { endpoint: event.endpoint, source: event.source, transport: event.transport } });
+    } else {
+      recordAudit({ action: 'plugin.updated', target: { type: 'plugin', id: event.pluginId }, summary: `${AUDIT_ACTIONS['plugin.updated']}: ${event.pluginId} ${event.from} to ${event.to}`, details: { endpoint: event.endpoint, from: event.from, to: event.to } });
+    }
+  });
   bus.subscribe((event) => {
     if (event.channel !== 'registry') return;
     const registry = event.event;

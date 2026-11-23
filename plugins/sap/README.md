@@ -5,7 +5,7 @@ Order, Purchase Order, Product, Supplier Invoice), **SAP Trigger (Poll)** and **
 tool. The feature page is [docs/sap.md](../../docs/sap.md); the spec is [docs/specs/20-sap-plugin.md](../../docs/specs/20-sap-plugin.md).
 
 ```sh
-pnpm plugin:sap                              # HTTP :7116 (MCP at /mcp), gRPC :7216
+pnpm plugin:sap                              # HTTP :7123 (MCP at /mcp), gRPC :7223
 pnpm fake-s4                                 # fake S/4HANA on loopback, PORT, /__fake/* control routes
 pnpm --filter @landflow/plugin-sap test      # 106 tests against the fake; no SAP system is called
 ```
@@ -36,4 +36,4 @@ header name configurable). Details in [docs/sap.md](../../docs/sap.md#triggers).
 
 Compose profile `sap` (`COMPOSE_BAKE=false docker compose -f deploy/compose.yml --profile sap up -d --build --wait`),
 Kubernetes component `deploy/k8s/components/sap` (image `landflow/plugin-sap:dev`). The host's scan ports include
-7116 and 7216. Variables: `LANDFLOW_SAP_ALLOWED_HOSTS`, `LANDFLOW_SAP_METADATA_TTL_SECONDS`.
+7123 and 7223. Variables: `LANDFLOW_SAP_ALLOWED_HOSTS`, `LANDFLOW_SAP_METADATA_TTL_SECONDS`.

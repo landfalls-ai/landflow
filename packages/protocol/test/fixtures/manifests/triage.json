@@ -26,6 +26,9 @@
         "Security",
         "Developer Tools"
       ],
+      "capabilities": [
+        "alert.normalize"
+      ],
       "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzBlYTVlOSIvPgogIDxwYXRoIGQ9Ik0xMSAxM2gyNkwyOCAyNXY5bC04IDRWMjV6IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPgo=",
       "color": "#0ea5e9",
       "subtitle": "{{format}}",
@@ -45,7 +48,7 @@
           "displayName": "Format",
           "type": "options",
           "default": "auto",
-          "description": "The shape of the incoming payload. Auto tries every known format and fails if none fits",
+          "description": "The shape of the incoming payload. Auto tries every known format and reads anything else as Generic with the default paths",
           "options": [
             {
               "name": "Auto-detect",
@@ -80,6 +83,11 @@
               "name": "Wazuh",
               "value": "wazuh",
               "description": "Integration alert JSON"
+            },
+            {
+              "name": "Clickland",
+              "value": "clickland",
+              "description": "An alert.firing / alert.resolved delivery, or an item of the Clickland Alert Trigger or Clickland Trigger"
             },
             {
               "name": "Generic",
@@ -253,9 +261,6 @@
           "default": true,
           "description": "Keep the original payload under alert.raw"
         }
-      ],
-      "capabilities": [
-        "alert.normalize"
       ]
     },
     {
@@ -268,6 +273,9 @@
       "categories": [
         "Security",
         "Developer Tools"
+      ],
+      "capabilities": [
+        "ioc.extract"
       ],
       "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI2Y1OWUwYiIvPgogIDxjaXJjbGUgY3g9IjIxIiBjeT0iMjEiIHI9IjkiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI0Ii8+CiAgPHBhdGggZD0iTTI4IDI4bDkgOSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K",
       "color": "#f59e0b",
@@ -368,9 +376,6 @@
           "default": false,
           "description": "Emit one item per indicator under `ioc`. An item without indicators emits nothing"
         }
-      ],
-      "capabilities": [
-        "ioc.extract"
       ]
     },
     {
@@ -383,6 +388,9 @@
       "categories": [
         "Security",
         "Developer Tools"
+      ],
+      "capabilities": [
+        "email.parse"
       ],
       "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzhiNWNmNiIvPgogIDxyZWN0IHg9IjEwIiB5PSIxNCIgd2lkdGg9IjI4IiBoZWlnaHQ9IjIwIiByeD0iMyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNSIvPgogIDxwYXRoIGQ9Ik0xMSAxNmwxMyAxMCAxMy0xMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjMuNSIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K",
       "color": "#8b5cf6",
@@ -469,9 +477,6 @@
             }
           }
         }
-      ],
-      "capabilities": [
-        "email.parse"
       ]
     },
     {
@@ -484,6 +489,9 @@
       "categories": [
         "Security",
         "Developer Tools"
+      ],
+      "capabilities": [
+        "triage.rules"
       ],
       "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iIzEwYjk4MSIvPgogIDxwYXRoIGQ9Ik0xMiAxNWgyNE0xMiAyNGgyNE0xMiAzM2gyNCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjE4IiBjeT0iMTUiIHI9IjMuNSIgZmlsbD0iI2ZmZiIvPjxjaXJjbGUgY3g9IjMwIiBjeT0iMjQiIHI9IjMuNSIgZmlsbD0iI2ZmZiIvPjxjaXJjbGUgY3g9IjIyIiBjeT0iMzMiIHI9IjMuNSIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
       "color": "#10b981",
@@ -701,9 +709,6 @@
             }
           ]
         }
-      ],
-      "capabilities": [
-        "triage.rules"
       ]
     },
     {
@@ -716,6 +721,9 @@
       "categories": [
         "Security",
         "Developer Tools"
+      ],
+      "capabilities": [
+        "triage.decide"
       ],
       "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMiIgZmlsbD0iI2VmNDQ0NCIvPgogIDxwYXRoIGQ9Ik0yNCAxMHYxME0yNCAyMEwxMyAzNk0yNCAyMGwxMSAxNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjI0IiBjeT0iMTAiIHI9IjMuNSIgZmlsbD0iI2ZmZiIvPgo8L3N2Zz4K",
       "color": "#ef4444",
@@ -789,9 +797,6 @@
           "type": "string",
           "default": "alert.severity"
         }
-      ],
-      "capabilities": [
-        "triage.decide"
       ]
     }
   ],

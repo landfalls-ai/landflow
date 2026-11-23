@@ -19,6 +19,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@landflow/protocol": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22.20.5",
     "esbuild": "^0.28.2",

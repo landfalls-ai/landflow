@@ -23,7 +23,7 @@ import {
   type RowQuery,
 } from '../../shared/data-tables';
 import { defaultProjectId, homeProjects } from '../projects/store';
-import { singleton } from '../singleton';
+import { singleton, singletonKeys } from '../singleton';
 import { parseCsv, toCsv } from './csv';
 import { SqlDataTableStorage } from './sql-storage';
 import { DataTableError, typeOf, type DataTableStorage, type RowValues } from './storage';
@@ -450,10 +450,7 @@ export class DataTablesService {
   }
 }
 
-let instance: DataTablesService | undefined;
-
 /** The instance's data tables (in the database). Rows are cached process-wide. */
 export function dataTables(): DataTablesService {
-  instance ??= new DataTablesService(new SqlDataTableStorage(undefined, singleton('data-tables-sql-cache', () => new Map())));
-  return instance;
+  return singleton('data-tables-service', () => new DataTablesService(new SqlDataTableStorage(undefined, singleton(singletonKeys.dataTablesSqlCache, () => new Map()))));
 }

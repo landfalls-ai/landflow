@@ -1,0 +1,7 @@
+# Mailpit, the local mail catcher: an SMTP sink (landflow-mailpit:1025, accepts any user and password) and a web UI (8025) with
+# every message the host sends (invites, password resets, the Send Email node). Nothing leaves the cluster. The overlay points
+# LANDFLOW_SMTP_* at it; components/local-access publishes the UI on the Mac. The image comes from Docker Hub unless local.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - mailpit.yaml

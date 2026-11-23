@@ -8,7 +8,7 @@ Three independent Compose projects:
 
 | Project | File | What |
 |---|---|---|
-| `landflow-infra` | [`compose.infra.yml`](../deploy/compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`), Vector as a SIEM receiver (profile `siem`), LocalStack for AWS Secrets Manager (profile `aws`), a throwaway SSH Git server for Source control (profile `git`); the transport layer's brokers, one profile each (`kafka`, `rabbitmq`, `nats`, `mqtt`, `artemis`, `pulsar`, `pubsub`, `servicebus`) agentgateway as the MCP gateway (`mcp-gateway`) and in front of the models (`llm-gateway`, see [agents.md](agents.md#model-router)): see [Message brokers and the MCP gateway](#message-brokers-and-the-mcp-gateway) |
+| `landflow-infra` | [`compose.infra.yml`](../deploy/compose.infra.yml) | Development and test services: Postgres 16 + pgvector, Valkey, Mailpit, MinIO, OpenBao; Keycloak (profile `auth`), Jaeger (profile `observability`), MySQL 8.4 (profile `mysql`), GreenMail (profile `mail`), Vector as a SIEM receiver (profile `siem`), LocalStack for AWS Secrets Manager (profile `aws`), a throwaway SSH Git server for Source control (profile `git`); the transport layer's brokers, one profile each (`kafka`, `rabbitmq`, `nats`, `mqtt`, `artemis`, `pulsar`, `pubsub`, `servicebus`) agentgateway as the MCP gateway (`mcp-gateway`) and LiteLLM in front of the models (`llm-gateway`, see [The LLM gateway](#the-llm-gateway)): see [Message brokers and the MCP gateway](#message-brokers-and-the-mcp-gateway) |
 | `landflow` | [`compose.yml`](../deploy/compose.yml) | Landflow itself as images: the host (Next.js standalone), the seven plugins, which announce themselves to the host, and the sandboxed [code runner](#code-runner) for the Code node |
 | `landflow-queue` | [`compose.queue.yml`](../deploy/compose.queue.yml) | Landflow in [queue mode with high availability](#queue-mode-two-mains-two-workers): two mains behind a load balancer and two workers, on the infra stack's Postgres, Valkey and MinIO |
 
@@ -39,6 +39,9 @@ docker compose -f deploy/compose.infra.yml --profile siem up -d --wait siem
 # ... LocalStack, AWS Secrets Manager for the external secrets tests (dummy credentials only)
 COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml --profile aws up -d --wait localstack
 
+# ... LiteLLM, the LLM gateway ("The LLM gateway" below)
+COMPOSE_BAKE=false docker --context orbstack compose -p landflow-infra -f deploy/compose.infra.yml --profile llm-gateway up -d --wait
+
 # ... the transport layer's brokers (one profile each; "Message brokers and the MCP gateway" below) and agentgateway
 COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml --profile kafka --profile rabbitmq --profile nats up -d --wait
 COMPOSE_BAKE=false docker compose -p landflow-infra -f deploy/compose.infra.yml --profile mqtt --profile artemis --profile pulsar --profile pubsub --profile servicebus up -d
@@ -65,6 +68,135 @@ COMPOSE_BAKE=false docker compose -f deploy/compose.queue.yml up -d --build --wa
 python3 deploy/scripts/queue-e2e.py
 ```
 
+## Probes
+
+| Route | Checks | Used by |
+|---|---|---|
+| `GET /api/health/live` | nothing: the process answers `{ status: 'ok', uptimeSeconds }` even while a dependency is down. Next holds every request until instrumentation (which awaits boot) finishes, so it does not answer before boot ends | Kubernetes `startupProbe` (up to 5 min for boot) and `livenessProbe` |
+| `GET /api/health/ready` | boot finished and not draining (before boot ends Next holds the request, so a `503` with `boot` not ok is seen only while draining); database answers `SELECT 1` (in Postgres mode on the in-process copy, so it does not see Postgres go away); Postgres write queue not blocked and its oldest batch younger than `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS` (30); schema at the latest migration; in queue mode Valkey answers. Each check has a 1 s limit. 200 `ready` or 503 `not_ready` with `{ ok, ms }` per check | Kubernetes `readinessProbe`, the Docker `HEALTHCHECK` (so compose `service_healthy` means ready), the smoke script |
+| `GET /api/health` | `{ status: 'ok' }`; the plugin and run counts only with a session or API key | the CLI and scripts |
+
+In Postgres mode, losing Postgres shows as `writeQueue` lag, only after a write has been queued for `LANDFLOW_READY_MAX_WRITE_LAG_SECONDS`; a host with no pending write stays ready, and the LISTEN connection is not checked ([limitations](limitations.md)). A long Postgres backlog keeps a pod unready until the queue drains; that is deliberate, the host should not take traffic
+while it cannot persist it. The leader state is not a check: a non-leader main is ready.
+
+## Stopping the host
+
+On SIGTERM or SIGINT a main stops in phases, logging `shutdown: <phase>/<step>` for each and `shutdown complete` with
+the duration. New requests get `503` with `Retry-After: 5` (`/api/health/live` and `/ready` still answer; `/ready`
+says 503 from the first moment, so the load balancer stops sending traffic) and requests in flight are awaited; then
+the leader services (scheduler, timers, alerts) and the MCP gateway sync stop; then local runs get time to finish (what
+is still running continues from its last checkpoint at the next boot); then the broker connections, the cluster runtime
+(queue mode: the leader lease is released and the instance forgotten), the database (Postgres flushes its write queue)
+and telemetry.
+
+The whole stop is bounded by `LANDFLOW_SHUTDOWN_SECONDS` (default 25, inside Kubernetes' 30 s grace period; the compose
+stacks give the mains `stop_grace_period: 30s`). The last 5 s (a fifth of a budget under 25 s) are reserved for the
+cluster, database and telemetry steps, so a long run never stops the flush; requests in flight may wait at most 60% of
+the rest, so a request that lasts as long as its run still leaves time to stop the scheduler and the runs. A step that
+fails or times out is logged and the next one runs. A second signal exits at once with code 1; a clean stop exits 0.
+The shutdown steps are registered as soon as the database is open, so a signal during the rest of the boot (plugin
+seeds that don't answer) still flushes and releases the lease. This holds for the main and for `pnpm worker`, which
+installs its signal handlers before it boots.
+
+This needs `NEXT_MANUAL_SIG_HANDLE` set to any non-empty value (`true`), which `pnpm start` (the `start` script) and
+the Docker image set. Without it Next.js's own handler closes its server and exits 143 first, and only the error
+handlers (below) are ours. `next dev` keeps Next.js's own handling: manual handling is not available there.
+
+A required boot step (the configuration check in the production profile, the database, the queue-mode cluster runtime
+and, on a worker, the plugin registry) that fails logs `boot failed`. `pnpm worker` then exits with code 1 (an unreachable
+Valkey fails after the 5 s ping instead of exiting 0 silently); under `next start` and the image (`NODE_ENV=production`) the process then exits with
+code 1, so the orchestrator restarts the container. Elsewhere `register()` in `instrumentation.ts` catches the failed
+boot (a rejected instrumentation hook would stop `next dev`), so `pnpm dev` keeps running: routes answer 500 and
+`/api/health/ready` 503 with `boot` not ok until a later request boots it again. Every other service that fails to start is logged as `service failed to start`, counted
+(`landflow.process.errors{kind="service_start"}`) and the host keeps serving.
+
+An unhandled rejection is logged and counted. An uncaught exception is logged and counted; where `NODE_ENV=production`
+(`next start` and the image, including the in-repo stacks that run the development profile) the host also shuts down
+(5 s budget) and exits 1, since its state may be broken and a supervisor restarts it; `pnpm dev` only logs and counts,
+as Next.js does. The worker always exits. This follows `NODE_ENV` (whether a supervisor runs the process), not
+`LANDFLOW_PROFILE`.
+
+## Production profile
+
+`LANDFLOW_PROFILE` is `development` or `production`; unset, it is `production` when `NODE_ENV=production` (the host image sets
+it) and `development` otherwise. In the production profile `checkConfig()` (`apps/web/src/lib/server/config/check.ts`)
+reports an error for an unset `LANDFLOW_PUBLIC_URL`, for any secret variable (`LANDFLOW_ENCRYPTION_KEY`,
+`LANDFLOW_BINARY_SECRET`, `LANDFLOW_TRANSPORT_SECRET`, `LANDFLOW_REGISTRY_SECRET`, `LANDFLOW_CODE_RUNNER_SECRET`,
+`LANDFLOW_MCP_GATEWAY_SECRET`, `LANDFLOW_OWNER_PASSWORD`, the S3 keys, …) holding a development value (anything with
+`dev-only`, or a known default such as the gateway's `landflow-dev-parts-only` and `sk-landflow-dev-master-only`), and
+for an unset `LANDFLOW_REGISTRY_SECRET` unless `LANDFLOW_REGISTRY_OPEN=true`; an unset `LANDFLOW_ENCRYPTION_KEY` or
+`LANDFLOW_BINARY_SECRET` is a warning, and so is a missing `LANDFLOW_CODE_RUNNER_URL` when `LANDFLOW_CODE_IN_PROCESS` is
+unset (Code nodes would have nowhere to run). The host cannot check `LANDFLOW_LLM_GATEWAY_MASTER_KEY`, which is the
+gateway container's own variable: it catches the development master key only when it is also given as
+`LANDFLOW_LLM_GATEWAY_ADMIN_KEY` or `LANDFLOW_LLM_GATEWAY_KEY`, so set a real one in the gateway. Messages name the
+variable, never the value. The check is
+a pure function; the host calls it at boot (`lib/server/runtime.ts`, the first required step, for the main and the worker).
+In the production profile any error stops the boot with a `ConfigError` that lists every problem (the process exits non-zero
+and the pod restarts); in development the problems are logged as warnings. `next build` (`NEXT_PHASE=phase-production-build`)
+does not boot the host and only warns, since the image build has none of the deployment's variables. Either way the host logs one `effective configuration`
+line at info with every `LANDFLOW_*`, `OTEL_*` and `DATABASE_URL` variable that is set (secrets shown as `[set]` by the check or `[redacted]` by the logger, URL passwords redacted, and email variables such as `LANDFLOW_OWNER_EMAIL` masked to `o***@example.com`).
+
+Three runtime defaults also change with the profile. Requests are rate-limited: 600 a minute per signed-in user or
+API key (`LANDFLOW_RATE_LIMIT_API`, shared by all of that user's tabs and automation) and 120 a minute per client
+address on the public trigger paths (`LANDFLOW_RATE_LIMIT_PUBLIC`); over it the answer is 429 with `Retry-After`. Set
+`LANDFLOW_TRUSTED_PROXIES` behind a proxy, or every client shares one address. JSON bodies are capped at 16 MiB in every
+profile (`LANDFLOW_MAX_BODY_BYTES`). Outbound requests to loopback, private, link-local and metadata
+addresses are refused (`LANDFLOW_OUTBOUND_BLOCK_PRIVATE`; list exceptions in `LANDFLOW_OUTBOUND_ALLOW`, see
+[audit and governance](features/audit-and-governance.md#outbound-requests)), and Code nodes run only in the code runner,
+not inside the host (`LANDFLOW_CODE_IN_PROCESS`, see [the code runner](reference/configuration.md)).
+
+The compose stacks and the Kubernetes base set `LANDFLOW_PROFILE=development` because they run the development secrets in
+`deploy/.env.example` while their image says `NODE_ENV=production`. A real deployment leaves it unset (or `production`) and
+sets its own secrets and public URL.
+
+### Encryption key rotation
+
+`LANDFLOW_ENCRYPTION_KEYS` (`kid:key,…`, the first key seals) lets the vault's key change without downtime: put the new key first
+on **every** process (in queue mode: every main and worker, before anything else), then run `POST /api/settings/encryption/rotate`
+as the owner (or `pnpm --filter @landflow/web rotate-key` on a stopped host), and remove an old key only after it answers
+`done: true`. The steps are in [secrets and environments](features/secrets-and-environments.md#encryption-keys-and-rotation).
+The bundled setups pass the ring through, empty by default: `LANDFLOW_ENCRYPTION_KEYS` in `deploy/compose.yml`,
+`LANDFLOW_QUEUE_ENCRYPTION_KEYS` in `deploy/compose.queue.yml` (every main and worker), and the optional
+`encryption-keys` key of the `landflow-host` secret (or `landflow-queue` in queue mode) in Kubernetes.
+
+## Behind a reverse proxy or ingress
+
+Set `LANDFLOW_TRUSTED_PROXIES` to the number of proxies between the client and the host (an ingress controller behind a
+cloud load balancer is 2). The host then takes the client address from `X-Forwarded-For` that many entries from the end
+and builds its own origin from `X-Forwarded-Host`/`-Proto`. With the default 0 it takes the last entry: behind one proxy
+that appends to `X-Forwarded-For` that is still the real client (0 and 1 give the same address), but behind two or more
+proxies, or one that sets no header, every request seems to come from a proxy (one shared sign-in limit). What 0 loses is
+`X-Real-IP` and the origin: the host does not build its own origin from `X-Forwarded-Host`/`-Proto`. (HSTS, the cookies'
+`Secure` flag, the OAuth2 callback, the hosted chat page and the same-origin check still read `X-Forwarded-Proto` or `-Host` whatever the hop
+count.) Also set `LANDFLOW_PUBLIC_URL`: invite and reset links are refused in the production profile without it. Resume URLs are signed in production
+(`LANDFLOW_RESUME_SIGNATURES`, see [engine](features/engine.md)).
+
+## Security headers and Content Security Policy
+
+`apps/web/src/proxy.ts` sets these on every response it produces (pages, API routes, 401s and redirects;
+`X-Frame-Options` except on the embeddable paths below): `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self)` (Spotlight
+dictation uses the microphone) and `X-Frame-Options: DENY`. `Strict-Transport-Security: max-age=31536000;
+includeSubDomains` is added when the request is https (the URL, or `X-Forwarded-Proto`) unless `LANDFLOW_HSTS=off`.
+`x-powered-by` is not sent.
+
+Pages (not API routes) also get a Content Security Policy with a fresh nonce per request: `script-src 'self' 'nonce-…'
+'strict-dynamic'` (plus `'unsafe-eval'` under `next dev`), inline styles, `img-src 'self' data: blob: https:` (notes,
+chat and plugin icons show remote images; plain `http:` images do not load under `enforce`), `connect-src 'self'`, `frame-src 'self' blob: data: https:`, `worker-src
+'self' blob:`, `object-src 'self' data: https:` (the Run Trace shows a PDF artifact in an `<object>`, which Chrome also
+checks against `frame-src`), `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'none'`. `LANDFLOW_CSP` picks
+the mode: `enforce` (default in the production profile), `report` (`Content-Security-Policy-Report-Only`, default in
+development) or `off`. If a page breaks in production, set `LANDFLOW_CSP=report` and read the console for the blocked
+source.
+
+The embeddable or self-policed paths (`/chat`, `/form`, `/form-test`, `/api/binary`, `/api/mcp/files`, `/mcp`,
+`/mcp-test`, `/api/webhook`, `/api/webhook-test`) keep their own policy and get no frame headers or CSP from the
+proxy, only the three fixed headers above. A reverse proxy that serves the host over https should forward
+`X-Forwarded-Proto`.
+
+Any inline `<script>` in a page must carry the nonce: the root layout reads it from the `x-nonce` request header the
+proxy sets and passes `nonce={nonce}` to its theme and look scripts. Without it the browser blocks the script.
+
 ## Ports, credentials and URLs
 
 All credentials are **for local development and tests only**.
@@ -75,6 +207,7 @@ All credentials are **for local development and tests only**.
 | Valkey 8 | `localhost:56379` | `valkey:6379` | none |
 | Mailpit SMTP | `localhost:51025` | `mailpit:1025` | any user and password (or none), no TLS |
 | Mailpit UI | http://localhost:58025 | `mailpit:8025` | none |
+| Grafana (`grafana` profile, with the alert "High CPU on web-01") | http://localhost:53130 | `grafana:3000` | `admin` / `landflow-dev-only`; provisioning from `deploy/grafana/provisioning/` |
 | MinIO S3 API | http://localhost:59000 | `minio:9000` | `landflow` / `landflow-dev-only`, bucket `landflow` |
 | MinIO console | http://localhost:59001 | `minio:9001` | same |
 | OpenBao (dev mode) | http://localhost:58200 | `openbao:8200` | root token `landflow-dev-root-token`; KV v2 at `landflow/` (sample `landflow/dev/hello`) |
@@ -101,7 +234,7 @@ All credentials are **for local development and tests only**.
 | Azure Service Bus emulator 2.0 (`servicebus`) | AMQP `localhost:55675`, management + `/health` http://localhost:55300 | `servicebus:5672`, `servicebus:5300` | `Endpoint=sb://localhost:55675;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;`; static entities from [`infra/servicebus/Config.json`](../deploy/infra/servicebus/Config.json); SQL backend `servicebus-sql` (Azure SQL Edge, `sa` / `Landflow-dev-only1`, not published) |
 | agentgateway 1.6 (`mcp-gateway`) | MCP http://localhost:54000/mcp, admin API + UI http://localhost:55000 (`/ui`) | `mcp-gateway:4000`, `mcp-gateway:15000` | none (the admin API has no authentication: loopback only); targets in SQLite in `mcp-gateway-data` |
 | **Landflow host** (app) | http://localhost:53000 | `web:3000`, gRPC registry `web:7070` | owner `owner@landflow.test` / `landflow-dev-only` (`LANDFLOW_OWNER_EMAIL` / `LANDFLOW_OWNER_PASSWORD`) |
-| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211`, `browser:7112/7212` (profile `browser`), `web-search:7113/7213` (profile `web-search`), `agent-shell:7114/7214` (profile `agent-shell`), `sap:7116/7216` (profile `sap`, k8s component `components/sap`) (HTTP/gRPC) | |
+| Plugins (app) | not published | `text-toolkit:7101/7201`, `py-insights:7102/7202`, `go-crypto:7103/7203`, `messaging:7104/7204`, `productivity:7105/7205`, `google-workspace:7106/7206`, `databases:7107/7207`, `github:7111/7211`, `browser:7112/7212` (profile `browser`), `web-search:7113/7213` (profile `web-search`), `agent-shell:7114/7214` (profile `agent-shell`), `sap:7123/7223` (profile `sap`, k8s component `components/sap`), `desktop:7124/7224` (profile `desktop`), `linear:7116/7216`, `attio:7117/7217`, `fathom:7118/7218`, `clickland:7119/7219`, `landledger:7120/7220` (HTTP/gRPC) | |
 | Code runner (app) | http://127.0.0.1:53300 (through `code-runner-port`) | `code-runner:7300`, on the internal `landflow-code` network only | header `x-landflow-runner-secret: landflow-code-runner-dev-only` |
 | **Queue mode** load balancer | http://localhost:53080 | `lb:3000` | owner `owner@landflow.test` / `landflow-dev-only` |
 | Queue mode mains | http://localhost:53081, http://localhost:53082 | `main-1:3000`, `main-2:3000` | same |
@@ -233,6 +366,33 @@ one machine; Python's callers are threads on one core. Read the numbers as relat
 size changes it), not as capacity. The Service Bus emulator's entities are fixed in `infra/servicebus/Config.json`: the bench
 plugin's queue (`landflow.v1.plugin.transport-bench`) is not there, so that kind is skipped until it is added and the emulator recreated.
 
+## The LLM gateway
+
+The `llm-gateway` profile runs [LiteLLM](https://docs.litellm.ai)'s open-source proxy as the one door for model calls
+([llm-gateway.md](llm-gateway.md) has the whole story):
+
+```bash
+COMPOSE_BAKE=false docker --context orbstack compose -p landflow-infra -f deploy/compose.infra.yml --profile llm-gateway up -d --wait
+```
+
+- **URLs** (loopback only; the admin UI shares the API port): `http://127.0.0.1:54100/v1/messages`,
+  `/v1/chat/completions`, `/v1/models`, `/health/liveliness`, and the UI at `/ui` (`LANDFLOW_LLM_GATEWAY_PORT`). From
+  kagent in kind or OrbStack: `http://host.docker.internal:54100`; in the Kubernetes example: `http://llm-gateway:4000`.
+- **Development keys**: master key `sk-landflow-dev-master-only`, salt key `sk-landflow-dev-salt-only` (never change it
+  once keys exist), UI login `admin` / `landflow-dev-only`. Set real ones with `LANDFLOW_LLM_GATEWAY_MASTER_KEY`,
+  `_SALT_KEY`, `_UI_USERNAME` and `_UI_PASSWORD`.
+- **Database**: `litellm` in the infra Postgres, created by the one-shot `llm-gateway-db` service. It holds keys, teams,
+  customers and spend.
+- **Models**: [`llm-gateway/config.yaml`](../deploy/llm-gateway/config.yaml) lists `qwen3-coder:30b` and `qwen3.8` on the
+  host's Ollama. To add one, append a `model_list` entry (`ollama_chat/<model>` for Ollama) and restart the service. Every
+  model name a client sends must be listed.
+- **The image** is pinned by digest (`v1.108.2-lts`). On 21 October 2026 a supply-chain compromise poisoned LiteLLM
+  `v1.107.0` and its moving tags; never use `v1.107.0`, `latest`, `main-latest`, `main-stable`, `-nightly` or `-dev`.
+  Check the signature with `deploy/scripts/verify-litellm-image.sh` (needs `cosign`; exits 2 without it).
+- **Kubernetes**: `kubectl --context orbstack apply -k deploy/k8s/examples/llm-gateway` next to the orbstack overlay (it
+  needs the `postgres` component). One replica; reach the UI with `kubectl --context orbstack -n landflow-dev port-forward
+  svc/llm-gateway 54100:4000`.
+
 ## Using the infra from the dev server on the host
 
 Set these before `pnpm dev` / `pnpm dev:all` for traces (sign-in, email and SSO are in the next section):
@@ -308,14 +468,14 @@ Tests: `(cd apps/web && LANDFLOW_INTEGRATION=oidc,smtp npx vitest run test/oidc.
 | `landflow/plugin-browser:dev` (profile `browser`) | [`plugins/browser/Dockerfile`](../plugins/browser/Dockerfile) | `tsx src/main.ts` as `node` on Debian with Chrome and agent-browser, headless: see [Browser plugin](#browser-plugin) |
 | `landflow/code-runner:dev` | [`docker/code-runner.Dockerfile`](../deploy/docker/code-runner.Dockerfile) | `node dist/main.mjs` (esbuild bundle) on Node 26 + CPython 3 (standard library) as uid 10001; `code-runner-port` runs `node dist/forward.mjs` from the same image |
 
-All builds use the repository root as context; [`/.dockerignore`](../.dockerignore) keeps out `node_modules`, `.next`, `.data`, venvs and Go binaries. Every image has a healthcheck: the host's `GET /api/health`, each plugin's `GET /landflow/v1/health`. Build one image on its own with, for example:
+All builds use the repository root as context; [`/.dockerignore`](../.dockerignore) keeps out `node_modules`, `.next`, `.data`, venvs and Go binaries. Every image has a healthcheck: the host's `GET /api/health/ready`, each plugin's `GET /landflow/v1/health`. Build one image on its own with, for example:
 
 ```bash
 docker build -f deploy/docker/go-plugin.Dockerfile --build-arg PLUGIN=databases \
   --build-arg HTTP_PORT=7107 --build-arg GRPC_PORT=7207 -t landflow/plugin-databases:dev .
 ```
 
-**Host.** `apps/web/next.config.ts` switches to `output: 'standalone'` when `LANDFLOW_NEXT_OUTPUT=standalone`, which only the image build sets. Workflows, executions, agents and the credentials vault live in the `landflow_landflow-data` volume (`LANDFLOW_DATA_DIR=/data`). `LANDFLOW_ENCRYPTION_KEY` (64 hex characters or a passphrase) comes from the environment; left empty, the vault generates `/data/encryption.key` on first use. Changing the key later makes saved credentials unreadable. `LANDFLOW_PUBLIC_URL` is `http://localhost:53000` so links the host hands out point at the published port. `OLLAMA_URL` points at Ollama on the Mac (`host.docker.internal:11434`).
+**Host.** `apps/web/next.config.ts` switches to `output: 'standalone'` when `LANDFLOW_NEXT_OUTPUT=standalone`, which only the image build sets. Workflows, executions, agents and the credentials vault live in the `landflow_landflow-data` volume (`LANDFLOW_DATA_DIR=/data`). `LANDFLOW_ENCRYPTION_KEY` (64 hex characters or a passphrase) comes from the environment; left empty, the vault generates `/data/encryption.key` on first use. Changing the key later makes saved credentials unreadable; to rotate it, add a new key first in `LANDFLOW_ENCRYPTION_KEYS` instead ([rotation](features/secrets-and-environments.md#encryption-keys-and-rotation)). `LANDFLOW_PUBLIC_URL` is `http://localhost:53000` so links the host hands out point at the published port. `OLLAMA_URL` points at Ollama on the Mac (`host.docker.internal:11434`).
 
 **Plugins.** Each container sets `LANDFLOW_REGISTRY_URL=http://web:3000` and `LANDFLOW_ADVERTISE_HOST=<service name>`, so it announces `http://<service>:<port>` and `grpc://<service>:<port>` and heartbeats every 10 s. With `LANDFLOW_REGISTRY_SECRET` set on the host, add the same value to `x-plugin-env` so they may register. Stopping a container withdraws it at once; restarting the host is picked up on the next heartbeat. The host's scan (`LANDFLOW_SCAN_HOSTS`, `LANDFLOW_SCAN_PORTS`) probes the plugin services too, so the Plugins page's "Scan network" works in Docker.
 
@@ -336,9 +496,29 @@ LANDFLOW_REGISTRY_URL=http://localhost:53000 LANDFLOW_ADVERTISE_HOST=host.docker
   LANDFLOW_HTTP_PORT=7151 LANDFLOW_GRPC_PORT=7251 pnpm plugin:ts
 ```
 
+## Postgres memory sizing
+
+In Postgres mode ([Storage](architecture.md#storage)) each host process keeps an in-memory copy of the database, but only the
+hot part of the run history: executions in flight, those finished within `LANDFLOW_PG_HOT_MINUTES` (default 15), those with a
+retry waiting, and children of a waiting run. Older runs keep their summary row in the copy and have their record and Run
+Trace journal read from Postgres on demand, so a page of an old run waits for one query. Memory and boot time no longer grow
+with finished runs' data and journal; they grow with the other tables, which stay whole: the audit log, the usage ledger,
+insights rows, AI usage, workflows, versions and the rest.
+
+Measured with `apps/web/scripts/seed-executions.ts` (50,000 finished runs of about 10 KB each, with 20 journal events of
+1 KB each, plus 5 running; 1.8 GB in Postgres): boot 0.5–0.7 s and 153–164 MB resident, against 9.3–10.1 s and 14.1–14.5 GB
+when everything is hot (`LANDFLOW_PG_HOT_MINUTES=100000`, which is what every earlier version did; at Node's default heap
+that boot runs out of memory). The figures are the range of four runs; tables bloated by repeated seeding without a
+vacuum boot slower (up to about 3 s). Size a process for its workflows, the other
+tables and the runs of the last hot window: the memory of a run in the hot window is its record and journal, so a host that
+finishes 10,000 runs of 100 KB in a quarter of an hour needs about 1 GB for them. Raise `LANDFLOW_PG_HOT_MINUTES` only if
+people open just-finished runs so often that the query per old page matters; lower it to keep the copy smaller. A host that
+has been busy does not give the memory of evicted runs back to the system at once (SQLite reuses the freed pages), so its
+resident size follows the busiest hot window it has had.
+
 ## Queue mode (two mains, two workers)
 
-[`compose.queue.yml`](../deploy/compose.queue.yml) (project `landflow-queue`) runs Landflow in queue mode with high availability ([Queue mode, workers and high availability](features/engine.md#queue-mode-workers-and-high-availability)) on the infra stack's Postgres, Valkey and MinIO. One image runs everything: the mains run `node server.js`, the workers `node worker.mjs`.
+[`compose.queue.yml`](../deploy/compose.queue.yml) (project `landflow-queue`) runs Landflow in queue mode with high availability ([Queue mode, workers and high availability](features/engine.md#queue-mode-workers-and-high-availability)) on the infra stack's Postgres, Valkey and MinIO. One image runs everything: the mains run `node server.js`, the workers `node worker.mjs`. Workers run the same production check as the mains, so in the production profile they need the same variables (including `LANDFLOW_PUBLIC_URL` and `LANDFLOW_REGISTRY_SECRET`, or `LANDFLOW_REGISTRY_OPEN=true`) even though they serve no registry; the bundled manifests use the development profile.
 
 ```bash
 docker compose -f deploy/compose.infra.yml up -d --wait
@@ -349,7 +529,7 @@ python3 deploy/scripts/queue-e2e.py      # load spread, a killed worker, a kille
 
 | Service | On the Mac | |
 |---|---|---|
-| `lb` | http://localhost:53080 | round robin over the mains, skipping one that is down for 5 s; a browser sticks to one main (cookie `landflow_main`; the `x-landflow-main` header says which one answered). A stand-in for your load balancer: [`queue/lb.mjs`](../deploy/queue/lb.mjs) |
+| `lb` | http://localhost:53080 | round robin over the mains, skipping for 5 s one that is unreachable or whose `/api/health/ready` (asked every 2 s) is not 200, such as a main draining for shutdown; a browser sticks to one main (cookie `landflow_main`; the `x-landflow-main` header says which one answered). A stand-in for your load balancer: [`queue/lb.mjs`](../deploy/queue/lb.mjs) |
 | `main-1`, `main-2` | http://localhost:53081, http://localhost:53082 | UI, API, webhooks. `main-1` creates the owner (`owner@landflow.test` / `landflow-dev-only`); `main-2` and the workers start once it is healthy |
 | `worker-1`, `worker-2` | http://localhost:55691/healthz, http://localhost:55692/healthz (`/metrics` too) | 10 runs at once each (`LANDFLOW_WORKER_CONCURRENCY`); jobs are taken high, normal, low from three streams (`jobs:high`, `jobs`, `jobs:low`) by the workflow's Priority, with one low job after every eight others |
 | `text-toolkit` | not published | registers through the load balancer; the mains keep its address in Postgres and the workers call it directly |
@@ -390,7 +570,21 @@ LANDFLOW_QUEUE_VALKEY_CLUSTER=valkey-cluster-1:6379,valkey-cluster-2:6379 docker
 
 **Marketplace node plugins** install on either main and run in every main and worker (each its own child process). The containers have no `/app/packages`, so a plugin needing `@landflow/sdk` links can't be prepared there; plain JavaScript, Python and Go plugins can. A local marketplace path needs `LANDFLOW_QUEUE_MARKETPLACE_ALLOW_LOCAL=1` at `up` time.
 
-Day to day: **Settings → Workers** on either main shows the leader, the queue and every process; `docker compose -f deploy/compose.queue.yml stop worker-1` sends SIGTERM (runs get 30 s, `stop_grace_period` is 40 s, and what doesn't finish continues on the other worker); `stop main-1` on the leader hands the leadership over within about 3 s. To add a worker, copy `worker-2` with its own `LANDFLOW_INSTANCE_ID` and port. Valkey keys: `docker compose -f deploy/compose.infra.yml exec valkey valkey-cli --scan --pattern 'landflow-queue:*'`.
+Day to day: **Settings → Workers** on either main shows the leader, the queue and every process; `docker compose -f deploy/compose.queue.yml stop worker-1` sends SIGTERM (runs get 30 s, the worker gives itself 40 s in all, `stop_grace_period` is 45 s, and what doesn't finish continues on the other worker); `stop main-1` on the leader hands the leadership over within about 3 s. To add a worker, copy `worker-2` with its own `LANDFLOW_INSTANCE_ID` and port. Valkey keys: `docker compose -f deploy/compose.infra.yml exec valkey valkey-cli --scan --pattern 'landflow-queue:*'`.
+
+## Expression sandbox
+
+`{{ }}` expressions run in a sealed `node:vm` realm by default. `LANDFLOW_EXPRESSION_SANDBOX=isolate` runs them in an
+isolated-vm isolate with a memory cap (`LANDFLOW_EXPRESSION_MEMORY_MB`, default 64; [engine.md](features/engine.md#the-isolate-backend-optional)).
+The host, the worker and `next start` need `NODE_OPTIONS=--no-node-snapshot` for it (the image sets it in `host.Dockerfile`;
+set it yourself for `pnpm start` and `pnpm worker`, and in any Kubernetes or compose environment that does not use the
+image). `host.Dockerfile` also links `isolated-vm` and its addon into the image when the install built it; where it could
+not, the image runs the realm only and a production start with `isolate` refuses to boot. The in-repo compose and Kubernetes
+stacks leave the default. `NODE_OPTIONS` is inherited by the child processes the host starts (plugin processes, the code
+runner's children when started by pnpm): harmless, but it shows in their environment. The base image is Alpine (musl);
+`isolated-vm` 6.2.0 loads there from its musl prebuild (a container started with `LANDFLOW_EXPRESSION_SANDBOX=isolate`
+logged no fallback warning). The isolate backend can abort the process on `Set`/`Map` growth and its cap does not bound
+resident memory, so give the container headroom ([engine.md](features/engine.md#the-isolate-backend-optional)).
 
 ## Code runner
 
@@ -400,7 +594,7 @@ The Code node runs JavaScript in-process (`node:vm` inside the host: quick, but 
 |---|---|
 | `LANDFLOW_CODE_RUNNER_URL` | `http://code-runner:7300` in compose (set already), `http://127.0.0.1:53300` for the Docker runner from the dev server, `http://127.0.0.1:7300` for one started with pnpm |
 | `LANDFLOW_CODE_RUNNER_SECRET` | the runner's `CODE_RUNNER_SECRET` (compose: `LANDFLOW_CODE_RUNNER_SECRET`, default `landflow-code-runner-dev-only`) |
-| `LANDFLOW_CODE_IN_PROCESS` | `false`: no in-process JavaScript on this host, so every Code node needs the runner. The dockerised host sets it |
+| `LANDFLOW_CODE_IN_PROCESS` | `false`: no in-process JavaScript on this host, so every Code node needs the runner (the dockerised host sets it). Unset: allowed in the development profile, off in the production profile, where Code nodes run in the code runner or fail with a message that names this variable; `true` there is a knowing choice to run trusted code in the host |
 | `LANDFLOW_CODE_BINARY_MAX_BYTES` | files a Code node reads and creates (`this.helpers.getBinaryDataBuffer` / `prepareBinaryData`), each way, 6 MiB by default |
 
 With a runner configured, Code nodes on **Run In: Default** use it; **Sandbox** and **In-process** (JavaScript only) pin one. Python always runs in the runner and fails with "Python code needs the code runner, and this host has none" without one. The host reads these on every run, but environment variables only change on a restart.
@@ -529,7 +723,7 @@ Each test file uses a fresh mailbox (`<name>-<time>@landflow.test`), delivered o
 
 ## Kubernetes
 
-[`k8s/`](../deploy/k8s) runs the host and the seven plugins on Kubernetes, with the host finding the plugins through
+[`k8s/`](../deploy/k8s) runs the host and the twelve base plugins on Kubernetes, with the host finding the plugins through
 **Kubernetes discovery** instead of announcements ([protocol §13](protocol.md#13-kubernetes-discovery-and-registry-proofs)).
 It is plain [kustomize](https://kustomize.io), built into `kubectl` (`apply -k`): no extra tool, plain YAML to read and
 diff, and overlays for the differences between clusters. A Helm chart would add templating Landflow does not need yet.
@@ -554,9 +748,14 @@ diff, and overlays for the differences between clusters. A Helm chart would add 
 | `k8s/overlays/orbstack-ingress`, `orbstack-gateway-api` | the OrbStack overlay plus `gateway-ingress` or `gateway-httproute`, and `gateway-landflow-tokens`, for a Traefik in `landflow-ingress` |
 | `k8s/components/queue-mode` | optional, on top of `postgres`, `valkey` and `minio`: the host as two mains (`RollingUpdate`, the pod name as `LANDFLOW_INSTANCE_ID`, data in an `emptyDir`), a `landflow-worker` Deployment (`node worker.mjs`, `/healthz` probes, SIGTERM drain), PodDisruptionBudgets for both, and a Secret `landflow-queue` with dev-only values |
 | `k8s/components/minio` | optional: MinIO and a bucket-creating start script, for the binary store in queue mode |
+| `k8s/components/{landfall,triage,threat-intel,grafana,ai-sdk}` | one plugin each, same pattern as the base plugins; `orbstack` enables them |
+| `k8s/components/code-runner`, `mailpit`, `local-access` | the sandboxed code runner (with a NetworkPolicy that lets only the host in), Mailpit (SMTP sink and web UI), and LoadBalancer Services that publish the host, its MCP gateway and Mailpit's UI on localhost: "The whole thing on OrbStack" below |
 | `k8s/overlays/orbstack-queue` | the OrbStack overlay plus `postgres`, `valkey`, `minio` and `queue-mode`: "Queue mode on Kubernetes" below |
 | `k8s/examples/keda/` | KEDA `ScaledObject`s per broker, and `queue-workers.yaml` for the queue workers (not in any overlay): "Autoscaling with KEDA" below |
 | `k8s/examples/envoy-gateway/` | a `BackendTrafficPolicy` with long timeouts for the HTTPRoute, for Envoy Gateway |
+| `k8s/components/clickland-observability` | optional, the default for telemetry: OTLP export from every Landflow Deployment to Clickland's collector (`clickland-collector.clickland-dev:4318`), run journals as traces there, and trace links to Clickland's console; deploys nothing (Clickland runs from its own repository): "Telemetry on Kubernetes" below |
+| `k8s/components/landledger` | the Landledger plugin (`landflow/plugin-landledger:k8s-dev`) and `landledger-api`, an ExternalName Service to Landledger's API on the Mac (`host.orb.internal:4810`): [features/landledger.md](features/landledger.md#deploying) |
+| `k8s/overlays/orbstack-clickland` | the OrbStack overlay plus `landledger` and `clickland-observability` |
 | `k8s/components/observability` | optional: a local telemetry backend (`grafana/otel-lgtm`: Collector, Tempo, Prometheus, Loki, Grafana) as `landflow-lgtm`, OTLP export from every Landflow Deployment to it, and the "Landflow · agent runs" dashboard: "Telemetry on Kubernetes" below |
 | `k8s/overlays/orbstack-observability` | the OrbStack overlay plus `observability` |
 
@@ -576,6 +775,37 @@ docker --context orbstack buildx build --builder orbstack --load -f deploy/docke
 # … the same for text-toolkit (node, 7101/7201), py-insights (python, 7102/7202), messaging (node, 7104/7204),
 #   productivity (python, 7105/7205), google-workspace (go, 7106/7206), databases (go, 7107/7207)
 ```
+
+### The whole thing on OrbStack
+
+`overlays/orbstack` is the whole local Landflow: every plugin (the twelve in the base plus Browser, Agent Shell, Web Search,
+Landfall, Triage, Threat Intel, Grafana and AI SDK), the sandboxed code runner for Python and JavaScript Code nodes, Mailpit as the
+mail server, and the LiteLLM gateway and Ollama on the Mac. Sign-in is a password only: no identity provider, no OIDC, SAML or
+SCIM. The owner (`owner@landflow.test` / `landflow-dev-only`) invites people, and the invite email lands in Mailpit.
+
+| What | Where |
+|---|---|
+| Landflow | http://localhost:53000 (`components/local-access`: a LoadBalancer Service; OrbStack publishes it on the Mac) |
+| MCP gateway | http://localhost:54000/mcp |
+| Mailpit, every mail the host sends | http://localhost:58025 |
+| Code runner | `landflow-code-runner:7300` in the cluster, no route out (`components/code-runner`; the secret is the `code-runner-secret` key of the `landflow-host` Secret) |
+| LLM gateway | `http://host.docker.internal:54100` (the LiteLLM container of `compose.infra.yml`, profile `llm-gateway`, started first), with its development master key |
+
+The ports are the Compose stack's, so run one or the other. Build the images the overlay lists (the host and every plugin as
+above; the new ones are `landfall` node 7108/7208, `triage` node 7109/7209, `threat-intel` go 7110/7210, `ai-sdk` node 7115/7215,
+`grafana` node 7121/7221, `browser` from `plugins/browser/Dockerfile` 7112/7212, `agent-shell` node 7114/7214, `web-search` node
+7113/7213, and the runner from `deploy/docker/code-runner.Dockerfile` as `landflow/code-runner:k8s-dev`), then
+`kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack`. To start from an empty database scale the host to 0 and delete
+the `landflow-data` PVC first. Landfall, Triage, Threat Intel and Grafana need accounts of their own to do real work (credentials
+saved in Landflow), and the code runner and Mailpit have nothing to configure.
+
+Two things to know here. An agent's Ollama model has its own **Server URL**, prefilled with `http://127.0.0.1:11434`, which is the
+pod itself in a cluster: set it to `http://host.docker.internal:11434` (Spotlight and the second brain use `OLLAMA_URL`, which the
+overlay sets). And a 30B model on the Mac can starve the laptop for minutes while Spotlight builds a flow, so the overlay gives the
+host's liveness probe five minutes before it restarts the pod. Checked on this overlay, in headed Chrome as the owner: 22 plugins
+online, an invite emailed to Mailpit and accepted, a team project with a member, an Ollama agent chatted with and published, Python
+and JavaScript Code nodes run in the sandbox, Spotlight building and testing a flow on `qwen3-coder:30b` (3 min 30 s), the same
+model picked through the LiteLLM gateway, the AI page showing both, and the instance MCP server switched on (`tools/list`: 30 tools).
 
 The `:k8s-dev` tag keeps these apart from the Compose stack's `:dev` images.
 
@@ -678,7 +908,7 @@ helm repo add traefik https://traefik.github.io/charts
 helm --kube-context orbstack upgrade --install traefik traefik/traefik --version 42.0.0 -n landflow-ingress --create-namespace \
   --set ingressClass.name=landflow-traefik --set ingressClass.isDefaultClass=false
 kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-ingress        # namespace landflow-dev; restarts the host pod (new public URLs)
-curl -s http://landflow.localhost/api/health
+curl -s http://landflow.localhost/api/health/ready
 # MCP: a call with no token is anonymous (initialize works, tools/list is empty), same as through a port-forward
 curl -s -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' http://landflow.localhost/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
@@ -771,7 +1001,7 @@ To go back to the plain overlay: `kubectl --context orbstack apply -k deploy/k8s
 ### Brokers on Kubernetes
 
 `k8s/overlays/orbstack-brokers` is the OrbStack overlay plus Kafka (KRaft), RabbitMQ, NATS with JetStream and Valkey in
-`landflow-dev`, and the host and the TypeScript plugins (text-toolkit, messaging) connected to all four. Without it nothing
+`landflow-dev`, and the host and seven plugins (text-toolkit, messaging, go-crypto, google-workspace, databases, py-insights, productivity) connected to all four. The other five base plugins (github, linear, attio, fathom, clickland) get no face list and keep `http,grpc`. Without it nothing
 changes: the base plugin Deployments read their broker settings through `envFrom` on optional ConfigMaps and a Secret, which
 only `broker-transports` creates. The environment a plugin gets:
 
@@ -885,6 +1115,31 @@ kubectl --context orbstack create namespace landflow-dev    # once (or apply the
 
 ### Telemetry on Kubernetes
 
+Landflow's traces, metrics and logs go to [Clickland](features/clickland.md), the land family's observability system,
+when it runs on the same cluster (the default), or to a `grafana/otel-lgtm` backend of its own.
+
+**To Clickland** (Clickland deployed from its repository into `clickland-dev`, its collector and console up):
+
+```bash
+kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-clickland
+```
+
+Every Landflow Deployment gets `OTEL_EXPORTER_OTLP_ENDPOINT=http://clickland-collector.clickland-dev.svc.cluster.local:4318`
+and `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=landflow-dev`; the host also gets
+`LANDFLOW_OTLP_TRACES_URL=http://clickland-collector.clickland-dev.svc.cluster.local:4318/v1/traces` (each run's journal
+as one trace) and `LANDFLOW_TRACE_URL=http://clickland-console.clickland-dev.svc.cluster.local:4711/traces/{traceId}`
+(the run page's trace link opens Clickland's console). Nothing runs in `landflow-dev` for it; while Clickland is down
+the exporters drop what they can't send. kagent in the kind cluster follows: `deploy/scripts/kagent-up.sh` reads the
+host's endpoint and bridges kind's `landflow-otel` name to `clickland-collector`'s ClusterIP (OTLP gRPC 4317, HTTP 4318;
+`CLICKLAND_NS` changes the namespace). When Clickland runs on the Mac and `clickland-collector` is the ExternalName
+Service of Clickland's `deploy/k8s/bridge` (pointing at `host.orb.internal`), there is no ClusterIP: the script uses the
+address the external name has from the kind node instead. The overlay needs only Clickland's three bridge Services
+(`clickland-collector`, `clickland-console` for trace links, `clickland-api` for the plugin's default Base URL), so it
+works the same against the Mac or an in-cluster Clickland. Coming from the lgtm overlay: apply `orbstack-clickland`, then delete Deployment
+and Service `landflow-lgtm` and its ConfigMaps (below), and run `kagent-up.sh` again to move kagent's bridge.
+
+**Without Clickland**, the bundled backend:
+
 ```bash
 kubectl --context orbstack apply -k deploy/k8s/overlays/orbstack-observability
 kubectl --context orbstack -n landflow-dev rollout status deploy/landflow-lgtm
@@ -923,8 +1178,9 @@ Harness (`landflow-claude`), the package registries agents' sandboxes may reach 
 credential's Egress Policies), and sets the credential's plugin registry to the Landflow Service's ClusterIP, where
 kagent's nodes pull agents' Claude Code plugins ([a2a.md](a2a.md#on-claude-code)). `deploy/scripts/claude-harness-dev.sh`
 then adds `landflow-claude-dev`, Claude Code on an image with the common toolchains, served from Landflow's registry
-([a2a.md](a2a.md#a-toolchain-image-for-claude-code)). With the observability overlay
-running, kagent and Substrate send their telemetry to `landflow-lgtm`. What it does, the files in `deploy/kind/` and the
+([a2a.md](a2a.md#a-toolchain-image-for-claude-code)). With a telemetry overlay
+running (`orbstack-clickland` or `orbstack-observability`), kagent and Substrate send their telemetry where the host
+sends its own: `clickland-collector` or `landflow-lgtm`. What it does, the files in `deploy/kind/` and the
 endpoints are in [a2a.md](a2a.md#kagent-next-to-landflow). Run it again after the host's data was reset (a new PVC):
 the credential and the agent are gone with it.
 

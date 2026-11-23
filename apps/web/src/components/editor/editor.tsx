@@ -1,7 +1,7 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import Link from 'next/link';
-import { Background, BackgroundVariant, ControlButton, Controls, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, useStore, type OnConnectEnd, type OnEdgesChange } from '@xyflow/react';
+import { Background, BackgroundVariant, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, useStore, type OnConnectEnd, type OnEdgesChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -15,18 +15,22 @@ import {
   Play,
   Plus,
   Redo2,
+  Sparkles,
   Square,
   StepForward,
   StickyNote,
   Undo2,
   WandSparkles,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { api, streamEvents } from '@/lib/client/api';
-import { duration, timeAgo } from '@/lib/client/format';
+import { api, streamEvents, type ApiError } from '@/lib/client/api';
+import { duration, plural, timeAgo } from '@/lib/client/format';
 import { useLiveEvents } from '@/lib/client/live';
+import { isPhone, usePhone } from '@/lib/client/use-phone';
 import { tint } from '@/lib/client/node-style';
 import { TEMPLATES } from '@/lib/client/templates';
 import type { DebugCommand, ExecutionEvent, ExecutionRecord, ImportReport, NodeTypeInfo, Workflow } from '@/lib/shared/types';
@@ -36,11 +40,14 @@ import { Badge, executionTone } from '../ui/badge';
 import { Button } from '../ui/button';
 import { NodeIcon } from '../ui/icon';
 import { Kbd } from '../ui/inputs';
+import { Segmented } from '../ui/segmented';
 import { WorkflowTabs } from '../shell/workflow-tabs';
-import { prefetchFailure, useAssistant } from './assistant';
+import { prefetchFailure, spotlightOwnsRun, useAssistant } from './assistant';
+import { draftPhase } from './timeline';
 import { BrainCanvasCard } from '../brain/canvas-card';
-import { focusSpotlight, Spotlight, SpotlightActivity } from './spotlight';
-import { BuildCard, BuildProgressBar, GhostEdgeView, GhostNodeView, useGhosts } from './building';
+import { focusSpotlight, SpotlightPanel } from './spotlight';
+import { BuildProgressBar, GhostEdgeView, GhostNodeView, useGhosts } from './building';
+import { AUTOSAVE_MS, shouldAutosave, showColumnSwitch, showMinimap, useChatColumn, visibleColumn } from './chrome';
 import { ChatPanel, type ChatApproval, type ChatChunk, type ChatFile, type ChatOutcome } from './chat-panel';
 import { parseClipboard, type ClipboardData } from './clipboard';
 import { FlowEdgeView } from './flow-edge';
@@ -50,24 +57,34 @@ import { GroupNodeView, GroupProxyEdgeView } from './group-node';
 import { boxPorts, loadComposites, useCompositeReports } from './composites';
 import { canvasGraph, type GroupProxyEdge } from './groups';
 import { ImportReportDialog, showImportReport } from './import-report';
-import { NodeCreator } from './node-creator';
+import { BubbleEdgeView, BubbleNode, isBubbleId, useBubbleLayer, withoutBubbleChanges } from '../canvas/agent-bubbles'; // AG16
+import { AGENT_DRAG, NodeCreator } from './node-creator';
+import { dropAgent } from './place-agent'; // AG16
 import { NodePanel } from './node-panel';
+import { StepList } from './step-list';
 import { EditorLogs } from './editor-logs';
 import { ShortcutsDialog, useShortcuts } from './shortcuts-dialog';
 import { StickyNodeView } from './sticky-node';
 import { useEditor, type CanvasNode, type FlowEdge, type RunCommand } from './store';
-import { TagsEditor } from './tags-editor';
 import { VersionHistory, useVersionHistory } from './version-history';
 import { WorkflowMenu } from './workflow-menu';
 import { PublishControl } from './publish-control';
 import { ListeningBar, listenForTestEvent, stopListening, testTriggerFor, useTestListener } from './test-listener';
 import { EditLockBanner, editorTabHeaders, useEditLock, useEditLockSync } from './edit-lock';
+import { moveOnOpen } from '@/lib/client/agent-moves'; // AG17:
+import { AgentMovesNotice, reloadWorkflow, whenLockHeld } from './agent-moves-notice'; // AG17:
 import { followable, useFollowRun } from './follow-run';
 import { pinFromRun } from './pin-from-run';
 import { useFollowWaiting } from './waiting';
+import { builderFolds, columnRule, dropShell, isMac, keyAction, setSpotlightState, useSpotlightState } from '../spotlight/context';
 
-const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView, ghost: GhostNodeView };
-const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView, ghost: GhostEdgeView };
+const nodeTypesMap = { lf: FlowNodeView, sticky: StickyNodeView, frame: GroupNodeView, ghost: GhostNodeView, agentBubble: BubbleNode }; // AG16: agentBubble
+const edgeTypesMap = { lf: FlowEdgeView, groupProxy: GroupProxyEdgeView, ghost: GhostEdgeView, bubble: BubbleEdgeView }; // AG16: bubble
+
+/** What an edit changes in the store: the autosave timer restarts when any of these does. */
+const AUTOSAVE_WATCHED = ['nodes', 'edges', 'stickies', 'groups', 'name', 'description', 'tags', 'settings', 'pinData'] as const;
+/** A save that waits for someone's approval keeps the Save button and skips autosave. None does today: saves are drafts and Publish asks. */
+const GOVERNED_SAVES = false;
 
 type RunResult = { executionId?: string; status: string; lastNodeId?: string; error?: { message: string }; approval?: ChatApproval };
 
@@ -79,7 +96,6 @@ function replyOf(result: RunResult): string | undefined {
   return reply === undefined ? (json ? JSON.stringify(json, null, 2) : undefined) : String(reply);
 }
 
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 function describeClip(data: Pick<ClipboardData, 'nodes' | 'stickyNotes' | 'groups'>) {
   const groups = data.groups?.length ?? 0;
@@ -110,7 +126,7 @@ async function pasteN8n(data: unknown, at?: { x: number; y: number }) {
 
 /**
  * A node that reports progress grows while it runs (a team node becomes the member at work, with the strip and moments
- * above it): when it no longer fits between the top of the canvas and Spotlight's bar, the view moves to it, never
+ * above it): when it no longer fits between the top of the canvas and the run controls, the view moves to it, never
  * zooming in. Not once the person has panned or zoomed during the run.
  */
 function KeepRunningInView({ moved }: { moved: RefObject<boolean> }) {
@@ -121,7 +137,7 @@ function KeepRunningInView({ moved }: { moved: RefObject<boolean> }) {
     return ids.some((id) => {
       const node = s.nodeLookup.get(id);
       if (!node?.measured?.height) return false;
-      // The strip and moments sit above the node; the sub-node labels and Spotlight's bar below it.
+      // The strip and moments sit above the node; the sub-node labels and the run controls below it.
       const top = (node.internals.positionAbsolute.y - 72) * zoom + y;
       const bottom = (node.internals.positionAbsolute.y + node.measured.height + 28) * zoom + y;
       return top < 8 || bottom > s.height - 64;
@@ -136,7 +152,7 @@ function KeepRunningInView({ moved }: { moved: RefObject<boolean> }) {
 }
 
 /**
- * While a change is being built (new look), a ghost that lands outside the view brings the whole flow and its ghosts into
+ * While a change is being built, a ghost that lands outside the view brings the whole flow and its ghosts into
  * view, never zooming in: a node added after the last one is often past the right edge.
  */
 function KeepGhostsInView({ ids }: { ids: string[] }) {
@@ -149,7 +165,7 @@ function KeepGhostsInView({ ids }: { ids: string[] }) {
       const { x: nx, y: ny } = node.internals.positionAbsolute;
       const w = node.measured?.width ?? 80;
       const h = node.measured?.height ?? 80;
-      // The node and its label below; Spotlight's bar sits at the bottom.
+      // The node and its label below; the run controls sit at the bottom.
       return nx * zoom + x < 8 || (nx + w) * zoom + x > s.width - 8 || ny * zoom + y < 8 || (ny + h + 40) * zoom + y > s.height - 72;
     });
   });
@@ -161,27 +177,59 @@ function KeepGhostsInView({ ids }: { ids: string[] }) {
   return null;
 }
 
+/** ⌘K, ⌘I, the Spotlight button, the rail's "Ask or build" and the empty canvas's hint: the right column shows Spotlight (unfolded, caret in its box). */
+function showSpotlight() {
+  // One column at a time: the builder coming back sends the brain panel away.
+  setSpotlightState(dropShell);
+  useChatColumn.getState().apply('show-spotlight');
+  focusSpotlight();
+  // A folded column is invisible until its width has eased (240 ms): the first try cannot take the focus, this one can.
+  setTimeout(focusSpotlight, 280);
+}
+
+/** The rail's "Ask or build" button asks for this column's Spotlight (the store counts the asks). */
+function useBuildFocus() {
+  const asks = useSpotlightState().buildFocus;
+  const seen = useRef(asks);
+  useEffect(() => {
+    if (asks !== seen.current) showSpotlight();
+    seen.current = asks;
+  }, [asks]);
+}
+
 function Canvas({ onSave }: { onSave: () => void }) {
+  useBuildFocus();
   const flowNodes = useEditor((s) => s.nodes);
   const stickies = useEditor((s) => s.stickies);
   const groups = useEditor((s) => s.groups);
   const flowEdges = useEditor((s) => s.edges);
-  const canUndo = useEditor((s) => s.history.past > 0);
-  const canRedo = useEditor((s) => s.history.future > 0);
   // Group frames, then notes, then nodes; collapsed groups hide their nodes and take over their connections (a
   // collapsed composite's through its named outputs).
   const reports = useCompositeReports();
   const ports = useMemo(() => boxPorts(groups, reports), [groups, reports]);
   const built = useMemo<{ nodes: CanvasNode[]; edges: (FlowEdge | GroupProxyEdge)[] }>(() => canvasGraph(groups, stickies, flowNodes, flowEdges, ports), [groups, stickies, flowNodes, flowEdges, ports]);
-  // New look: the nodes and connections a change being built adds, as dashed ghosts (./building.tsx). Not in the store.
+  // The nodes and connections a change being built adds, as dashed ghosts (./building.tsx). Not in the store.
   const ghosts = useGhosts();
-  const nodes = useMemo(() => (ghosts.nodes.length ? [...built.nodes, ...(ghosts.nodes as unknown as CanvasNode[])] : built.nodes), [built.nodes, ghosts.nodes]);
-  const edges = useMemo(() => (ghosts.edges.length ? [...built.edges, ...(ghosts.edges as unknown as FlowEdge[])] : built.edges), [built.edges, ghosts.edges]);
+  // AG16: a bound node's agent as bubbles under its slots: derived like the ghosts, never in the store, the saved workflow, undo or copy.
+  const workflowId = useEditor((s) => s.workflowId);
+  const bubbles = useBubbleLayer(built.nodes as never, flowEdges, { workflowId: workflowId || undefined });
+  const nodes = useMemo(
+    () => (ghosts.nodes.length || bubbles.nodes.length ? [...built.nodes, ...(ghosts.nodes as unknown as CanvasNode[]), ...(bubbles.nodes as unknown as CanvasNode[])] : built.nodes),
+    [built.nodes, ghosts.nodes, bubbles.nodes],
+  );
+  const edges = useMemo(
+    () => (ghosts.edges.length || bubbles.edges.length ? [...built.edges, ...(ghosts.edges as unknown as FlowEdge[]), ...(bubbles.edges as unknown as FlowEdge[])] : built.edges),
+    [built.edges, ghosts.edges, bubbles.edges],
+  );
+  // The store never hears of a bubble or the line to one: no select, move, remove or undo entry.
+  const { onNodesChange: storeNodesChange, onEdgesChange: storeEdgesChange } = useEditor.getState();
+  const onNodesChange = useCallback((changes: Parameters<typeof storeNodesChange>[0]) => storeNodesChange(withoutBubbleChanges(changes)), [storeNodesChange]);
+  const onEdgesChange = useCallback((changes: Parameters<typeof storeEdgesChange>[0]) => storeEdgesChange(withoutBubbleChanges(changes)), [storeEdgesChange]);
   const ghostKey = ghosts.nodes.map((n) => n.id).join(',');
   const ghostIds = useMemo(() => (ghostKey ? ghostKey.split(',') : []), [ghostKey]);
   // Read-only (someone else holds the edit lock) swaps the store's editing actions, so re-read them.
   const readOnly = useEditLock((s) => s.readOnly);
-  const { onNodesChange, onEdgesChange, onConnect, openNode, openPalette } = useEditor.getState();
+  const { onConnect, openNode, openPalette } = useEditor.getState();
   const { screenToFlowPosition, fitView } = useReactFlow();
   const fitted = useRef(false);
   // The person panned or zoomed during the run on the canvas: leave the view where they put it.
@@ -199,6 +247,14 @@ function Canvas({ onSave }: { onSave: () => void }) {
       setTimeout(() => fitView({ padding: 0.25, duration: 400, maxZoom: 1.1 }), 50);
     }
   }, [nodes.length, fitView]);
+  // AG16: a fitted flow shows its bubbles: once, when they first arrive (they are read after the nodes), unless the person already moved the view.
+  const refitted = useRef(false);
+  const bubbleCount = bubbles.nodes.length;
+  useEffect(() => {
+    if (!bubbleCount || refitted.current || !fitted.current || moved.current) return;
+    refitted.current = true;
+    setTimeout(() => !moved.current && fitView({ padding: 0.25, duration: 400, maxZoom: 1.1 }), 120);
+  }, [bubbleCount, fitView]);
 
   /** Where pasted and new notes go: the pointer when it is over the canvas, else the middle of the view. */
   const dropPoint = useCallback(
@@ -273,10 +329,10 @@ function Canvas({ onSave }: { onSave: () => void }) {
       } else if (mod && e.key === 'Enter') {
         e.preventDefault();
         state.run?.({ kind: e.shiftKey ? 'debug' : 'run' });
-      } else if (mod && e.key === 'i') {
+      } else if (keyAction(e, { brain: false, mac: isMac() }) === 'toggle') {
+        // ⌘K is Spotlight everywhere; here it is the builder in this column (docs/spotlight.md#one-spotlight).
         e.preventDefault();
-        if (useAssistant.getState().items.length) useAssistant.getState().setOpen(true);
-        focusSpotlight();
+        showSpotlight();
       } else if (e.key === 'F8' && state.paused) {
         e.preventDefault();
         void sendDebug(state.executionId, 'continue');
@@ -337,10 +393,11 @@ function Canvas({ onSave }: { onSave: () => void }) {
       edgeTypes={edgeTypesMap}
       onNodesChange={onNodesChange}
       // Changes to the lines drawn for collapsed groups name no stored edge, so the store skips them.
-      onEdgesChange={onEdgesChange as OnEdgesChange<FlowEdge | GroupProxyEdge>}
+      onEdgesChange={onEdgesChange as unknown as OnEdgesChange<FlowEdge | GroupProxyEdge>}
       onNodeContextMenu={(e, node) => {
         e.preventDefault();
-        if (readOnly) return;
+        // AG16: a bubble is not a node of the flow: no selection, no node menu.
+        if (readOnly || isBubbleId(node.id)) return;
         selectForMenu(node.id);
         useCanvasMenu.getState().open({ x: e.clientX, y: e.clientY, flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }) });
       }}
@@ -352,12 +409,29 @@ function Canvas({ onSave }: { onSave: () => void }) {
         e.preventDefault();
         if (!readOnly) useCanvasMenu.getState().open({ x: e.clientX, y: e.clientY, flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }) });
       }}
+      // AG16: an agent dragged from Your agents in the node creator is placed where it is dropped, bound to it.
+      onDragOver={(e) => {
+        if (!readOnly && e.dataTransfer.types.includes(AGENT_DRAG)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }
+      }}
+      onDrop={(e) => {
+        if (readOnly || !e.dataTransfer.getData(AGENT_DRAG)) return;
+        e.preventDefault();
+        dropAgent(e.dataTransfer, screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+      }}
       onConnect={onConnect}
       onConnectEnd={onConnectEnd}
       onMoveStart={(event) => {
         if (event) moved.current = true;
       }}
       onNodeDoubleClick={(_e, node) => node.type === 'lf' && openNode(node.id)}
+      // A phone: the first tap selects a step (its toolbar shows), a tap on a step that was already selected opens it.
+      // The node passed is as it was before this click, so `selected` means it was selected already.
+      onNodeClick={(_e, node) => {
+        if (isPhone() && node.type === 'lf' && node.selected) openNode(node.id);
+      }}
       onPaneClick={() => useEditor.getState().palette && openPalette(undefined)}
       isValidConnection={(c) => (c.sourceHandle ?? 'main').split(':')[0] === (c.targetHandle ?? 'main').split(':')[0] && c.source !== c.target}
       deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
@@ -372,21 +446,16 @@ function Canvas({ onSave }: { onSave: () => void }) {
       <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--canvas-dot)" />
       <KeepRunningInView moved={moved} />
       <KeepGhostsInView ids={ghostIds} />
-      <Controls position="bottom-left" showInteractive={false} className="!bottom-3 !left-3">
-        <ControlButton onClick={() => useEditor.getState().undo()} disabled={!canUndo} title="Undo (⌘Z)" aria-label="Undo">
-          <Undo2 />
-        </ControlButton>
-        <ControlButton onClick={() => useEditor.getState().redo()} disabled={!canRedo} title="Redo (⇧⌘Z)" aria-label="Redo">
-          <Redo2 />
-        </ControlButton>
-      </Controls>
-      <MiniMap
-        position="bottom-right"
-        className="!bottom-3 !right-3"
-        pannable
-        zoomable
-        nodeColor={(node) => (node.type === 'sticky' ? 'var(--acbd)' : node.type === 'frame' ? 'color-mix(in oklab, var(--t3) 14%, transparent)' : 'var(--bd)')}
-      />
+      {/* One toolbar for zoom, fit, tidy, add, undo and redo (CanvasToolbar); a phone pinches to zoom. */}
+      {showMinimap(flowNodes.length) && (
+        <MiniMap
+          position="bottom-right"
+          className="!bottom-3 !right-3 max-md:!hidden"
+          pannable
+          zoomable
+          nodeColor={(node) => (node.type === 'agentBubble' ? 'var(--hair)' : node.type === 'sticky' ? 'var(--acbd)' : node.type === 'frame' ? 'color-mix(in oklab, var(--t3) 14%, transparent)' : 'var(--bd)')}
+        />
+      )}
     </ReactFlow>
     <CanvasMenu />
     </div>
@@ -414,6 +483,7 @@ function EmptyCanvas() {
   const empty = useEditor((s) => s.nodes.length === 0 && s.stickies.length === 0 && s.groups.length === 0);
   const nodeTypes = useEditor((s) => s.nodeTypes);
   const drafting = useAssistant((s) => s.drafting);
+  const phase = useAssistant((s) => draftPhase(s.items, s.drafting));
   const { fitView } = useReactFlow();
   if (!empty) return null;
   // Spotlight is drafting the flow: a placeholder of what is coming, not the ways to start.
@@ -430,7 +500,7 @@ function EmptyCanvas() {
             ))}
           </div>
           <span className="flex items-center gap-2 text-[13px] text-t2">
-            <Loader2 className="size-3.5 animate-spin text-viz-7" /> Spotlight is drafting the flow from the node catalog…
+            <Loader2 className="size-3.5 animate-spin text-viz-7" /> Spotlight is {phase === 'building' ? 'building the flow from the plan' : 'planning the flow'}…
           </span>
         </div>
       </div>
@@ -451,8 +521,8 @@ function EmptyCanvas() {
           or press <Kbd>N</Kbd>
         </span>
       </button>
-      <button onClick={focusSpotlight} className="pointer-events-auto -mt-4 animate-fade-up text-[12.5px] text-t3 transition-colors hover:text-t1" style={{ animationDelay: '80ms' }}>
-        or describe it to Spotlight below <Kbd>⌘I</Kbd>
+      <button onClick={showSpotlight} className="pointer-events-auto -mt-4 animate-fade-up text-[12.5px] text-t3 transition-colors hover:text-t1" style={{ animationDelay: '80ms' }}>
+        or describe it to Spotlight <Kbd>⌘K</Kbd>
       </button>
       {templates.length > 0 && (
         <div className="pointer-events-auto flex w-full max-w-[880px] flex-col items-center gap-3 px-6">
@@ -483,9 +553,9 @@ function EmptyCanvas() {
   );
 }
 
-/** n8n's floating canvas buttons, top right: add a node, tidy up, fit view. */
+/** The one canvas toolbar, top right: add a node or note, tidy up, zoom in and out, fit view, undo and redo. */
 function CanvasToolbar() {
-  const { fitView } = useReactFlow();
+  const { fitView, zoomIn, zoomOut } = useReactFlow();
   const hasNodes = useEditor((s) => s.nodes.length > 0);
   const creatorOpen = useEditor((s) => Boolean(s.palette));
   const { screenToFlowPosition } = useReactFlow();
@@ -494,8 +564,10 @@ function CanvasToolbar() {
     const center = pane ? screenToFlowPosition({ x: pane.left + pane.width / 2, y: pane.top + pane.height / 2 }) : { x: 0, y: 0 };
     useEditor.getState().addSticky({ x: center.x - 130, y: center.y - 90 });
   };
+  const canUndo = useEditor((s) => s.history.past > 0);
+  const canRedo = useEditor((s) => s.history.future > 0);
   if (creatorOpen) return null;
-  const button = 'grid size-9 place-items-center text-t2 transition-colors hover:bg-acdim hover:text-t1';
+  const button = 'grid size-9 place-items-center text-t2 transition-colors hover:bg-acdim hover:text-t1 max-md:size-11 disabled:opacity-40';
   return (
     <>
       <div className="absolute right-3 top-3 z-20 flex animate-fade-up flex-col overflow-hidden rounded-xl border border-hair bg-sf shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
@@ -521,6 +593,13 @@ function CanvasToolbar() {
             >
               <WandSparkles className="size-4" />
             </button>
+            {/* A phone pinches to zoom. */}
+            <button title="Zoom in" aria-label="Zoom in" onClick={() => void zoomIn({ duration: 200 })} className={cn(button, 'border-t border-hair max-md:hidden')}>
+              <ZoomIn className="size-4" />
+            </button>
+            <button title="Zoom out" aria-label="Zoom out" onClick={() => void zoomOut({ duration: 200 })} className={cn(button, 'border-t border-hair max-md:hidden')}>
+              <ZoomOut className="size-4" />
+            </button>
             <button
               title="Fit view (1)"
               aria-label="Fit view"
@@ -531,6 +610,12 @@ function CanvasToolbar() {
             </button>
           </>
         )}
+        <button title="Undo" aria-label="Undo" disabled={!canUndo} onClick={() => useEditor.getState().undo()} className={cn(button, 'border-t border-hair')}>
+          <Undo2 className="size-4" />
+        </button>
+        <button title="Redo" aria-label="Redo" disabled={!canRedo} onClick={() => useEditor.getState().redo()} className={cn(button, 'border-t border-hair')}>
+          <Redo2 className="size-4" />
+        </button>
       </div>
     </>
   );
@@ -594,15 +679,15 @@ function StatusStrip() {
       <div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-hair bg-sf2 px-4 text-[13px]">
         <History className="size-3.5 text-t3" />
         <span className="text-t1">
-          Showing execution <span className="font-mono text-[12px]">{viewing.id}</span>
+          Showing run <span className="font-mono text-[12px]">{viewing.id}</span>
         </span>
         <Badge tone={executionTone(viewing.status)}>{viewing.status}</Badge>
         <span className="text-[12px] text-t3">{timeAgo(viewing.startedAt)} · select a node and use Run node or Run from here to re-run part of it</span>
         <div className="ml-auto flex items-center gap-2">
-          <Link href={`/workflows/${useEditor.getState().workflowId}/executions/${viewing.id}`} className="text-[12px] text-t2 hover:text-ac">
-            Open in executions
+          <Link href={`/workflows/${useEditor.getState().workflowId}/runs/${viewing.id}`} className="text-[12px] text-t2 hover:text-ac">
+            Open in Runs
           </Link>
-          <Button size="icon-sm" variant="ghost" onClick={() => useEditor.getState().clearRun()} aria-label="Clear execution data">
+          <Button size="icon-sm" variant="ghost" onClick={() => useEditor.getState().clearRun()} aria-label="Clear run data">
             <X className="size-3.5" />
           </Button>
         </div>
@@ -615,7 +700,13 @@ function StatusStrip() {
 export function Editor({ workflowId }: { workflowId: string }) {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
+  // A phone: the flow as a list of steps first, the canvas a tap away. A desktop always shows the canvas.
+  const phone = usePhone();
+  const [view, setView] = useState<'steps' | 'canvas'>('steps');
+  const hasSteps = useEditor((s) => s.nodes.length > 0);
+  const showSteps = phone && hasSteps && view === 'steps';
+  // The right column holds one panel: Spotlight or the flow chat (./chrome).
+  const columnState = useChatColumn((s) => s.column);
   const abortRef = useRef<AbortController | null>(null);
   // Stop pressed before the server named the execution: stopped as soon as it does.
   const stopWhenStarted = useRef(false);
@@ -625,12 +716,48 @@ export function Editor({ workflowId }: { workflowId: string }) {
   const debugging = useEditor((s) => s.debugging);
   const breakpoints = useEditor((s) => s.breakpoints);
   const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.wf.type === 'core.chatTrigger'));
+  const column = visibleColumn(columnState, hasChatTrigger);
+  const chatOpen = column === 'chat';
+  const nodeCount = useEditor((s) => s.nodes.length);
   const readOnly = useEditLock((s) => s.readOnly);
   const { takeOver } = useEditLockSync(workflowId, loaded);
   // A waiting run on the canvas keeps its waiting mark current and shows the rest once it resumes.
   useFollowWaiting();
   // A run this editor started before a reload goes on: show it live again.
   useFollowRun();
+  // The brain panel (asked for here, or about something) takes the room: the builder folds to its strip until it is back.
+  const spotlightState = useSpotlightState();
+  const brainPanelShows = builderFolds(`/workflows/${workflowId}`, spotlightState);
+  const spotlightFolded = useAssistant((s) => s.collapsed);
+  const brainShownBefore = useRef(false);
+  // Whether the builder was open when the brain panel folded it: closing the panel then gives it back.
+  const foldedByPanel = useRef(false);
+  useEffect(() => {
+    const rule = columnRule({ brainPanelShows, wasShowing: brainShownBefore.current, builderFolded: spotlightFolded, column, foldedByPanel: foldedByPanel.current });
+    brainShownBefore.current = brainPanelShows;
+    if (rule.fold) {
+      foldedByPanel.current = !spotlightFolded && column !== 'chat';
+      useAssistant.getState().setCollapsed(true);
+    }
+    if (rule.closeChat) useChatColumn.getState().apply('close-chat');
+    if (rule.dropShell) setSpotlightState(dropShell); // the strip or the flow chat took the column: the brain panel goes
+    if (!brainPanelShows) {
+      if (rule.unfold) useAssistant.getState().setCollapsed(false);
+      foldedByPanel.current = false;
+    }
+  }, [brainPanelShows, spotlightFolded, column]);
+  const spotlightOpen = !spotlightFolded;
+  const spotlightVisible = column !== 'chat' && spotlightOpen;
+  // On a phone, Spotlight's own runs take the canvas: the Execute bar steps aside while it drafts or tests.
+  // SB16: also true while Spotlight designs an agent (an agent row in state 'designing': the agent card's, or one the chat's newAgent saves).
+  const spotlightWorks = useAssistant((s) => s.drafting || Boolean(s.testing) || s.agents.some((a) => a.state === 'designing'));
+
+  // Spotlight starts a build or a test: it takes the column (once, so the person can still switch to the chat while it works).
+  const wasWorking = useRef(false);
+  useEffect(() => {
+    if (spotlightWorks && !wasWorking.current && useChatColumn.getState().column === 'chat') useChatColumn.getState().apply('show-spotlight');
+    wasWorking.current = spotlightWorks;
+  }, [spotlightWorks]);
 
   // The assistant's conversation lasts while this workflow is open.
   useEffect(() => useAssistant.getState().bind(workflowId), [workflowId]);
@@ -643,9 +770,13 @@ export function Editor({ workflowId }: { workflowId: string }) {
       .then(([{ workflow }, { nodeTypes }]) => {
         if (cancelled) return;
         useEditor.getState().load(workflow, nodeTypes);
+        // AG17: a flow that wires its own model or tools into a Run an Agent node hands them to the agent's draft, then loads again.
+        void moveOnOpen(workflow, whenLockHeld)
+          .then((moved) => (moved && !cancelled ? reloadWorkflow(workflowId) : undefined))
+          .catch(() => {});
         loadComposites();
         setLoaded(true);
-        setChatOpen(workflow.nodes.some((n) => n.type === 'core.chatTrigger') && !requested);
+        useChatColumn.setState({ column: workflow.nodes.some((n) => n.type === 'core.chatTrigger') && !requested ? 'chat' : null });
         // Show an execution from history if one was asked for, else the last run, so the canvas isn't blank.
         const record = requested
           ? api<OpenedExecution>(`/api/executions/${requested}`)
@@ -662,7 +793,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
             if (followable(r.execution)) useEditor.getState().attachRun(r.execution, r.progress, Boolean(requested));
             else useEditor.getState().loadExecution(r.execution, Boolean(requested));
           })
-          .catch(() => requested && toast.error(`Execution ${requested} not found`));
+          .catch(() => requested && toast.error(`Run ${requested} not found`));
       })
       .catch((e: Error) => toast.error(`Could not load workflow: ${e.message}`));
     return () => {
@@ -688,35 +819,92 @@ export function Editor({ workflowId }: { workflowId: string }) {
     api(`/api/executions/${executionId}/debug`, { method: 'POST', json: { breakpoints } }).catch(() => {});
   }, [breakpoints, running, debugging]);
 
-  const save = useCallback(async (): Promise<boolean> => {
+  // False once this editor unmounts: a save it started that answers later must not mark the next editor's store.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  // Autosave: set by the effect below; a save that finds edits made while it was in flight asks for another.
+  const savingNow = useRef(false);
+  const rearm = useRef<() => void>(undefined);
+  const saveQueue = useRef<Promise<boolean> | undefined>(undefined);
+  /** `auto`: the timed save (folds into the session's version); `quiet`: no "Saved" toast (defaults to `auto`). */
+  const saveOnce = useCallback(async (auto = false, quiet = auto, leaving = false): Promise<boolean> => {
     if (useEditLock.getState().readOnly) {
       const environment = useEditLock.getState().protectedEnvironment;
       toast.error(environment ? `${environment} is a protected environment: workflows change only by pull or promotion` : 'Someone else is editing this workflow: it’s read-only here');
       return false;
     }
     setSaving(true);
+    savingNow.current = true;
     try {
       // `active` stays out: a save is a draft, and Publish / Unpublish (PublishControl) change what is live.
       const { active: _active, ...draft } = useEditor.getState().toWorkflow();
-      const { workflow, policyWarnings, triggerAuthWarnings } = await api<{ workflow: Workflow; triggerAuthWarnings?: Array<{ nodeName: string; message: string }> } & PolicyWarnings>(`/api/workflows/${workflowId}`, {
-        method: 'PUT',
-        json: draft,
-        headers: editorTabHeaders(),
-      });
-      useEditor.getState().markSaved();
-      toast.success(`Saved “${workflow.name}”`);
+      // Based on the version this tab loaded or last saved: someone else's newer save is refused (412) instead of overwritten.
+      const base = useEditor.getState().baseUpdatedAt;
+      const put = (baseline?: string) =>
+        api<{ workflow: Workflow; triggerAuthWarnings?: Array<{ nodeName: string; message: string }> } & PolicyWarnings>(`/api/workflows/${workflowId}`, {
+          method: 'PUT',
+          json: draft,
+          // A save sent while the page unloads survives it only with keepalive, which allows about 64 KB; a bigger one relies on the browser's prompt.
+          ...(leaving && JSON.stringify(draft).length < 60_000 && { keepalive: true }),
+          headers: { ...editorTabHeaders(), ...(auto && { 'x-landflow-autosave': '1' }), ...(baseline && { 'if-match': `"${baseline}"` }) },
+        });
+      let saved;
+      try {
+        saved = await put(base);
+      } catch (e) {
+        if ((e as ApiError).status !== 412) throw e;
+        // Refused as stale. A scheduled publish, an approval or a folder move also moves `updatedAt`: if the stored content is still what this tab loaded or saved, nobody else's edit is at stake, so take the new version and save once more.
+        const { workflow: stored } = await api<{ workflow: Workflow }>(`/api/workflows/${workflowId}`);
+        if (!useEditor.getState().storedMatchesSaved(stored)) throw e;
+        if (stored.updatedAt) useEditor.getState().rebase(stored.updatedAt);
+        saved = await put(stored.updatedAt);
+      }
+      const { workflow, policyWarnings, triggerAuthWarnings } = saved;
+      // The person opened another workflow while this save was in flight: its store is not this one's to mark. The same
+      // workflow opened again (Back, then back in, before a leave flush answered) has loaded older content into a new
+      // editor: marking that saved against this save's `updatedAt` would let its next autosave overwrite the flushed edit.
+      if (!mounted.current || useEditor.getState().workflowId !== workflowId) return true;
+      useEditor.getState().markSaved(workflow.updatedAt, workflow);
+      // Edits made while the request was in flight are not in what was saved: the draft stays unsaved and saves again.
+      const { active: _live, ...now } = useEditor.getState().toWorkflow();
+      if (JSON.stringify(now) !== JSON.stringify(draft)) {
+        useEditor.setState({ dirty: true });
+        rearm.current?.();
+      }
+      if (!quiet) toast.success(`Saved “${workflow.name}”`);
       // Nodes the governance policy doesn't allow: the save stands, publishing is refused and they fail when run.
-      if (policyWarnings?.length) toast.warning(`${policyWarnings.length === 1 ? '1 node is' : `${policyWarnings.length} nodes are`} blocked by policy`, { description: policyWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
+      if (policyWarnings?.length) toast.warning(`${policyWarnings.length === 1 ? '1 node is' : `${policyWarnings.length} nodes are`} blocked by policy`, { id: 'policy-warnings', description: policyWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
       // A trigger checking callers with a credential this workflow's project can't use: its calls are refused (403).
-      if (triggerAuthWarnings?.length) toast.warning('Trigger authentication isn’t available to this project', { description: triggerAuthWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
+      if (triggerAuthWarnings?.length) toast.warning('Trigger authentication isn’t available to this project', { id: 'trigger-auth-warnings', description: triggerAuthWarnings.map((w) => `${w.nodeName}: ${w.message}`).join('\n') });
       return true;
     } catch (e) {
-      toast.error(`Save failed: ${(e as Error).message}`);
+      // Retry: on a phone there is no Save button or ⌘S, and autosave waits for the next edit.
+      toast.error(`Save failed: ${(e as Error).message}`, { id: 'save-failed', action: { label: 'Retry', onClick: () => void useEditor.getState().save?.() } });
       return false;
     } finally {
+      savingNow.current = false;
       setSaving(false);
     }
   }, [workflowId]);
+
+  /** One save at a time: a save asked for while another is in flight (⌘S, Publish, a tab) waits for it instead of racing it. */
+  const save = useCallback(
+    (auto = false, quiet = auto, leaving = false): Promise<boolean> => {
+      const prior = saveQueue.current;
+      const run = prior ? prior.catch(() => false).then(() => saveOnce(auto, quiet, leaving)) : saveOnce(auto, quiet, leaving);
+      const tracked = run.finally(() => {
+        if (saveQueue.current === tracked) saveQueue.current = undefined;
+      });
+      saveQueue.current = tracked;
+      return tracked;
+    },
+    [saveOnce],
+  );
 
   const execute = useCallback(
     async (extra: Record<string, unknown> = {}, debug = false, onChunk?: (chunk: ChatChunk) => void): Promise<RunResult | undefined> => {
@@ -769,9 +957,10 @@ export function Editor({ workflowId }: { workflowId: string }) {
     [workflowId],
   );
 
-  const report = useCallback((result: RunResult | undefined, started: number, label: string) => {
+  const report = useCallback((result: RunResult | undefined, started: number, label: string, spotlights = false) => {
     if (!result) return;
     if (result.status === 'error') prefetchFailure();
+    if (spotlights || spotlightOwnsRun()) return;
     if (result.status === 'success') toast.success(`${label} succeeded in ${duration(Date.now() - started)}`);
     else if (result.status === 'canceled') toast(`${label} stopped`);
     else if (result.status === 'waiting') toast(`${label} is waiting; it continues in the background`);
@@ -783,9 +972,9 @@ export function Editor({ workflowId }: { workflowId: string }) {
       const started = Date.now();
       if (useTestListener.getState().listening) return;
       // A Webhook or Form trigger without test data: listen for a test event instead, as n8n does.
-      const listenOn = testTriggerFor(command);
+      const listenOn = command.kind === 'run' && command.items ? undefined : testTriggerFor(command); // ag5 carryover: a session's run with the trigger's last event runs now
       if (listenOn) return listenForTestEvent(listenOn);
-      if (command.kind === 'run') return report(await execute(), started, 'Workflow');
+      if (command.kind === 'run') return report(await execute({ ...command.approvals, ...(command.items && { items: command.items }) } /* AG22: approvals, sessionId, destinations */), started, 'Workflow', command.by === 'spotlight');
       if (command.kind === 'debug') return report(await execute({}, true), started, 'Debug run');
 
       const state = useEditor.getState();
@@ -813,6 +1002,53 @@ export function Editor({ workflowId }: { workflowId: string }) {
     useEditor.setState({ save });
     return () => useEditor.setState({ save: undefined });
   }, [save]);
+
+  // Autosave: a draft saves itself 2 s after the last edit when the save needs nobody's approval and this tab holds the edit
+  // lock (⌘S still saves now). Saves are drafts, so none needs approval today; `GOVERNED_SAVES` is where one would say so.
+  useEffect(() => {
+    if (!loaded) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Not while Spotlight is drafting the flow: a half-built draft is not worth a save (or a version).
+    const allowed = () => shouldAutosave({ dirty: useEditor.getState().dirty && !useAssistant.getState().drafting, readOnly, governed: GOVERNED_SAVES, locked: !readOnly });
+    const arm = () => {
+      clearTimeout(timer);
+      if (!allowed()) return;
+      timer = setTimeout(() => {
+        // A save still in flight: look again once it is done.
+        if (savingNow.current) return arm();
+        if (allowed()) void save(true);
+      }, AUTOSAVE_MS);
+    };
+    rearm.current = arm;
+    const unsubscribe = useEditor.subscribe((state, prev) => {
+      if (AUTOSAVE_WATCHED.some((key) => state[key] !== prev[key])) arm();
+    });
+    const unsubscribeDrafting = useAssistant.subscribe((state, prev) => {
+      if (state.drafting !== prev.drafting) arm();
+    });
+    // Leaving inside the 2 s wait (Back, reload, closing the tab) must not drop the last edit: save at once. A flush
+    // that comes while another save is in flight is queued behind it (`save`) and is never sent if the page unloads
+    // first; the browser's leave prompt (`guard`) is the only cover then.
+    const flush = () => {
+      clearTimeout(timer);
+      // The lock may have moved to another tab since this effect ran: ask the live state, so no read-only toast shows.
+      if (allowed() && !useEditLock.getState().readOnly) void save(true, true, true);
+    };
+    const guard = (event: BeforeUnloadEvent) => {
+      if (useEditor.getState().dirty && !readOnly) event.preventDefault();
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', guard);
+    arm();
+    return () => {
+      flush();
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', guard);
+      unsubscribe();
+      unsubscribeDrafting();
+      rearm.current = undefined;
+    };
+  }, [loaded, readOnly, save]);
 
   const stop = () => {
     stopListening();
@@ -870,7 +1106,7 @@ export function Editor({ workflowId }: { workflowId: string }) {
 
   if (!loaded) {
     return (
-      <div className="grid h-screen place-items-center">
+      <div className="grid h-dvh place-items-center">
         <Loader2 className="size-5 animate-spin text-t3" />
       </div>
     );
@@ -878,12 +1114,15 @@ export function Editor({ workflowId }: { workflowId: string }) {
 
   return (
     <ReactFlowProvider>
-      <div className="flex h-screen flex-col">
-        <header className="relative flex h-[52px] shrink-0 items-center gap-3 border-b border-hair bg-bg px-4">
-          <Link href="/workflows" aria-label="Back to workflows" className="grid size-8 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1">
+      {/* The whole screen (a phone has no tab bar here, sidebar.tsx): the box at the bottom of Spotlight stays on screen. */}
+      <div className="flex h-dvh flex-col">
+        {/* Seven controls: back, name, save state, Spotlight, Run, Publish, ⋯ (Save only where autosave is off; the tabs are
+            navigation). Phone: two rows. Back, name, saved state and ⋯; then the tabs and Publish. */}
+        <header className="relative flex h-[52px] shrink-0 items-center gap-3 border-b border-hair bg-bg px-4 max-md:h-auto max-md:flex-wrap max-md:gap-x-1.5 max-md:gap-y-1.5 max-md:px-2 max-md:pb-2 max-md:pt-[max(6px,env(safe-area-inset-top))]">
+          <Link href="/workflows" aria-label="Back to workflows" className="grid size-8 shrink-0 place-items-center rounded-full text-t2 hover:bg-acdim hover:text-t1 max-md:size-11">
             <ArrowLeft className="size-4" />
           </Link>
-          <div className="flex min-w-0 max-w-[calc(50%-150px)] items-center gap-3">
+          <div className="flex min-w-0 max-w-[calc(50%-150px)] items-center gap-3 max-md:max-w-none max-md:flex-1 max-md:gap-2">
             <input
               value={name}
               onChange={(e) => useEditor.getState().setMeta({ name: e.target.value })}
@@ -894,55 +1133,74 @@ export function Editor({ workflowId }: { workflowId: string }) {
               size={Math.max(12, Math.min(name.length + 1, 40))}
               className="min-w-0 max-w-[300px] shrink bg-transparent text-[15px] font-semibold text-t1 outline-none"
             />
-            <TagsEditor />
-            <span className={cn('flex shrink-0 items-center gap-1.5 text-[12px]', dirty ? 'text-warn' : 'text-t3')}>
-              <span className={cn('size-1.5 rounded-full transition-colors', dirty ? 'bg-warn' : 'bg-gn')} />
-              {dirty ? 'Unsaved' : 'Saved'}
+            <span
+              role="status"
+              className={cn('flex shrink-0 items-center gap-1.5 text-[12px]', dirty || saving ? 'text-warn' : 'text-t3')}
+              title={saving ? 'Saving…' : dirty ? 'Unsaved: it saves by itself in a moment' : 'Saved'}
+            >
+              <span className={cn('size-1.5 rounded-full transition-colors', dirty || saving ? 'bg-warn' : 'bg-gn')} />
+              <span className="max-md:sr-only">{saving ? 'Saving…' : dirty ? 'Unsaved' : 'Saved'}</span>
             </span>
           </div>
 
           <WorkflowTabs
             workflowId={workflowId}
             active="editor"
-            beforeLeave={async () => useEditor.getState().dirty && (await save())}
-            className="absolute left-1/2 -translate-x-1/2"
+            beforeLeave={async () => useEditor.getState().dirty && (await save(false, true))}
+            className="absolute left-1/2 -translate-x-1/2 max-md:static max-md:order-3 max-md:translate-x-0"
           />
 
-          <div className="ml-auto flex items-center gap-2">
-            <PublishControl workflowId={workflowId} onSave={save} />
+          <div className="ml-auto flex items-center gap-2 max-md:contents">
             <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => useVersionHistory.getState().setOpen(true)}
-              title="Version history: every save is a version"
-              aria-label="Version history"
+              variant={spotlightVisible ? 'outline' : 'ghost'}
+              onClick={() => (spotlightVisible ? useAssistant.getState().setCollapsed(true) : showSpotlight())}
+              title="Spotlight: build and fix this flow by talking (⌘K)"
+              aria-pressed={spotlightVisible}
+              className="max-md:hidden"
             >
-              <History className="size-4" />
+              <Sparkles className="size-3.5 text-viz-7" /> Spotlight
             </Button>
-            <Button onClick={() => void save()} loading={saving} disabled={readOnly} title="Save (⌘S)" variant={dirty ? 'primary' : 'outline'}>
-              Save
+            <Button
+              variant={running ? 'danger' : 'outline'}
+              onClick={() => (running ? stop() : void runCommand({ kind: 'run' }))}
+              disabled={nodeCount === 0}
+              title={running ? 'Stop the run' : 'Run the workflow (⌘↵)'}
+              className="max-md:hidden"
+            >
+              {running ? <Square className="size-3" fill="currentColor" /> : <Play className="size-3.5" fill="currentColor" />} {running ? 'Stop' : 'Run'}
             </Button>
+            <span className="contents max-md:[&>*]:order-4 max-md:[&>*:first-child]:ml-auto">
+              <PublishControl workflowId={workflowId} onSave={save} />
+            </span>
+            {GOVERNED_SAVES && (
+              <Button onClick={() => void save()} loading={saving} disabled={readOnly} title="Save (⌘S)" variant={dirty ? 'primary' : 'outline'}>
+                Save
+              </Button>
+            )}
             <WorkflowMenu onSave={save} />
           </div>
+          {/* Phone: the second row starts here. */}
+          <span className="hidden max-md:order-2 max-md:block max-md:basis-full" aria-hidden />
           {running && <span className="lf-shimmer absolute inset-x-0 bottom-[-1px] h-[2px]" />}
         </header>
 
         <EditLockBanner onTakeOver={() => void takeOver()} />
         <StatusStrip />
 
-        <div className="relative flex min-h-0 flex-1">
-          <div className="flex min-w-0 flex-1 flex-col">
+        <div className="relative flex min-h-0 flex-1 max-md:flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative min-h-0 flex-1">
               <Canvas onSave={() => void save()} />
               <EmptyCanvas />
-              <CanvasToolbar />
-              <SpotlightActivity />
+              {/* A phone opens on the Steps view (docs/mobile.md#the-steps-view); the canvas stays mounted under it. */}
+              {showSteps ? <StepList /> : <CanvasToolbar />}
+              {phone && hasSteps && <ViewSwitch view={view} onChange={setView} />}
               <BuildProgressBar />
-              <BuildCard />
-              <BrainCanvasCard />
-              {/* One dock at the bottom: run controls, then Spotlight. The side padding keeps clear of zoom and the minimap.
-                  When the canvas is narrow (a side panel open), Spotlight wraps to its own line above the run controls. */}
-              <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 pl-14 pr-[232px]">
+              {!showSteps && <BrainCanvasCard />}
+              {/* AG17: what moved from this flow's wiring into its agents; a pill once closed. */}
+              <AgentMovesNotice workflowId={workflowId} />
+              {/* The run controls at the bottom, clear of zoom and the minimap. */}
+              <div className={cn('pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-wrap-reverse items-start justify-center gap-2 px-3 max-md:bottom-3', showMinimap(nodeCount) && 'md:pr-[232px]', spotlightWorks && 'max-md:hidden')}>
                 <ExecuteBar
                   running={running}
                   breakpoints={breakpoints.length}
@@ -951,14 +1209,40 @@ export function Editor({ workflowId }: { workflowId: string }) {
                   onRun={() => void runCommand({ kind: 'run' })}
                   onDebug={() => void runCommand({ kind: 'debug' })}
                   onStop={stop}
-                  onChat={() => setChatOpen((o) => !o)}
+                  onChat={() => useChatColumn.getState().apply('toggle-chat')}
                 />
-                <Spotlight />
               </div>
             </div>
-            <EditorLogs />
+            {/* On a phone, Spotlight's open sheet or the step cards say how each run went: the logs give them their room. */}
+            <div className={cn('contents', (spotlightOpen || showSteps) && 'max-md:hidden')}>
+              <EditorLogs />
+            </div>
           </div>
-          <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} onSend={sendChat} onDecide={decideChat} />
+          {/* One column beside the canvas (under it on a phone): Spotlight or the flow chat, never both, never over the canvas.
+              The one not shown stays mounted, so a running build or chat goes on. */}
+          <div className="flex min-h-0 flex-col max-md:contents">
+            {showColumnSwitch({ hasChat: hasChatTrigger, column, spotlightFolded }) && (
+              <div className="flex h-11 shrink-0 items-center border-b border-l border-hair bg-sf px-2 max-md:hidden">
+                <Segmented
+                  label="Right panel"
+                  size="sm"
+                  stretch
+                  value={chatOpen ? 'chat' : 'spotlight'}
+                  onChange={(value) => (value === 'chat' ? useChatColumn.getState().apply('show-chat') : showSpotlight())}
+                  options={[
+                    { value: 'spotlight', label: 'Spotlight', title: 'Build and fix this flow (⌘K)' },
+                    { value: 'chat', label: 'Chat', title: 'Talk to this workflow' },
+                  ]}
+                />
+              </div>
+            )}
+            <div className="flex min-h-0 flex-1 max-md:contents">
+              <div className={chatOpen ? 'hidden' : 'contents'}>
+                <SpotlightPanel hiddenOnPhone={chatOpen} />
+              </div>
+              <ChatPanel open={chatOpen} onClose={() => useChatColumn.getState().apply('close-chat')} onSend={sendChat} onDecide={decideChat} />
+            </div>
+          </div>
           <NodeCreator />
         </div>
         <NodePanel />
@@ -967,6 +1251,30 @@ export function Editor({ workflowId }: { workflowId: string }) {
         <ImportReportDialog />
       </div>
     </ReactFlowProvider>
+  );
+}
+
+/** A phone's switch between the Steps view and the canvas, top left over both. */
+function ViewSwitch({ view, onChange }: { view: 'steps' | 'canvas'; onChange: (view: 'steps' | 'canvas') => void }) {
+  return (
+    <div role="group" aria-label="View" className="absolute left-3 top-3 z-20 flex rounded-full border border-hair bg-sf p-0.5 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+      {(
+        [
+          ['steps', 'Steps'],
+          ['canvas', 'Canvas'],
+        ] as const
+      ).map(([key, label]) => (
+        <button
+          key={key}
+          type="button"
+          aria-pressed={view === key}
+          onClick={() => onChange(key)}
+          className={cn('h-11 rounded-full px-4 text-[13px] font-semibold', view === key ? 'bg-acdim text-ac' : 'text-t2')}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -1016,7 +1324,7 @@ function ExecuteBar(props: {
         )}
         {hasChat && (
           <Button variant={chatOpen ? 'outline' : 'ghost'} onClick={onChat}>
-            <MessageCircle className="size-3.5 text-viz-7" /> {chatOpen ? 'Hide chat' : 'Open chat'}
+            <MessageCircle className="size-3.5 text-viz-7" /> <span className="max-md:sr-only">{chatOpen ? 'Hide chat' : 'Open chat'}</span>
           </Button>
         )}
     </div>

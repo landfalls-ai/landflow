@@ -1,40 +1,22 @@
 /**
  * A Git sync directory on disk (the `landflow-sync/v1` layout the host's GET /api/sync/export writes): read its
  * managed files, and write an export into it. Only the paths the format owns are read, written or removed, so a
- * README, `.git` or anything else in the directory is left alone. Mirrors apps/web/src/lib/server/sync/files.ts.
+ * README, `.git` or anything else in the directory is left alone. The host's twin is apps/web/src/lib/server/sync/files.ts; the layout itself is in @landflow/protocol.
  */
 import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { DATA_TABLES_DIR, isManagedPath, isSafePath, MANIFEST_FILE, SYNC_FORMAT, VARIABLES_FILE, WORKFLOW_SUFFIX, WORKFLOWS_DIR } from '@landflow/protocol/sync-format';
 import { CliError } from '../errors';
 
-export const SYNC_FORMAT = 'landflow-sync/v1';
-export const MANIFEST_FILE = 'landflow-sync.json';
-export const VARIABLES_FILE = 'variables.json';
-const CREDENTIALS_FILE = 'credentials.json';
-const DATA_TABLES_DIR = 'data-tables';
-const WORKFLOWS_DIR = 'workflows';
-export const WORKFLOW_SUFFIX = '.workflow.json';
+// The layout's names and path rules are shared with the host (packages/protocol/src/sync-format.ts). The subpath import
+// keeps the CLI bundle from pulling in the whole protocol package (zod, gRPC).
+export { isManagedPath, isSafePath, MANIFEST_FILE, SYNC_FORMAT, VARIABLES_FILE, WORKFLOW_SUFFIX };
 
 /** Path → text of the managed files, sorted by path. */
 export type SyncFiles = Map<string, string>;
 
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
-
-/** The paths the format owns (see the host's format.ts). */
-export function isManagedPath(path: string): boolean {
-  if (path === MANIFEST_FILE || path === VARIABLES_FILE || path === CREDENTIALS_FILE) return true;
-  const parts = path.split('/');
-  // A table's schema, and (written by promotion for opted-in tables) its rows.
-  if (parts[0] === DATA_TABLES_DIR) return parts.length === 2 && (path.endsWith('.schema.json') || path.endsWith('.rows.json'));
-  if (parts[0] === WORKFLOWS_DIR) return parts.length >= 2 && (path.endsWith(WORKFLOW_SUFFIX) || parts.at(-1) === '.folder.json');
-  return false;
-}
-
-/** A relative path without `..`, empty segments, backslashes or a leading slash. */
-export function isSafePath(path: string): boolean {
-  return Boolean(path) && !path.startsWith('/') && !path.includes('\\') && !path.includes('\0') && path.split('/').every((p) => p && p !== '.' && p !== '..');
-}
 
 /** Every regular file under `root` as a `/`-separated path; dot-directories (`.git`, `.landflow`) and symlinks are skipped. */
 function walk(root: string, prefix = ''): string[] {

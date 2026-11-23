@@ -5,7 +5,7 @@
  *
  *   pnpm --filter @landflow/plugin-sap start
  *
- * Serves HTTP on :7116 (MCP face at /mcp) and gRPC on :7216, then announces both to the host. No real SAP system is ever called by a
+ * Serves HTTP on :7123 (MCP face at /mcp) and gRPC on :7223, then announces both to the host. No real SAP system is ever called by a
  * test: they run against `test/fake-s4.ts`.
  *
  * Environment: `LANDFLOW_SAP_ALLOWED_HOSTS` limits which hosts the plugin calls (comma separated; `.suffix` matches subdomains; a host
@@ -38,8 +38,8 @@ export const DEFAULT_MAX_CONCURRENCY = 4;
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   await serve(plugin, {
-    http: 7116,
-    grpc: 7216,
+    http: 7123,
+    grpc: 7223,
     host: process.env.LANDFLOW_HOST ?? (process.env.LANDFLOW_ADVERTISE_HOST ? '0.0.0.0' : '127.0.0.1'),
     maxConcurrency: DEFAULT_MAX_CONCURRENCY,
     mcp: { token: process.env.LANDFLOW_MCP_TOKEN },

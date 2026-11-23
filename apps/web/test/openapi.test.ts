@@ -92,6 +92,23 @@ describe('OpenAPI document', () => {
     }
   });
 
+  it('documents the MCP policy hook routes as admin settings', () => {
+    const ops: Array<[string, string, string]> = [
+      ['/api/settings/mcp/policy-hooks', 'get', 'listMcpPolicyHooks'],
+      ['/api/settings/mcp/policy-hooks', 'post', 'createMcpPolicyHook'],
+      ['/api/settings/mcp/policy-hooks/{id}', 'get', 'getMcpPolicyHook'],
+      ['/api/settings/mcp/policy-hooks/{id}', 'patch', 'updateMcpPolicyHook'],
+      ['/api/settings/mcp/policy-hooks/{id}', 'delete', 'deleteMcpPolicyHook'],
+      ['/api/settings/mcp/policy-hooks/{id}/test', 'post', 'testMcpPolicyHook'],
+    ];
+    for (const [path, method, id] of ops) {
+      const op = doc.paths[path][method];
+      expect(op.operationId).toBe(id);
+      expect(op.tags).toEqual(['Settings']);
+      expect(op['x-landflow-scope']).toBe('admin');
+    }
+  });
+
   it('documents the settings routes, with json-render the owner’s', () => {
     expect(doc.paths['/api/settings'].get['x-landflow-scope']).toBe('workflows:read');
     expect(doc.paths['/api/settings'].patch['x-landflow-scope']).toBe('admin');

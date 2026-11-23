@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Ban, Boxes, ChevronLeft, Download, KeyRound, LayoutTemplate, PackageX, Pencil, Table2, Trash2, Users } from 'lucide-react';
+import { Ban, Boxes, Download, KeyRound, LayoutTemplate, PackageX, Pencil, Table2, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { useWorkflowsReadOnly } from '@/lib/client/environment';
@@ -197,16 +197,12 @@ export function TemplateView({ id }: { id: string }) {
   const readOnly = useWorkflowsReadOnly();
 
   const carried = new URLSearchParams({ ...(folder && { folder }), ...(project && { project }) }).toString();
-  const back = (
-    <Link href={`/templates${carried ? `?${carried}` : ''}`} className="inline-flex items-center gap-1 text-t3 hover:text-t1">
-      <ChevronLeft className="size-4" /> Templates
-    </Link>
-  );
+  const back = { href: `/templates${carried ? `?${carried}` : ''}`, label: 'Templates' };
 
   if (error)
     return (
       <>
-        <PageHeader title={back} />
+        <PageHeader back={back} title="Template" />
         <PageBody>
           <Card className="py-6">
             <EmptyState compact title={error.status === 404 ? 'Template not found' : 'Couldn’t load this template'} hint={error.status === 404 ? 'It may have been deleted.' : error.message} />
@@ -218,7 +214,7 @@ export function TemplateView({ id }: { id: string }) {
   if (!template)
     return (
       <>
-        <PageHeader title={back} />
+        <PageHeader back={back} title="Template" />
         <PageBody className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
           <div className="h-[440px] animate-pulse-soft rounded-2xl bg-wl" />
           <div className="h-[440px] animate-pulse-soft rounded-2xl bg-wl" />
@@ -246,13 +242,8 @@ export function TemplateView({ id }: { id: string }) {
   return (
     <>
       <PageHeader
-        title={
-          <span className="flex min-w-0 items-center gap-2">
-            {back}
-            <span className="text-t3">/</span>
-            <span className="truncate">{template.name}</span>
-          </span>
-        }
+        back={back}
+        title={template.name}
         actions={
           <>
             {template.source === 'local' && template.canEdit !== false && (

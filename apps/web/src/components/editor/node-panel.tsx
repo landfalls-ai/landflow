@@ -1,35 +1,34 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, ChevronLeft, ChevronRight, CircleDot, Pause, PencilLine, Pin, PinOff, Play, SkipForward, X } from 'lucide-react';
-import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
+import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Pause, PencilLine, Pin, PinOff, Play, X } from 'lucide-react';
+import { expandPorts, isPropertyVisible, withPropertyDefaults } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { duration, languageMeta } from '@/lib/client/format';
-import type { NodeItem, NodeRun } from '@/lib/shared/types';
-import { Badge, LanguageBadge, TransportBadge } from '../ui/badge';
+import { DevOnly } from '@/lib/client/developer-details';
+import type { NodeItem, NodeRun, NodeTypeInfo } from '@/lib/shared/types';
+import { Badge, LanguageBadge, TransportBadge, executionTone } from '../ui/badge';
+import { RUN_STATE, type RunState } from '../run/run-status';
 import { Button } from '../ui/button';
-import { NodeIcon } from '../ui/icon';
-import { FieldLabel, Input, SectionLabel, Select, Switch, Textarea } from '../ui/inputs';
+import { NodeIcon, isImageIcon } from '../ui/icon';
+import { nodeSubtitle } from '@/lib/shared/node-subtitle';
+import { Input, SectionLabel } from '../ui/inputs';
 import { DataView } from '../run/data-view';
+import { useEditLock } from './edit-lock';
 import { NodeCredentials } from '../credentials/node-credentials';
 import { ParamForm } from './param-form';
+import { NodeSettingsPane } from './node-settings';
 import { PollStatus } from './poll-status';
 import { usePublication } from './publish-control';
+import { usePublishedCredentialsDiffer } from './use-published-credentials';
 import { parseHandle, useEditor } from './store';
 import { SuggestionsCard } from './suggestions-card';
 import { TriggerUrl } from './trigger-url';
 import { syncTeamName } from './turn-into-team';
 import { TeamNodePanel } from './team-node-panel';
-import { useNewLook } from '../shell/look-toggle';
+import { useDialogFocus } from '../ui/use-dialog-focus';
+import { isPhone, usePhone } from '@/lib/client/use-phone';
 
-function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T;
-  options: Array<{ value: T; label: React.ReactNode }>;
-  onChange: (value: T) => void;
-}) {
+function Segmented<T extends string>({ value, options, onChange }: { value: T; options: Array<{ value: T; label: React.ReactNode }>; onChange: (value: T) => void }) {
   return (
     <div className="flex gap-0.5 rounded-lg border border-hair bg-wl p-0.5">
       {options.map((o) => (
@@ -57,8 +56,47 @@ function PaneHeader({ title, children }: { title: string; children?: React.React
   );
 }
 
+/** The panel header's actions: Docs, one Run step (not for a sub-node) and Close. Run from here and Breakpoint are in Settings. */
+export function NodeHeaderActions({ docsUrl, isSubnode, running, onRun, onClose }: { docsUrl?: string; isSubnode: boolean; running: boolean; onRun: () => void; onClose: () => void }) {
+  return (
+    // A phone: running and moving between steps are in the bar at the foot.
+    <div className="ml-auto flex items-center gap-2 max-md:hidden">
+      {docsUrl && (
+        <a href={docsUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[13px] text-t2 hover:text-ac">
+          <BookOpen className="size-3.5" /> Docs
+        </a>
+      )}
+      {!isSubnode && (
+        <Button variant="primary" size="sm" onClick={onRun} disabled={running} title="Run just this step with its last input">
+          <Play className="size-3.5" fill="currentColor" /> Run step
+        </Button>
+      )}
+      <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close">
+        <X className="size-4" />
+      </Button>
+    </div>
+  );
+}
+
+/** The node's type id and how it runs (language, transport): developer details. */
+export function NodeTypeLine({ type, info }: { type: string; info?: Pick<NodeTypeInfo, 'pluginId' | 'language' | 'transport'> }) {
+  return (
+    <DevOnly>
+      <div className="flex items-center gap-2 text-[12px] text-t3 max-md:hidden">
+        <span className="font-mono">{type}</span>
+        {info && info.pluginId !== 'core' && (
+          <>
+            <LanguageBadge language={info.language} />
+            <TransportBadge transport={info.transport} />
+          </>
+        )}
+        {info?.pluginId === 'core' && <TransportBadge transport="in-process" />}
+      </div>
+    </DevOnly>
+  );
+}
+
 export function NodePanel() {
-  const newLook = useNewLook();
   const openNodeId = useEditor((s) => s.openNodeId);
   const node = useEditor((s) => s.nodes.find((n) => n.id === s.openNodeId));
   const info = useEditor((s) => (node ? s.nodeTypes[node.data.wf.type] : undefined));
@@ -71,17 +109,32 @@ export function NodePanel() {
   const workflowId = useEditor((s) => s.workflowId);
   const workflowActive = useEditor((s) => s.active);
   const dirty = useEditor((s) => s.dirty);
+  // Until the lock has answered, `readOnly` is only the starting guess: nothing is picked on its own before then.
+  const readOnly = useEditLock((s) => s.readOnly || !s.known);
   // Saved but not published yet: the trigger URL still serves the published version.
   const unpublished = usePublication((s) => (s.workflowId === workflowId ? (s.status?.unpublishedChanges ?? false) : false));
   const [tab, setTab] = useState<'parameters' | 'settings'>('parameters');
+  // Settings past the three that matter are under More.
+  const [more, setMore] = useState(false);
   const pinned = useEditor((s) => (openNodeId ? s.pinData[openNodeId] : undefined));
   const nodes = useEditor((s) => s.nodes);
+  const publishedVersionId = usePublication((s) => (s.workflowId === workflowId ? s.status?.published?.versionId : undefined));
+  const credentialsNotPublished = usePublishedCredentialsDiffer({
+    workflowId: workflowActive ? workflowId || undefined : undefined,
+    versionId: publishedVersionId,
+    nodeId: openNodeId ?? undefined,
+    credentials: nodes.find((n) => n.id === openNodeId)?.data.wf.credentials,
+  });
   /** JSON being edited as the node's pinned output (test data), or null. */
   const [pinDraft, setPinDraft] = useState<string | null>(null);
   const [pinError, setPinError] = useState<string>();
   const [runIndex, setRunIndex] = useState(0);
   const [branch, setBranch] = useState(0);
   const close = () => useEditor.getState().openNode(undefined);
+  // A phone shows one pane at a time (docs/mobile.md#the-node-editor): Input, Parameters, Output, or Settings
+  // (Parameters with the Settings tab).
+  const phone = usePhone();
+  const [pane, setPane] = useState<'input' | 'parameters' | 'output'>('parameters');
 
   useEffect(() => {
     setRunIndex(Math.max(0, (runs?.length ?? 1) - 1));
@@ -91,6 +144,23 @@ export function NodePanel() {
     setPinDraft(null);
     setPinError(undefined);
   }, [openNodeId]);
+  // Opened from the canvas: Parameters. Moved with ‹ ›: the same pane, to compare steps.
+  const wasOpen = useRef(false);
+  // A phone also starts on the Parameters tab (not Settings), or on Input when the run is paused here (its notice is there).
+  useEffect(() => {
+    if (!wasOpen.current && openNodeId) {
+      const pausedHere = useEditor.getState().paused?.nodeId === openNodeId;
+      setPane(pausedHere ? 'input' : 'parameters');
+      if (isPhone()) setTab('parameters');
+    }
+    wasOpen.current = Boolean(openNodeId);
+  }, [openNodeId]);
+  const backButton = useRef<HTMLButtonElement>(null);
+  const card = useRef<HTMLDivElement>(null);
+  // A phone's editor is a dialog: focus moves to its back arrow, stays inside, and goes back to the step when it closes.
+  useDialogFocus(card, phone && Boolean(openNodeId && node), {
+    initial: backButton,
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -142,7 +212,12 @@ export function NodePanel() {
       items: inputItems,
       nodeOutputs,
       nodeNames: upstream,
-      workflowNodes: nodes.map((n) => ({ id: n.id, name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters as Record<string, unknown> })),
+      workflowNodes: nodes.map((n) => ({
+        id: n.id,
+        name: n.data.wf.name,
+        type: n.data.wf.type,
+        parameters: n.data.wf.parameters as Record<string, unknown>,
+      })),
       self: openNodeId ?? undefined,
     };
   }, [nodes, edges, allRuns, inputItems, openNodeId]);
@@ -150,12 +225,15 @@ export function NodePanel() {
   if (!node || !openNodeId) return null;
   const descriptor = info?.descriptor;
   const wf = node.data.wf;
+  const action = nodeSubtitle(descriptor, wf.parameters);
   // A credential can depend on a parameter (one per auth method); an unset one counts at its default.
   const credentialRequirements = descriptor?.credentials?.filter((c) => isPropertyVisible(c, withPropertyDefaults(descriptor.properties, wf.parameters))) ?? [];
   const update = (patch: Parameters<ReturnType<typeof useEditor.getState>['updateNode']>[1]) => useEditor.getState().updateNode(openNodeId, patch);
   const isTrigger = descriptor?.kind === 'trigger';
+  // A trigger has no Input pane: moving to one from Input shows its Parameters.
+  const shown = isTrigger && pane === 'input' ? 'parameters' : pane;
   const isSubnode = descriptor?.kind === 'subnode';
-  const outputPorts = descriptor?.outputs.filter((p) => p.type === 'main') ?? [];
+  const outputPorts = descriptor ? expandPorts(descriptor.outputs, wf.parameters).filter((p) => p.type === 'main') : [];
   const runNode = (scope: 'from' | 'only') => useEditor.getState().run?.({ kind: 'node', nodeId: openNodeId, scope });
   const singleOutput = outputPorts.length <= 1 && !isSubnode;
   const parents = edges
@@ -193,13 +271,13 @@ export function NodePanel() {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-overlay p-6" onMouseDown={close}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-overlay p-6 max-md:p-0" onMouseDown={close}>
       {parents[0] && (
         <button
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => useEditor.getState().openNode(parents[0]!.id)}
           title={`Previous: ${parents[0].data.wf.name}`}
-          className="absolute left-1 top-1/2 z-10 grid h-16 w-5 -translate-y-1/2 place-items-center rounded-full bg-sf text-t2 shadow-pop transition-colors hover:text-t1"
+          className="absolute left-1 top-1/2 z-10 grid h-16 w-5 -translate-y-1/2 place-items-center rounded-full bg-sf text-t2 shadow-pop transition-colors hover:text-t1 max-md:hidden"
         >
           <ChevronLeft className="size-4" />
         </button>
@@ -209,83 +287,90 @@ export function NodePanel() {
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => useEditor.getState().openNode(children[0]!.id)}
           title={`Next: ${children[0].data.wf.name}`}
-          className="absolute right-1 top-1/2 z-10 grid h-16 w-5 -translate-y-1/2 place-items-center rounded-full bg-sf text-t2 shadow-pop transition-colors hover:text-t1"
+          className="absolute right-1 top-1/2 z-10 grid h-16 w-5 -translate-y-1/2 place-items-center rounded-full bg-sf text-t2 shadow-pop transition-colors hover:text-t1 max-md:hidden"
         >
           <ChevronRight className="size-4" />
         </button>
       )}
       <div
         onMouseDown={(e) => e.stopPropagation()}
-        className="flex h-full max-h-[860px] w-full max-w-[1480px] animate-in flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop"
+        ref={card}
+        data-node-editor
+        role={phone ? 'dialog' : undefined}
+        aria-modal={phone || undefined}
+        aria-label={phone ? wf.name : undefined}
+        className="flex h-full max-h-[860px] w-full max-w-[1480px] animate-in flex-col overflow-hidden rounded-2xl border border-hair bg-sf shadow-pop max-md:max-h-none max-md:rounded-none max-md:border-0 max-md:pt-[env(safe-area-inset-top)]"
       >
         {/* header */}
-        <div className="flex shrink-0 items-center gap-3 border-b border-hair px-4 py-2.5">
-          <div className="grid size-9 place-items-center rounded-lg border border-hair bg-wl">
-            <NodeIcon icon={descriptor?.icon} size={17} className="text-t1" strokeWidth={1.6} />
-          </div>
-          <div className="min-w-0">
-            <NodeNameInput nodeId={openNodeId} name={wf.name} />
-            <div className="flex items-center gap-2 text-[12px] text-t3">
-              <span className="font-mono">{wf.type}</span>
-              {info && info.pluginId !== 'core' && (
-                <>
-                  <LanguageBadge language={info.language} />
-                  <TransportBadge transport={info.transport} />
-                </>
-              )}
-              {info?.pluginId === 'core' && <TransportBadge transport="in-process" />}
-            </div>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            {descriptor?.documentationUrl && (
-              <a href={descriptor.documentationUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[13px] text-t2 hover:text-ac">
-                <BookOpen className="size-3.5" /> Docs
-              </a>
+        <div className="flex shrink-0 items-center gap-3 border-b border-hair px-4 py-2.5 max-md:gap-2 max-md:px-1.5 max-md:py-1">
+          <button ref={backButton} type="button" onClick={close} aria-label="Back to the flow" className="grid size-11 shrink-0 place-items-center rounded-full text-t2 hover:text-t1 md:hidden">
+            <ArrowLeft className="size-5" />
+          </button>
+          {/* From md up a plugin's own icon (the app's real mark) brings its tile: no frame around it. The phone keeps the framed 17px icon. */}
+          <div
+            className={cn(
+              'grid place-items-center max-md:size-9 max-md:shrink-0 max-md:rounded-lg max-md:border max-md:border-hair max-md:bg-wl',
+              isImageIcon(descriptor?.icon) ? 'md:size-10' : 'size-9 rounded-lg border border-hair bg-wl',
             )}
-            {!isSubnode && (
+          >
+            {isImageIcon(descriptor?.icon) ? (
               <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => useEditor.getState().toggleBreakpoint(openNodeId)}
-                  title="Pause here when debugging (F9)"
-                  className={cn(breakpoint && 'text-rd hover:text-rd')}
-                >
-                  <CircleDot className="size-3.5" /> {breakpoint ? 'Breakpoint on' : 'Breakpoint'}
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => runNode('from')}
-                  disabled={running}
-                  title="Re-run this node and everything after it, reusing the data before it"
-                >
-                  <SkipForward className="size-3.5" /> Run from here
-                </Button>
-                <Button variant="primary" size="sm" onClick={() => runNode('only')} disabled={running} title="Run just this node with its last input">
-                  <Play className="size-3.5" fill="currentColor" /> Run node
-                </Button>
+                <NodeIcon icon={descriptor?.icon} size={38} className="max-md:hidden" />
+                <NodeIcon icon={descriptor?.icon} size={17} className="md:hidden" />
               </>
+            ) : (
+              <NodeIcon icon={descriptor?.icon} size={17} className="text-t1" strokeWidth={1.6} />
             )}
-            <Button variant="ghost" size="icon-sm" onClick={close} aria-label="Close">
-              <X className="size-4" />
-            </Button>
           </div>
+          <div className="min-w-0 max-md:flex-1">
+            <NodeNameInput nodeId={openNodeId} name={wf.name} />
+            <NodeTypeLine type={wf.type} info={info} />
+            {action && (
+              <p className="max-w-[560px] truncate text-[12px] font-medium text-t2 max-md:hidden" title={action} data-node-action>
+                {action}
+              </p>
+            )}
+            {descriptor?.description && (
+              <p className="max-w-[560px] truncate text-[12px] text-t3 max-md:hidden" title={descriptor.description}>
+                {descriptor.description}
+              </p>
+            )}
+          </div>
+          {/* A phone: running and moving between steps are in the bar at the foot. */}
+          <NodeHeaderActions docsUrl={descriptor?.documentationUrl} isSubnode={isSubnode} running={running} onRun={() => runNode('only')} onClose={close} />
         </div>
 
-        <div
-          className={cn(
-            'grid min-h-0 flex-1',
-            isTrigger ? 'grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]' : 'grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1fr)]',
-          )}
-        >
+        {phone && (
+          <div role="group" aria-label="Pane" className="flex shrink-0 gap-1 border-b border-hair px-2 py-1.5">
+            {([...(isTrigger ? [] : ([['input', 'Input']] as const)), ['parameters', 'Parameters'], ['output', 'Output'], ['settings', 'Settings']] as const).map(([key, label]) => {
+              const on = key === 'settings' ? shown === 'parameters' && tab === 'settings' : key === 'parameters' ? shown === 'parameters' && tab === 'parameters' : shown === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => {
+                    setPane(key === 'settings' ? 'parameters' : key);
+                    if (key === 'settings' || key === 'parameters') setTab(key);
+                  }}
+                  className={cn('h-11 flex-1 rounded-full text-[13px] font-semibold', on ? 'bg-acdim text-ac' : 'text-t2')}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <div className={cn('grid min-h-0 flex-1 max-md:flex max-md:flex-col', isTrigger ? 'grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]' : 'grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1fr)]')}>
           {/* input */}
           {!isTrigger && (
-            <div className="flex min-h-0 flex-col border-r border-hair bg-sf2">
+            <div className={cn('flex min-h-0 flex-col border-r border-hair bg-sf2 max-md:flex-1 max-md:border-r-0', phone && shown !== 'input' && 'hidden')}>
               <PaneHeader title="Input" />
               {paused && (
                 <div className="mx-3 mt-3 flex items-center gap-2 rounded-[10px] border border-warnbd bg-warndim px-3 py-2 text-[12px] text-warn">
                   <Pause className="size-3.5" fill="currentColor" strokeWidth={0} />
-                  Paused before this node. This is the input it will receive.
+                  Paused before this step. This is the input it will receive.
                 </div>
               )}
               <div className="flex min-h-0 flex-1 flex-col pt-1">
@@ -296,7 +381,8 @@ export function NodePanel() {
                     <>
                       No input yet.
                       <br />
-                      Run the workflow to see what flows into this node, then drag fields into parameters.
+                      Run the workflow to see what flows into this step
+                      {phone ? ', then tap {} beside a parameter to use a field.' : ', then drag fields into parameters.'}
                     </>
                   }
                 />
@@ -305,40 +391,40 @@ export function NodePanel() {
           )}
 
           {/* parameters */}
-          <div className="flex min-h-0 flex-col">
-            <div className="flex h-10 shrink-0 items-end gap-1 border-b border-hair px-3">
+          <div className={cn('flex min-h-0 flex-col max-md:flex-1', phone && shown !== 'parameters' && 'hidden')}>
+            <div className="flex h-10 shrink-0 items-end gap-1 border-b border-hair px-3 max-md:hidden">
               {(['parameters', 'settings'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className={cn(
-                    'h-9 px-3 text-[13px] capitalize text-t2 transition-colors hover:text-t1',
-                    tab === t && 'font-semibold text-t1 shadow-[inset_0_-2px_0_var(--ac)]',
-                  )}
+                  className={cn('h-9 px-3 text-[13px] text-t2 transition-colors hover:text-t1', tab === t && 'font-semibold text-t1 shadow-[inset_0_-2px_0_var(--ac)]')}
                 >
-                  {t}
+                  {t === 'parameters' ? 'Parameters' : 'Settings'}
                 </button>
               ))}
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto p-5 max-md:p-4">
               {tab === 'parameters' ? (
                 <>
-                  {descriptor?.description && <p className="mb-4 text-[13px] text-t2">{descriptor.description}</p>}
+                  {descriptor?.description && <p className="mb-4 text-[13px] text-t2 md:hidden">{descriptor.description}</p>}
                   {descriptor?.triggerSource === 'poll' && (
                     <PollStatus workflowId={workflowId} nodeId={openNodeId} active={workflowActive} dirty={dirty} interval={Number(wf.parameters.pollInterval ?? 60)} />
                   )}
                   <TriggerUrl type={wf.type} parameters={wf.parameters} active={workflowActive} dirty={dirty || unpublished} nodeId={openNodeId} />
                   {credentialRequirements.length ? (
                     <NodeCredentials
+                      key={openNodeId}
                       nodeType={wf.type}
                       workflowId={workflowId || undefined}
                       requirements={credentialRequirements}
                       value={wf.credentials}
+                      readOnly={readOnly}
+                      publishPending={workflowActive && credentialsNotPublished}
                       onChange={(credentials) => update({ credentials })}
                     />
                   ) : null}
-                  {descriptor && newLook && wf.type === 'core.runTeam' ? (
-                    // The new look: the team as people with jobs, then the message and where approvals go (team-node-panel.tsx).
+                  {descriptor && wf.type === 'core.runTeam' ? (
+                    // The team as people with jobs, then the message and where approvals go (team-node-panel.tsx).
                     <TeamNodePanel
                       properties={descriptor.properties}
                       values={wf.parameters}
@@ -346,7 +432,11 @@ export function NodePanel() {
                         update({ parameters });
                         if (parameters.teamId !== wf.parameters.teamId) void syncTeamName(openNodeId);
                       }}
-                      form={{ preview, credentials: wf.credentials, scope: workflowId ? { workflowId } : undefined }}
+                      form={{
+                        preview,
+                        credentials: wf.credentials,
+                        scope: workflowId ? { workflowId } : undefined,
+                      }}
                     />
                   ) : descriptor ? (
                     <ParamForm
@@ -368,113 +458,41 @@ export function NodePanel() {
                   )}
                 </>
               ) : (
-                <div className="space-y-2">
-                  <SettingRow label="Disabled" hint="Pass input straight through without running">
-                    <Switch checked={Boolean(wf.disabled)} onChange={(v) => update({ disabled: v })} />
-                  </SettingRow>
-                  <SettingRow label="On error" hint="Stop the workflow or continue with the error attached to items">
-                    <Select value={wf.onError ?? 'stop'} onChange={(e) => update({ onError: e.target.value as 'stop' | 'continue' })} className="w-40">
-                      <option value="stop">Stop workflow</option>
-                      <option value="continue">Continue</option>
-                    </Select>
-                  </SettingRow>
-                  <SettingRow label="Retry on fail" hint="Run the node again when it errors">
-                    <Switch checked={Boolean(wf.retryOnFail)} onChange={(v) => update({ retryOnFail: v })} />
-                  </SettingRow>
-                  {wf.retryOnFail && (
-                    <SettingRow label="Max tries">
-                      <Input
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={wf.maxTries ?? 3}
-                        onChange={(e) => update({ maxTries: Number(e.target.value) })}
-                        className="w-24"
-                      />
-                    </SettingRow>
-                  )}
-                  {wf.retryOnFail && (
-                    <SettingRow label="Wait between tries (ms)" hint="Before the first retry; the most is a minute">
-                      <Input
-                        type="number"
-                        min={0}
-                        max={60_000}
-                        value={wf.waitBetweenTriesMs ?? 1000}
-                        onChange={(e) => update({ waitBetweenTriesMs: Math.max(0, Math.min(60_000, Math.round(Number(e.target.value) || 0))) })}
-                        aria-label="Wait between tries (ms)"
-                        className="w-24"
-                      />
-                    </SettingRow>
-                  )}
-                  {wf.retryOnFail && (
-                    <SettingRow label="Backoff" hint="Exponential doubles the wait after each failed try, up to a minute">
-                      <Select value={wf.retryBackoff ?? 'fixed'} onChange={(e) => update({ retryBackoff: e.target.value as 'fixed' | 'exponential' })} className="w-40">
-                        <option value="fixed">Fixed</option>
-                        <option value="exponential">Exponential</option>
-                      </Select>
-                    </SettingRow>
-                  )}
-                  <SettingRow label="Timeout (seconds)" hint="Fail a try that takes longer; retries and On error apply. Empty: no timeout">
-                    <Input
-                      type="number"
-                      min={0.1}
-                      max={86_400}
-                      step="any"
-                      value={wf.timeoutSeconds ?? ''}
-                      onChange={(e) => update({ timeoutSeconds: e.target.value === '' ? undefined : Number(e.target.value) })}
-                      // Out of range once typing is done: 0 or less is no timeout, the most is a day.
-                      onBlur={() => {
-                        const seconds = wf.timeoutSeconds;
-                        if (seconds !== undefined && !(seconds >= 0.1)) update({ timeoutSeconds: undefined });
-                        else if (seconds !== undefined && seconds > 86_400) update({ timeoutSeconds: 86_400 });
-                      }}
-                      placeholder="None"
-                      aria-label="Timeout (seconds)"
-                      className="w-24"
-                    />
-                  </SettingRow>
-                  <RateLimitSetting value={wf.rateLimit} onChange={(rateLimit) => update({ rateLimit })} />
-                  {isTrigger && <TriggerBufferSettings debounce={wf.debounce} batch={wf.batch} onChange={(patch) => update(patch)} />}
-                  <SettingRow label="Always output data" hint="Continue down the branch even with zero items">
-                    <Switch checked={Boolean(wf.alwaysOutputData)} onChange={(v) => update({ alwaysOutputData: v })} />
-                  </SettingRow>
-                  <SettingRow label="Execute once" hint="Only process the first item">
-                    <Switch checked={Boolean(wf.executeOnce)} onChange={(v) => update({ executeOnce: v })} />
-                  </SettingRow>
-                  <div className="pt-2">
-                    <FieldLabel>Notes</FieldLabel>
-                    <Textarea
-                      rows={3}
-                      value={wf.notes ?? ''}
-                      onChange={(e) => update({ notes: e.target.value })}
-                      placeholder={descriptor?.usableAsTool ? 'Also used as the tool description for AI agents' : 'Notes for your team'}
-                    />
-                  </div>
-                </div>
+                <NodeSettingsPane
+                  wf={wf}
+                  update={update}
+                  usableAsTool={descriptor?.usableAsTool}
+                  isTrigger={isTrigger}
+                  isSubnode={isSubnode}
+                  breakpoint={breakpoint}
+                  running={running}
+                  more={more}
+                  onToggleMore={() => setMore((v) => !v)}
+                  onToggleBreakpoint={() => useEditor.getState().toggleBreakpoint(openNodeId)}
+                  onRunFrom={() => {
+                    runNode('from');
+                    if (phone) setPane('output');
+                  }}
+                />
               )}
             </div>
           </div>
 
           {/* output */}
-          <div className="flex min-h-0 flex-col border-l border-hair bg-sf2">
+          <div className={cn('flex min-h-0 flex-col border-l border-hair bg-sf2 max-md:flex-1 max-md:border-l-0', phone && shown !== 'output' && 'hidden')}>
             <PaneHeader title="Output">
               {pinned && pinDraft === null && (
-                <span className="flex animate-pop items-center gap-1 rounded-full bg-viz-7 px-2 py-px text-[11px] font-semibold text-white">
+                <span className="flex animate-pop items-center gap-1 rounded-full bg-viz-7 px-2 py-px text-[11px] font-semibold text-bg">
                   <Pin className="size-3" /> pinned
                 </span>
               )}
               {singleOutput && pinDraft === null && (
                 <>
-                  <Button size="sm" variant="ghost" onClick={startPinEdit} title="Type the items this node should output: test data for the rest of the flow">
+                  <Button size="sm" variant="ghost" onClick={startPinEdit} title="Type the items this step should output: test data for the rest of the flow">
                     <PencilLine className="size-3.5" /> {pinned ? 'Edit' : isTrigger ? 'Set test data' : 'Edit output'}
                   </Button>
                   {pinned ? (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => useEditor.getState().setPinData(openNodeId, undefined)}
-                      title="Run the node again instead of using pinned data"
-                    >
+                    <Button size="sm" variant="ghost" onClick={() => useEditor.getState().setPinData(openNodeId, undefined)} title="Run the step again instead of using pinned data">
                       <PinOff className="size-3.5" /> Unpin
                     </Button>
                   ) : (
@@ -484,7 +502,7 @@ export function NodePanel() {
                         size="sm"
                         variant="ghost"
                         onClick={() => useEditor.getState().setPinData(openNodeId, run.outputs[0] ?? [])}
-                        title="Keep this output: later runs reuse it instead of running the node"
+                        title="Keep this output: later runs reuse it instead of running the step"
                       >
                         <Pin className="size-3.5" /> Pin
                       </Button>
@@ -493,12 +511,7 @@ export function NodePanel() {
                 </>
               )}
               {runs && runs.length > 1 && (
-                <select
-                  value={runIndex}
-                  onChange={(e) => setRunIndex(Number(e.target.value))}
-                  aria-label="Run"
-                  className="rounded-md border border-hair bg-wl px-1.5 py-0.5 text-[12px] text-t2"
-                >
+                <select value={runIndex} onChange={(e) => setRunIndex(Number(e.target.value))} aria-label="Run" className="rounded-md border border-hair bg-wl px-1.5 py-0.5 text-[12px] text-t2">
                   {runs.map((r, i) => (
                     <option key={i} value={i}>
                       {r.source === 'main' ? 'Run' : r.source} {i + 1} of {runs.length}
@@ -509,7 +522,7 @@ export function NodePanel() {
             </PaneHeader>
             {run && (
               <div className="flex flex-wrap items-center gap-2 px-3 pt-3 text-[12px]">
-                <Badge tone={run.status === 'success' ? 'success' : 'danger'}>{run.status}</Badge>
+                <Badge tone={executionTone(run.status as RunState)}>{RUN_STATE[run.status as RunState]?.label ?? run.status}</Badge>
                 <span className="font-mono text-t3">{duration(run.durationMs)}</span>
                 {run.source !== 'main' && <Badge tone="muted">{run.source} call</Badge>}
                 {run.reused && (
@@ -555,9 +568,7 @@ export function NodePanel() {
               <div className="flex min-h-0 flex-1 animate-fade-up flex-col gap-2 p-3">
                 <div className="flex items-center gap-2 text-[12px] text-t2">
                   <Pin className="size-3.5 text-viz-7" />
-                  {isTrigger
-                    ? 'Test data: the trigger outputs these items when you execute the workflow.'
-                    : 'Pinned output: the node returns these items instead of running.'}
+                  {isTrigger ? 'Test data: the trigger outputs these items when you execute the workflow.' : 'Pinned output: the step returns these items instead of running.'}
                 </div>
                 <textarea
                   autoFocus
@@ -588,16 +599,13 @@ export function NodePanel() {
                 items={run && !run.error ? run.outputs[branch] : pinned}
                 emptyLabel={
                   <div className="flex flex-col items-center gap-3">
-                    <div>No output yet.</div>
+                    <div>No output yet.{!isSubnode && ' Use Run step.'}</div>
                     {info && info.pluginId !== 'core' && (
-                      <div className="max-w-xs text-[12px]">
-                        This node runs in a {languageMeta(info.language).label} process and is called over {info.transport.toUpperCase()}.
-                      </div>
-                    )}
-                    {!isSubnode && (
-                      <Button size="sm" onClick={() => runNode('only')} disabled={running}>
-                        <Play className="size-3.5" /> Run node
-                      </Button>
+                      <DevOnly>
+                        <div className="max-w-xs text-[12px]">
+                          This step runs in a {languageMeta(info.language).label} process and is called over {info.transport.toUpperCase()}.
+                        </div>
+                      </DevOnly>
                     )}
                   </div>
                 }
@@ -605,134 +613,41 @@ export function NodePanel() {
             </div>
           </div>
         </div>
+        {phone && !isSubnode && (
+          // A phone's foot: the step before, Run step (then its output), the step after.
+          <div className="flex shrink-0 items-center gap-2 border-t border-hair px-2 pt-2 pb-[max(8px,env(safe-area-inset-bottom))]">
+            <button
+              type="button"
+              disabled={!parents[0]}
+              onClick={() => parents[0] && useEditor.getState().openNode(parents[0].id)}
+              aria-label={parents[0] ? `Previous step: ${parents[0].data.wf.name}` : 'No previous step'}
+              className="grid size-11 shrink-0 place-items-center rounded-full border border-hair text-t2 disabled:opacity-30"
+            >
+              <ChevronLeft className="size-5" />
+            </button>
+            <Button
+              variant="primary"
+              className="h-11 flex-1"
+              disabled={running}
+              onClick={() => {
+                runNode('only');
+                setPane('output');
+              }}
+            >
+              <Play className="size-4" fill="currentColor" /> Run step
+            </Button>
+            <button
+              type="button"
+              disabled={!children[0]}
+              onClick={() => children[0] && useEditor.getState().openNode(children[0].id)}
+              aria-label={children[0] ? `Next step: ${children[0].data.wf.name}` : 'No next step'}
+              className="grid size-11 shrink-0 place-items-center rounded-full border border-hair text-t2 disabled:opacity-30"
+            >
+              <ChevronRight className="size-5" />
+            </button>
+          </div>
+        )}
       </div>
-    </div>
-  );
-}
-
-type NodeSettings = Parameters<ReturnType<typeof useEditor.getState>['updateNode']>[1];
-
-/**
- * A number input for a node setting. While typing, valid numbers go through at once; an empty field is `undefined`
- * when the setting is `optional`, otherwise the last value comes back on blur. Out-of-range values are fixed on blur.
- */
-function NumberField(props: { value: number | undefined; onChange: (value: number | undefined) => void; min: number; max: number; step?: string; placeholder?: string; label: string; optional?: boolean }) {
-  const { value, onChange, min, max, step, placeholder, label, optional } = props;
-  const [draft, setDraft] = useState(value === undefined ? '' : String(value));
-  useEffect(() => setDraft((current) => (current !== '' && Number(current) === value ? current : value === undefined ? '' : String(value))), [value]);
-  return (
-    <Input
-      type="number"
-      min={min}
-      max={max}
-      step={step ?? 'any'}
-      value={draft}
-      onChange={(e) => {
-        setDraft(e.target.value);
-        if (e.target.value === '') {
-          if (optional) onChange(undefined);
-        } else if (Number.isFinite(Number(e.target.value))) onChange(Number(e.target.value));
-      }}
-      onBlur={() => {
-        if (draft === '' && !optional) setDraft(value === undefined ? '' : String(value));
-        else if (value !== undefined && value < min) onChange(min);
-        else if (value !== undefined && value > max) onChange(max);
-      }}
-      placeholder={placeholder}
-      aria-label={label}
-      className="w-20"
-    />
-  );
-}
-
-/** `node.rateLimit`: at most `limit` calls per `intervalSeconds`, shared by every run; calls over it wait their turn. */
-function RateLimitSetting({ value, onChange }: { value: NodeSettings['rateLimit']; onChange: (value: NodeSettings['rateLimit']) => void }) {
-  return (
-    <SettingRow label="Rate limit" hint="At most this many calls per interval, across all runs; calls over it wait their turn. Empty: no limit">
-      <div className="flex shrink-0 items-center gap-1.5 text-[12px] text-t3">
-        <NumberField
-          label="Calls per interval"
-          optional
-          min={1}
-          max={100_000}
-          step="1"
-          placeholder="None"
-          value={value?.limit}
-          onChange={(limit) => onChange(limit === undefined || !(limit >= 1) ? undefined : { limit: Math.floor(limit), intervalSeconds: value?.intervalSeconds ?? 1 })}
-        />
-        per
-        <NumberField label="Interval (seconds)" min={0.1} max={86_400} placeholder="1" value={value?.intervalSeconds} onChange={(intervalSeconds) => value && onChange({ ...value, intervalSeconds: intervalSeconds ?? 1 })} />
-        s
-      </div>
-    </SettingRow>
-  );
-}
-
-/** Trigger nodes: debounce (`node.debounce`) or batch (`node.batch`) the events of production runs. */
-function TriggerBufferSettings({ debounce, batch, onChange }: { debounce: NodeSettings['debounce']; batch: NodeSettings['batch']; onChange: (patch: NodeSettings) => void }) {
-  const held = 'Production runs only (webhooks, schedules, polls, public chats); manual runs are never held.';
-  return (
-    <>
-      <SettingRow label="Debounce" hint={`Collapse events that arrive close together into one run, after a quiet window. ${held}`}>
-        <Switch checked={Boolean(debounce)} onChange={(on) => onChange(on ? { debounce: { windowSeconds: 10 }, batch: undefined } : { debounce: undefined })} />
-      </SettingRow>
-      {debounce && (
-        <div className="space-y-2 rounded-[10px] border border-hair bg-wl px-3 py-2.5 text-[12px] text-t2">
-          <div className="flex items-center justify-between gap-3">
-            <span>Quiet window (seconds)</span>
-            <NumberField label="Quiet window (seconds)" min={0.1} max={86_400} value={debounce.windowSeconds} onChange={(windowSeconds) => onChange({ debounce: { ...debounce, windowSeconds: windowSeconds ?? 10 } })} />
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span title="Events with different keys are debounced separately">Key (expression)</span>
-            <Input
-              value={debounce.key ?? ''}
-              onChange={(e) => onChange({ debounce: { ...debounce, key: e.target.value || undefined } })}
-              placeholder="{{ $json.body.userId }}"
-              aria-label="Debounce key"
-              className="w-56 font-mono text-[12px]"
-            />
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span>The run gets</span>
-            <Select value={debounce.mode ?? 'last'} onChange={(e) => onChange({ debounce: { ...debounce, mode: e.target.value as 'last' | 'all' } })} className="w-40">
-              <option value="last">The last event</option>
-              <option value="all">All events</option>
-            </Select>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span>Start at the latest after (seconds)</span>
-            <NumberField label="Maximum wait (seconds)" optional min={0} max={604_800} placeholder="No max" value={debounce.maxWaitSeconds} onChange={(maxWaitSeconds) => onChange({ debounce: { ...debounce, maxWaitSeconds } })} />
-          </div>
-          <div className="text-t3">Empty key: one window for all events. Held webhook calls are answered 202 with when the run starts.</div>
-        </div>
-      )}
-      <SettingRow label="Batch" hint={`Collect events and start one run with all of them, when the batch is full or on a timeout. ${held}`}>
-        <Switch checked={Boolean(batch)} onChange={(on) => onChange(on ? { batch: { size: 10, timeoutSeconds: 30 }, debounce: undefined } : { batch: undefined })} />
-      </SettingRow>
-      {batch && (
-        <div className="space-y-2 rounded-[10px] border border-hair bg-wl px-3 py-2.5 text-[12px] text-t2">
-          <div className="flex items-center justify-between gap-3">
-            <span>Events per batch</span>
-            <NumberField label="Batch size" min={1} max={10_000} step="1" value={batch.size} onChange={(size) => onChange({ batch: { ...batch, size: Math.floor(size ?? 10) } })} />
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span>Timeout after the first event (seconds)</span>
-            <NumberField label="Batch timeout (seconds)" min={0.1} max={86_400} value={batch.timeoutSeconds} onChange={(timeoutSeconds) => onChange({ batch: { ...batch, timeoutSeconds: timeoutSeconds ?? 30 } })} />
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-function SettingRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-[10px] border border-hair bg-wl px-3 py-2.5">
-      <div>
-        <div className="text-[13px] font-semibold text-t1">{label}</div>
-        {hint && <div className="text-[12px] text-t3">{hint}</div>}
-      </div>
-      {children}
     </div>
   );
 }
@@ -759,10 +674,10 @@ function NodeNameInput({ nodeId, name }: { nodeId: string; name: string }) {
           setDraft(name);
         }
       }}
-      aria-label="Node name"
+      aria-label="Step name"
       aria-invalid={taken || undefined}
-      title={taken ? 'Another node already has this name' : undefined}
-      className={cn('w-[320px] bg-transparent text-[15px] font-semibold text-t1 outline-none', taken && 'text-rd')}
+      title={taken ? 'Another step already has this name' : undefined}
+      className={cn('w-[320px] bg-transparent max-md:w-full text-[15px] font-semibold text-t1 outline-none', taken && 'text-rd')}
     />
   );
 }

@@ -2,12 +2,18 @@
  * Agents (docs/agents.md): standalone tool-using assistants, separate from the AI Agent node.
  * Types shared by the API routes and the React client. No runtime imports.
  */
+import type { KagentSecretRoute } from './kagent-routes';
 import type { AgentMessage } from '@landflow/engine';
+import type { ToolTarget } from './tool-target'; // AG14:
+import type { ApprovalBy } from './fix-autonomy'; // AG23:
 import type { GuardrailsConfig, Replacement } from '../server/guardrails';
 import type { AgentAccess } from './agent-access';
 import type { AgentCache } from './agent-cache';
 import type { AgentRouter } from './agent-router';
 import type { AgentFace } from './faces';
+import type { ContextMode, RunContext } from './project-context';
+import type { BlockedKind } from './quota-block';
+import type { SawMemorySource } from './what-it-saw';
 
 export type { AgentMessage };
 
@@ -98,8 +104,10 @@ export interface McpServerToolConfig extends ToolBase {
  * A knowledge base: a vector store collection the agent searches with a `search_…` tool. It is filled by a
  * workflow with the same store and collection in “Insert Documents” mode, using the same embeddings model.
  */
-export interface KnowledgeBaseToolConfig extends ToolBase {
+export interface VectorKnowledgeBaseConfig extends ToolBase {
   type: 'knowledge';
+  /** `vector` (or absent, as in every config saved before plugin knowledge bases): a vector store collection. */
+  source?: 'vector';
   /** The tool name the model sees (made provider-safe). */
   name: string;
   /** When to search it. */
@@ -111,7 +119,7 @@ export interface KnowledgeBaseToolConfig extends ToolBase {
   tableName?: string;
   /** Must be the model the documents were inserted with. */
   embeddings: {
-    provider: 'ollama' | 'openai';
+    provider: 'ollama' | 'openai' | 'none'; // AG13: `none` (model `bm25`) is keyword search: no embeddings model, no key (SQLite or in-memory store only)
     model: string;
     /** ollama: the server, default OLLAMA_URL or http://127.0.0.1:11434 */
     baseUrl?: string;
@@ -122,8 +130,85 @@ export interface KnowledgeBaseToolConfig extends ToolBase {
     dimensions?: number;
   };
   topK?: number;
-  searchMode?: 'vector' | 'hybrid';
+  searchMode?: 'vector' | 'hybrid' | 'keyword'; // AG13: `keyword` ranks by BM25 alone and never embeds the query
+  /** AG13: the folder this knowledge base was indexed from, relative to the files directory (`runbooks`). */
+  indexedFrom?: string;
+  /** C20: what the last folder pass did: documents read, chunks sent to the embeddings model, chunks that kept their vector, chunks removed. */
+  lastIndex?: KnowledgeIndexPass;
 }
+
+/** One folder index pass of a knowledge base (the folder route's answer, with the time). */
+export interface KnowledgeIndexPass {
+  at: string;
+  documents: number;
+  embedded: number;
+  reused: number;
+  removed: number;
+  failed?: number;
+}
+
+/** "12 documents · 3 embedded, 241 reused, 5 removed": the last pass in the words of the knowledge dialog. */
+export function knowledgeIndexSummary(pass: Pick<KnowledgeIndexPass, 'documents' | 'embedded' | 'reused' | 'removed' | 'failed'>): string {
+  const documents = `${pass.documents} document${pass.documents === 1 ? '' : 's'}`;
+  const failed = pass.failed ? `, ${pass.failed} failed` : '';
+  return `${documents} · ${pass.embedded} embedded, ${pass.reused} reused, ${pass.removed} removed${failed}`;
+}
+
+/**
+ * A knowledge base a plugin node answers (docs/agents.md#knowledge-bases-from-a-plugin): the node runs with fixed
+ * parameters (Clickland: `{ resource: 'knowledge', operation: 'search' }`) and the model's question in `queryParameter`,
+ * through the same path as a node tool. What it returns (`{ results: [{ pageContent, metadata, score }] }` is the shape
+ * to aim for) is what the grounded-answer guardrail judges answers against. Documents can't be uploaded to it.
+ */
+export interface NodeKnowledgeBaseConfig extends ToolBase {
+  type: 'knowledge';
+  source: 'node';
+  /** The tool name the model sees (made provider-safe). */
+  name: string;
+  /** When to search it. */
+  description: string;
+  /** The plugin node, qualified (`clickland.clickland`). */
+  nodeType: string;
+  /** Its fixed parameters; the question is set into `queryParameter`. */
+  parameters: Record<string, unknown>;
+  /** The node parameter that takes the question (default `query`). */
+  queryParameter?: string;
+  /** By the node's credential names. */
+  credentials?: Record<string, CredentialRef>;
+}
+
+export type KnowledgeBaseToolConfig = VectorKnowledgeBaseConfig | NodeKnowledgeBaseConfig;
+
+/** Whether a knowledge base is answered by a plugin node rather than a vector store collection. */
+export const isNodeKnowledge = (tool: KnowledgeBaseToolConfig): tool is NodeKnowledgeBaseConfig => tool.source === 'node';
+
+/** A plugin knowledge base people can pick in the builder: the node and parameters that search it. */
+export interface KnowledgeNodePreset {
+  key: string;
+  label: string;
+  nodeType: string;
+  parameters: Record<string, unknown>;
+  queryParameter: string;
+  /** The credential the node asks for. */
+  credential: string;
+  description: string;
+  /** An Iconify name for lists and the Run Trace. */
+  icon: string;
+}
+
+/** Plugin nodes known to answer knowledge searches: Clickland is the first; any other node can be named by hand. */
+export const KNOWLEDGE_NODE_PRESETS: KnowledgeNodePreset[] = [
+  {
+    key: 'clickland',
+    label: 'Clickland',
+    nodeType: 'clickland.clickland',
+    parameters: { resource: 'knowledge', operation: 'search' },
+    queryParameter: 'query',
+    credential: 'clicklandApi',
+    icon: 'lucide:activity',
+    description: 'Search Clickland’s knowledge (notes on incidents and services, recent alert events, log patterns, services) before answering questions about production: errors, latency, alerts, what was learned before.',
+  },
+];
 
 /**
  * A remote agent over A2A 1.0 (docs/a2a.md): a kagent agent, a Google ADK agent, any A2A server. The model asks it with an
@@ -248,6 +333,45 @@ export interface AgentGuardrails {
   toolResult?: AgentGuardrail;
 }
 
+// SB17: what the brief gives every agent it drafts (docs/agents.md "Agent architect"): secrets masked in messages, and, when
+// the agent has any tool, instructions inside what a tool returns ignored. Pattern checks only: neither calls a model.
+export const DEFAULT_BRIEF_GUARDRAILS: { input: AgentGuardrail; toolResult: AgentGuardrail } = {
+  input: { enabled: true, action: 'sanitize', checks: { secrets: { permissiveness: 'balanced' } }, reply: '' },
+  toolResult: {
+    enabled: true,
+    action: 'block',
+    checks: { jailbreak: { useModel: false } },
+    reply: 'A tool returned text that looked like instructions; I ignored it.',
+  },
+};
+
+// Each enabled rule in words, for the draft preview in the Agent architect's dialog and Spotlight's agent card ("Masks
+// secrets in messages", "Ignores instructions inside tool results"): one wording for both.
+export function guardrailWords(guardrails: AgentGuardrails | undefined): string[] {
+  const where = { input: 'messages', output: 'answers', toolResult: 'tool results' } as const;
+  const out: string[] = [];
+  for (const place of ['input', 'output', 'toolResult'] as const) {
+    const rule = guardrails?.[place];
+    if (!rule?.enabled) continue;
+    const verb = rule.action === 'block' ? 'Blocks' : 'Masks';
+    const checks = rule.checks ?? {};
+    const say = (what: string) => out.push(`${verb} ${what} in ${where[place]}`);
+    if (checks.pii) say('personal data');
+    if (checks.secrets) say('secrets');
+    if (checks.keywords?.list?.length) say('listed words');
+    if (checks.urls) say('links outside the allowed list');
+    if (checks.jailbreak) out.push(place === 'toolResult' ? 'Ignores instructions inside tool results' : `${verb === 'Masks' ? 'Flags' : 'Blocks'} prompt injection in ${where[place]}`);
+    if (checks.topical) say('off-topic requests');
+    if (checks.nsfw) say('unsafe content');
+    if (checks.grounded) say('answers its sources do not support');
+    for (const custom of [...(checks.customRegex ?? []), ...(checks.custom ?? [])]) out.push(`${verb} “${custom.name}” in ${where[place]}`);
+  }
+  return out;
+}
+
+/** Whether approved practices go into the agent's prompt: on unless the config says `off` (an absent value is on, as the run reads it). */
+export const followsPractices = (practices: AgentConfig['practices']): boolean => practices !== 'off';
+
 export type AnswerLength = 'sentence' | 'paragraph' | 'detailed';
 
 /**
@@ -324,6 +448,15 @@ export interface AgentConfig {
    * Code loads each whole (its agents, skills, commands, hooks and MCP servers). Other runtimes don't use them.
    */
   plugins?: string[];
+  /** How much of the project's goals and brief the agent gets in each run (docs/agents.md#project-context). Absent = full. */
+  projectContext?: ContextMode;
+  /** Whether approved practices (docs/practices.md) go into this agent's prompt. Absent = on. */
+  practices?: 'on' | 'off';
+  /**
+   * C27: hold an MCP tool whose description, schema or annotations changed since the agent was published (docs/agents.md#changed-mcp-tools-are-held).
+   * New agents have it on, and publishing turns it on for an agent that has no value yet. Absent = off (an agent from before it existed).
+   */
+  holdChangedTools?: boolean;
 }
 
 export interface AgentVersion {
@@ -371,6 +504,20 @@ export interface KagentDeployment {
    * the agent does (`<landflowUrl>/api/agent-trace`), so a run shows its real tokens, cost and tool calls.
    */
   trace?: { url: string; /** The agent's A2A URL then, to know a call goes to it. */ a2aUrl?: string };
+  /** The agent's A2A URL on kagent's controller, as deployed: the only address a memory key is minted for (kagent/memory-line.ts). */
+  a2aUrl?: string;
+  /**
+   * Claude Code: the secret routes written last (docs/a2a.md, "Secret routes"), with the credential's name and the header and
+   * prefix as written. Never a value: that is in the cluster Secret `<name>-routes` only.
+   */
+  routes?: KagentSecretRoute[];
+  /** HMAC of the route values now in the Secret (keyed, can't be reversed); the refresh compares it with the vault's. */
+  routesHash?: string;
+  /** The same per route (HMAC of that route alone), so the refresh knows which credentials changed. */
+  routesHashes?: string[];
+  /** The same hash as the policy's annotation was written with (the refresh rewrites only the Secret, so this one stays). */
+  routesPolicyHash?: string;
+  routesRefreshedAt?: string;
 }
 
 /**
@@ -408,10 +555,15 @@ export interface KagentHarness {
 
 /** A difference between what kagent holds and what Landflow writes from the published version. */
 export interface KagentDrift {
-  /** `systemPrompt`, `description`, `tools`, `plugins`, `model`, `harness`, `mcpServer`, or the kind of a missing resource. */
+  /** `systemPrompt`, `description`, `tools`, `plugins`, `model`, `harness`, `mcpServer`, `routes`, or the kind of a missing resource. */
   field: string;
   landflow: string;
   kagent?: string;
+}
+
+/** A secret route as the status shows it. */
+export interface KagentRouteStatus extends KagentSecretRoute {
+  broken?: string;
 }
 
 /** GET /api/agents/<id>/kagent: the deployment and what kagent holds now. */
@@ -437,6 +589,8 @@ export interface KagentStatus {
   drift: KagentDrift[];
   /** The published version is newer than the one written last. */
   outdated: boolean;
+  /** Claude Code: its secret routes (credential names, hosts, header; never a value), `broken` naming why one can't be sent now. */
+  routes?: KagentRouteStatus[];
   /** The AgentTemplate's systemPrompt as kagent holds it. */
   systemPrompt?: string;
   /** The Agent's Ready condition. */
@@ -558,7 +712,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = { maxIterations: 12, toolCo
 // Sessions
 // ---------------------------------------------------------------------------
 
-export type SessionSource = 'test' | 'schedule' | 'telegram' | 'slack' | 'teams' | 'workflow' | 'agent' | 'api';
+/** `harness`: a Claude Code session mirrored from its hooks (docs/harnesses.md#live-status). */
+export type SessionSource = 'test' | 'schedule' | 'telegram' | 'slack' | 'teams' | 'workflow' | 'agent' | 'api' | 'task' | 'harness';
 export type SessionStatus = 'idle' | 'running' | 'awaiting_approval' | 'error';
 /** `flow`: a tool connected to the agent's node in a workflow (Run an Agent), for that run only. `notebook`: a team run's notebook tools (docs/team-notebook.md). */
 export type ToolKind = 'node' | 'workflow' | 'agent' | 'skill' | 'memory' | 'a2a' | 'flow' | 'notebook';
@@ -597,6 +752,8 @@ export interface RemoteRun {
   usage?: TokenUsage;
   /** What the agent reported through Landflow's landflow-harness mod (a Claude Code agent on kagent). */
   trace?: AgentTraceSummary;
+  /** C05: with state `blocked`, why: a provider's quota or credits ran out (the Run Trace badge and the node's check read it). */
+  blocked?: { kind: BlockedKind; message: string; label: string };
 }
 
 /** One step of a session, as the UI shows it. Entries are upserted by id while a run streams. */
@@ -621,6 +778,8 @@ export type TimelineEntry =
       error?: string;
       status: 'running' | 'success' | 'error' | 'awaiting_approval' | 'denied';
       durationMs?: number;
+      /** AG14: what the call reached (the credential or system and where; never a secret). */
+      target?: ToolTarget;
       /** A workflow tool's workflow and execution, or a sub-agent and its session. */
       workflowId?: string;
       executionId?: string;
@@ -630,6 +789,9 @@ export type TimelineEntry =
       remote?: RemoteRun;
       /** awaiting_approval: what the person is asked (a remote agent's pause names the calls it waits on). */
       approval?: { message: string };
+      /** AG23: who decided the call's approval, and the line the Run Trace says (`approvedByLine`). */
+      by?: ApprovalBy;
+      decidedLine?: string;
       at: string;
     }
   /** An input or output guardrail that blocked or sanitized the text (nothing is shown when the text passed). */
@@ -745,6 +907,11 @@ export interface PendingCall {
   remote?: { agent: string; calls: Array<{ name: string; args?: Record<string, unknown> }>; state: Record<string, unknown> };
   /** A person's answer, when the remote agent paused on a question for one (a team member's question): sent to it as the reply. */
   answer?: string;
+  /** AP02: a call held in a run nobody watches (RunRequest.inbox): the parameters it would run with (redacted, then masked), and where it goes in plain words. */
+  review?: { params: Record<string, unknown>; destination?: string };
+  /** AP02: what the agent hears when the approval inbox refused the call (denied, expired or cancelled), and the line the Run Trace says for the decision. */
+  refusal?: string;
+  decidedLine?: string;
 }
 
 /** What an approval card shows for a pending call: a remote agent's pause names the agent and the calls it waits on. */
@@ -769,7 +936,7 @@ export interface AgentSession {
   messages: AgentMessage[];
   timeline: TimelineEntry[];
   /** Tool calls waiting for a person, with the results of the same turn's other calls. */
-  pending?: { calls: PendingCall[]; results: Array<{ id: string; name: string; content: string; isError?: boolean }>; iterations: number };
+  pending?: { calls: PendingCall[]; results: Array<{ id: string; name: string; content: string; isError?: boolean }>; iterations: number; /** C09: whose memory the paused run read and wrote; the resumed run goes on with it, whoever approves (never falls back to the session's first user). */ memoryUser?: string };
   /** The conversation with each A2A agent (by capability id): its context, and a task waiting for an answer. */
   remoteContexts?: Record<string, { contextId: string; taskId?: string; question?: { id: string; questions: string[] } }>;
   usage: TokenUsage;
@@ -782,6 +949,12 @@ export interface AgentSession {
   conversationKey?: string;
   /** The workflow run and Run an Agent node that started this session (the execution view shows it live). */
   execution?: SessionExecution;
+  /** The project block this session's run got, and the date it pinned (a resume after approval reuses both). */
+  context?: RunContext;
+  /** C09: the memories the last run recalled (ids, versions, scores; never the text), for the Sessions tab. */
+  memory?: SawMemorySource[];
+  /** Never set on a session record (anyone who can read the session could read it): the exact block is the journal's `saw.memoryText`, on `full`. Kept for readers that expect the field. */
+  memoryText?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -808,6 +981,7 @@ export interface SessionSummary {
   traceId?: string;
   parentSessionId?: string;
   execution?: SessionExecution;
+  projectId?: string; // PC13: the project the session ran in (absent on older ones: the agent's home)
   createdAt: string;
   updatedAt: string;
 }
@@ -827,4 +1001,20 @@ export interface ModelOption {
   model: string;
   label: string;
   description?: string;
+}
+
+/** One thing an agent remembers about one person (C09): what the agent page lists, and what `forget` and `restore` act on. */
+export interface AgentMemoryView {
+  /** The short handle the prompt shows (`m_…`); the full id goes to the Run Trace. */
+  id: string;
+  text: string;
+  /** Always in the agent's prompt for this person. */
+  static: boolean;
+  version: number;
+  /** When it was first said (ISO). */
+  at: string;
+  /** When it was last said again (ISO). */
+  lastSeen: string;
+  forgottenAt?: string;
+  forgetReason?: string;
 }

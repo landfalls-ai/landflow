@@ -5,6 +5,8 @@
  */
 import type { AiDocument, LanguageModel, Reranker } from '@landflow/engine';
 import { NodeOperationError } from '@landflow/sdk';
+import { withCallPurpose } from '../ai-usage/call-context';
+import { safeFetch } from '../net/safe-fetch';
 import { generateStructured, type JsonSchema } from '../nodes/structured';
 import { traceRerank } from '../telemetry';
 
@@ -45,12 +47,13 @@ export function llmReranker(model: LanguageModel, options: LlmRerankerOptions = 
         const prompt = `Query: ${query}\n\nPassages:\n${passages}`;
         let scores: Map<number, number>;
         try {
-          const { value } = await generateStructured<{ scores: Array<{ index: number; score: number }> }>(model, {
+          // SP02: the LLM reranker's call is a rerank call (Cohere's is not a token call and stays unmetered).
+          const { value } = await withCallPurpose('rerank', () => generateStructured<{ scores: Array<{ index: number; score: number }> }>(model, {
             system: [SYSTEM, options.instructions?.trim()].filter(Boolean).join('\n\n'),
             prompt,
             schema: SCHEMA,
             ...(rerankOptions?.signal && { signal: rerankOptions.signal }),
-          });
+          }));
           scores = new Map(value.scores.filter((s) => Number.isInteger(s.index) && s.index >= 0 && s.index < documents.length).map((s) => [s.index, s.score]));
         } catch (error) {
           if (rerankOptions?.signal?.aborted) throw error;
@@ -95,7 +98,7 @@ export const COHERE_BASE_URL = 'https://api.cohere.com';
 export function cohereReranker(options: CohereRerankerOptions = {}): Reranker {
   const base = (options.baseUrl?.trim() || COHERE_BASE_URL).replace(/\/+$/, '');
   const model = options.model?.trim() || 'rerank-v3.5';
-  const send = options.fetch ?? fetch;
+  const send = options.fetch ?? (safeFetch as typeof fetch);
   return {
     async rerank(query, documents, rerankOptions) {
       const keep = Math.max(1, rerankOptions?.topK ?? options.topK ?? documents.length);

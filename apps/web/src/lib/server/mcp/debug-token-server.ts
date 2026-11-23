@@ -93,8 +93,8 @@ export function debugTokenServer(token: string, grant: DebugTokenRecord, options
     return result;
   };
 
-  const record = (): ExecutionRecord | undefined => {
-    const found = liveExecution(grant.executionId) ?? store.getExecution(grant.executionId);
+  const record = async (): Promise<ExecutionRecord | undefined> => {
+    const found = liveExecution(grant.executionId) ?? (await store.loadExecution(grant.executionId));
     // The token names one execution of one workflow; a record of any other workflow is not served.
     return found && found.workflowId === grant.workflowId ? found : undefined;
   };
@@ -107,8 +107,8 @@ export function debugTokenServer(token: string, grant: DebugTokenRecord, options
       inputSchema: z.object({ id: z.string().describe('Execution id (the one this token is for)'), includeData: z.boolean().optional() }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    guarded('get_execution', DEBUG_TOKEN_TOOLS.get_execution, ((args: { includeData?: boolean }) => {
-      const found = record();
+    guarded('get_execution', DEBUG_TOKEN_TOOLS.get_execution, (async (args: { includeData?: boolean }) => {
+      const found = await record();
       if (!found) return failure(`Execution ${grant.executionId} not found`);
       const workflow: Workflow | undefined = found.workflow ?? store.getWorkflow(found.workflowId);
       return textResult(redactorFor(workflow)(options.digest(found, Boolean(args.includeData))));

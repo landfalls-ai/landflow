@@ -47,12 +47,16 @@ services:
       dockerfile: deploy/docker/host.Dockerfile
     restart: unless-stopped
     init: true
+    # Longer than LANDFLOW_SHUTDOWN_SECONDS (25): Docker's default 10 s would kill the host before it flushes.
+    stop_grace_period: 30s
     ports:
       - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_HOST_PORT:-53000}:3000"
       # The MCP gateway sidecar below shares this container's network namespace, so its /mcp listener is published here.
       - "${LANDFLOW_BIND_ADDR:-127.0.0.1}:${LANDFLOW_MCP_GATEWAY_PORT:-54000}:4000"
     environment:
       LANDFLOW_DATA_DIR: /data
+      # These stacks run the development secrets from deploy/.env.example; a real deployment sets production (docs/deployment.md).
+      LANDFLOW_PROFILE: development
       # The bundled MCP gateway (docs/transports.md): the sidecar's admin API and this host, both on the shared loopback;
       # the secret is what the gateway sends as `x-landflow-gateway`; the public URL is where agents connect.
       LANDFLOW_MCP_GATEWAY: ${LANDFLOW_MCP_GATEWAY:-bundled}
@@ -62,11 +66,12 @@ services:
       LANDFLOW_MCP_GATEWAY_SECRET: ${LANDFLOW_MCP_GATEWAY_SECRET:-landflow-mcp-gateway-dev-only-secret}
       # Empty: the vault generates a key into the data volume (/data/encryption.key) on first use.
       LANDFLOW_ENCRYPTION_KEY: ${LANDFLOW_ENCRYPTION_KEY:-}
+      LANDFLOW_ENCRYPTION_KEYS: ${LANDFLOW_ENCRYPTION_KEYS:-}
       LANDFLOW_LOG_LEVEL: ${LANDFLOW_LOG_LEVEL:-info}
       # Plugins announce themselves; the scan (at boot and the Plugins page's "Scan network")
       # probes the plugin services instead of the container's own 127.0.0.1.
-      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github,browser,agent-shell,web-search,desktop,sap
-      LANDFLOW_SCAN_PORTS: 7101-7107,7111-7117,7201-7207,7211-7217
+      LANDFLOW_SCAN_HOSTS: text-toolkit,py-insights,go-crypto,messaging,productivity,google-workspace,databases,github,browser,agent-shell,web-search,linear,attio,fathom,clickland,landledger,desktop,sap
+      LANDFLOW_SCAN_PORTS: 7101-7107,7111-7114,7116-7120,7123-7124,7201-7207,7211-7214,7216-7220,7223-7224
       # Base of links the host hands out (resume URLs, error-workflow links): the published port.
       LANDFLOW_PUBLIC_URL: http://localhost:${LANDFLOW_HOST_PORT:-53000}
       # Where plugins fetch and upload item files (/api/binary): the host on the compose network.
@@ -230,6 +235,65 @@ services:
       <<: *plugin-env
       LANDFLOW_ADVERTISE_HOST: github
 
+  linear:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-linear:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: linear, HTTP_PORT: "7116", GRPC_PORT: "7216" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: linear
+
+  attio:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-attio:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: attio, HTTP_PORT: "7117", GRPC_PORT: "7217" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: attio
+
+  fathom:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-fathom:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: fathom, HTTP_PORT: "7118", GRPC_PORT: "7218" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: fathom
+
+  # Clickland (plugins/clickland): observability. Its credential's Base URL is Clickland's API (http://host.docker.internal:4710
+  # from this stack when Clickland runs on the Mac).
+  clickland:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-clickland:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: clickland, HTTP_PORT: "7119", GRPC_PORT: "7219" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: clickland
+
+  # Landledger (plugins/landledger): the cost subledger. Its credential's Base URL is Landledger's API
+  # (http://host.docker.internal:4810 from this stack when Landledger runs on the Mac).
+  landledger:
+    <<: *plugin
+    image: ${LANDFLOW_IMAGE_PREFIX:-landflow}/plugin-landledger:${LANDFLOW_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/docker/node-plugin.Dockerfile
+      args: { PLUGIN: landledger, HTTP_PORT: "7120", GRPC_PORT: "7220" }
+    environment:
+      <<: *plugin-env
+      LANDFLOW_ADVERTISE_HOST: landledger
+
   # Browser plugin (plugins/browser): its own image with Chrome and the agent-browser CLI (plugins/browser/Dockerfile).
   # Optional: the profile `browser` keeps it out of a plain `up` (the image is large); add `--profile browser`. It runs
   # headless in a container. Set LANDFLOW_BROWSER_ALLOWED_DOMAINS (comma separated) to limit every node to those sites;
@@ -285,7 +349,7 @@ services:
     build:
       context: ..
       dockerfile: plugins/desktop/Dockerfile
-      args: { HTTP_PORT: "7117", GRPC_PORT: "7217" }
+      args: { HTTP_PORT: "7124", GRPC_PORT: "7224" }
     environment:
       <<: *plugin-env
       LANDFLOW_ADVERTISE_HOST: desktop
@@ -332,7 +396,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/docker/node-plugin.Dockerfile
-      args: { PLUGIN: sap, HTTP_PORT: "7116", GRPC_PORT: "7216" }
+      args: { PLUGIN: sap, HTTP_PORT: "7123", GRPC_PORT: "7223" }
     environment:
       <<: *plugin-env
       LANDFLOW_ADVERTISE_HOST: sap

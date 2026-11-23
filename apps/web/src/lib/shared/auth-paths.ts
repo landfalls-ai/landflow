@@ -19,8 +19,19 @@ export const PATH_HEADER = 'x-landflow-path';
 /** Sign-in pages: no session needed, and no sidebar. */
 export const AUTH_PAGES = ['/login', '/setup', '/invite', '/forgot-password', '/reset-password'] as const;
 
-/** Public pages besides the sign-in pages (hosted chat), shown without the sidebar too. */
-export const PUBLIC_PAGES = ['/chat'] as const;
+/**
+ * Public pages besides the sign-in pages (hosted chat), shown without the sidebar too. `/request-access` (C36) is the page where
+ * people without a Landflow account ask for access, and its routes below `/request-access/api`: they authenticate with the requester
+ * session (`REQUESTER_COOKIE`), never with Landflow's, and answer 404 while an admin has not switched the feature on.
+ */
+export const PUBLIC_PAGES = ['/chat', '/request-access'] as const;
+
+/** C36: the requester session of a person without a Landflow account (HttpOnly, SameSite=Strict, Path=/request-access). Landflow's guard never reads it. */
+export const REQUESTER_COOKIE = 'landflow_requester';
+/** C36: the state of a Google sign-in in progress for such a person (SameSite=Lax, only on the callback's path). */
+export const REQUESTER_OIDC_COOKIE = 'landflow_requester_oidc';
+/** C36: where the page and its routes live: one prefix, so one cookie path covers both. */
+export const REQUESTER_PATH = '/request-access';
 
 /** Public API routes and route-handler paths (a prefix matches itself and everything below it). */
 export const PUBLIC_ROUTES = [
@@ -50,8 +61,13 @@ export const PUBLIC_ROUTES = [
   // Protected resource metadata (RFC 9728) of the MCP endpoints and the instance's Server Card (which checks its callers itself).
   '/.well-known/oauth-protected-resource',
   '/.well-known/mcp',
+  // The docs for agents (docs/llms.txt, docs/llms-full.txt, built into the host): public text, no query or path is read. Documentation only: any `.txt` outside /api already counts as a static asset (isStaticAsset).
+  '/llms.txt',
+  '/llms-full.txt',
   // OAuth2 credential callback (the provider redirects the browser here).
   '/api/oauth2/callback',
+  // C29: a network runner polls for HTTP Request calls and answers them here, with its own token (lib/server/networks/store.ts authenticateRunner); the admin routes are /api/settings/networks.
+  '/api/runner',
   // Plugins announce themselves and heartbeat here (optionally with LANDFLOW_REGISTRY_SECRET).
   '/api/plugins/announce',
   // Slack Events API and Interactivity (agent channels, approval buttons): verified with the app's signing secret.
@@ -69,6 +85,9 @@ export const PUBLIC_ROUTES = [
   '/api/agent-trace',
   // The one-node local override: a `runs:debug` debug token is the credential (lib/server/debug-node/run.ts).
   '/api/debug-node',
+  // The LLM gateway's split of a model call (numbers and hashes, never text): signed with LANDFLOW_LLM_GATEWAY_PARTS_SECRET,
+  // which the route checks; it answers 404 while the secret is unset (lib/server/llm-gateway/parts-receiver.ts).
+  '/api/gateway-parts',
 ] as const;
 
 /** `/api/auth` routes that need a signed-in user. */

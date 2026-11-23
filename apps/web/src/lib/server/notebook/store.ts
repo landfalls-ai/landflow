@@ -16,7 +16,14 @@ import {
   type NoteStatus,
   type TeamNote,
 } from '../../shared/notebook';
+import { changeOrigin } from '../brain/store/origin'; // NB01
+import { emitBrainChange } from '../brain/store/port'; // NB01
 import { database } from '../db';
+
+/** NB01: one change per note written, after it is stored. */
+function emitNote(note: { id: string; projectId?: string | null }, op: 'upsert' | 'delete', explicit?: 'notion'): void {
+  emitBrainChange({ kind: 'note', key: note.id, ...(note.projectId && { projectId: note.projectId }), op, ...changeOrigin(explicit), at: new Date().toISOString() });
+}
 
 const DAY_MS = 86_400_000;
 
@@ -47,15 +54,19 @@ interface Row {
   updated_at: string;
   last_access_at: string;
   expires_at: string | null;
+  forgotten_at: string | null;
+  forget_reason: string | null;
+  forgotten_by: string | null;
 }
 
 /** Everything but the embedding: lists don't carry vectors. */
 const COLUMNS =
-  'id, team_id, project_id, run_id, workflow_id, kind, text, scope, status, author, author_id, source, tainted, answer, (embedding IS NOT NULL) AS embedded, dispute_of, superseded_by, promoted_from, proposal_id, verified_at, verified_by, created_at, updated_at, last_access_at, expires_at';
+  'id, team_id, project_id, run_id, workflow_id, kind, text, scope, status, author, author_id, source, tainted, answer, (embedding IS NOT NULL) AS embedded, dispute_of, superseded_by, promoted_from, proposal_id, verified_at, verified_by, created_at, updated_at, last_access_at, expires_at, forgotten_at, forget_reason, forgotten_by';
 
 type ListRow = Omit<Row, 'embedding' | 'embedding_model'> & { embedded: number };
 
-function revive(row: ListRow): TeamNote {
+/** `withForget`: the reason and who forgot it are a person's words and go only to the forgotten list and the lifecycle, never to a reader or a prompt. */
+function revive(row: ListRow, withForget = false): TeamNote {
   let source: NoteSource = {};
   try {
     source = JSON.parse(row.source) as NoteSource;
@@ -87,6 +98,9 @@ function revive(row: ListRow): TeamNote {
     updatedAt: row.updated_at,
     lastAccessAt: row.last_access_at,
     ...(row.expires_at && { expiresAt: row.expires_at }),
+    ...(row.forgotten_at && { forgottenAt: row.forgotten_at }),
+    ...(withForget && row.forget_reason && { forgetReason: row.forget_reason }),
+    ...(withForget && row.forgotten_by && { forgottenBy: row.forgotten_by }),
     embedded: Boolean(row.embedded),
   };
 }
@@ -139,6 +153,10 @@ export interface NoteFilter {
   /** Only notes of this run, whatever their scope. */
   onlyRun?: string;
   expired?: boolean;
+  /** C02: `exclude` (default) leaves forgotten notes out, `only` lists just them, `include` lists both. */
+  forgotten?: 'exclude' | 'include' | 'only';
+  /** Keyset paging: only notes older than this position (`created_at DESC, id DESC`). */
+  before?: { createdAt: string; id: string };
   limit?: number;
 }
 
@@ -171,12 +189,14 @@ export const noteStore = {
       expires_at: expiryOf(scope, verified, now) ?? null,
     };
     database().upsert('team_notes', row);
-    return this.get(row.id)!;
+    const stored = this.get(row.id)!;
+    emitNote(stored, 'upsert', input.source?.tool === 'notion' ? 'notion' : undefined); // NB01
+    return stored;
   },
 
-  get(id: string): TeamNote | undefined {
+  get(id: string, options: { withForget?: boolean } = {}): TeamNote | undefined {
     const row = database().get<ListRow>(`SELECT ${COLUMNS} FROM team_notes WHERE id = ?`, id);
-    return row ? revive(row) : undefined;
+    return row ? revive(row, options.withForget) : undefined;
   },
 
   /** The notes a team (and, for run-scope ones, a run) sees, newest first. */
@@ -212,22 +232,55 @@ export const noteStore = {
       where.push(`status IN (${filter.statuses.map(() => '?').join(', ')})`);
       params.push(...filter.statuses);
     } else if (!filter.expired) where.push("status <> 'expired'");
+    // C02: a note past its expiry is gone now, not at the next sweep (the sweeper only marks and deletes). `expired` asks for them.
+    if (!filter.expired && !filter.statuses?.includes('expired') && filter.forgotten !== 'only') {
+      where.push('(expires_at IS NULL OR expires_at > ?)');
+      params.push(iso(Date.now()));
+    }
+    if (filter.before) {
+      where.push('(created_at < ? OR (created_at = ? AND id < ?))');
+      params.push(filter.before.createdAt, filter.before.createdAt, filter.before.id);
+    }
+    const forgotten = filter.forgotten ?? 'exclude';
+    if (forgotten === 'exclude') where.push('forgotten_at IS NULL');
+    // `only` also lists a note with a forget-after pending (its reason is set, its time not reached) so it can be restored.
+    else if (forgotten === 'only') where.push('(forgotten_at IS NOT NULL OR forget_reason IS NOT NULL)');
     const rows = database().all<ListRow>(`SELECT ${COLUMNS} FROM team_notes WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ${Math.max(1, Math.min(1000, filter.limit ?? 500))}`, ...params);
-    return rows.map(revive);
+    return rows.map((r) => revive(r, forgotten !== 'exclude'));
   },
 
   /** Every note a team wrote, whatever its scope or standing (for settling disputes and deleting). */
   all(teamId: string): TeamNote[] {
-    return database().all<ListRow>(`SELECT ${COLUMNS} FROM team_notes WHERE team_id = ? ORDER BY created_at DESC LIMIT 5000`, teamId).map(revive);
+    return database().all<ListRow>(`SELECT ${COLUMNS} FROM team_notes WHERE team_id = ? ORDER BY created_at DESC LIMIT 5000`, teamId).map((r) => revive(r));
   },
 
   /** A note's changes (columns by name): `updated_at` moves with them. */
   patch(id: string, columns: Record<string, string | number | null>): TeamNote | undefined {
-    return change(id, { ...columns, updated_at: iso(Date.now()) }) ? this.get(id) : undefined;
+    if (!change(id, { ...columns, updated_at: iso(Date.now()) })) return undefined;
+    const patched = this.get(id);
+    if (patched) emitNote(patched, 'upsert'); // NB01
+    return patched;
+  },
+
+  /**
+   * Several notes' changes as one transaction: all of them or none (settling a dispute writes two notes). Events go out after
+   * the commit. A change to a note that is not there is skipped.
+   */
+  patchMany(changes: Array<{ id: string; columns: Record<string, string | number | null> }>): TeamNote[] {
+    const at = iso(Date.now());
+    const done = database().transaction(() => changes.filter((c) => change(c.id, { ...c.columns, updated_at: at })));
+    return done.flatMap((c) => {
+      const patched = this.get(c.id);
+      if (patched) emitNote(patched, 'upsert'); // NB01
+      return patched ?? [];
+    });
   },
 
   delete(id: string): boolean {
-    return database().delete('team_notes', { id }) > 0;
+    const note = this.get(id); // NB01
+    const removed = database().delete('team_notes', { id }) > 0;
+    if (removed && note) emitNote(note, 'delete');
+    return removed;
   },
 
   /** The vectors of some notes, by id (only those that have one). */
@@ -260,7 +313,7 @@ export const noteStore = {
   },
 
   /** The tab's headline: what the list holds under the same scope (and run), whatever kind or status the tab picked, so the tiles can switch between kinds. */
-  counts(teamId: string, projectId?: string, within: Pick<NoteFilter, 'scopes' | 'onlyRun' | 'expired'> = {}): NoteCounts {
+  counts(teamId: string, projectId?: string, within: Pick<NoteFilter, 'scopes' | 'onlyRun' | 'expired' | 'forgotten'> = {}): NoteCounts {
     const notes = this.list({ teamId, ...(projectId && { projectId }), allRuns: true, ...within });
     const count = (test: (n: TeamNote) => boolean) => notes.filter(test).length;
     return {
@@ -278,14 +331,27 @@ export const noteStore = {
    */
   expire(now = Date.now()): { expired: number; deleted: number } {
     const db = database();
-    const due = db.all<{ id: string }>("SELECT id FROM team_notes WHERE expires_at IS NOT NULL AND expires_at <= ? AND status <> 'expired'", iso(now));
+    const due = db.all<{ id: string }>("SELECT id FROM team_notes WHERE expires_at IS NOT NULL AND expires_at <= ? AND status <> 'expired' AND forgotten_at IS NULL", iso(now));
     for (const { id } of due) change(id, { status: 'expired', updated_at: iso(now) });
-    const deleted = db.deleteBefore('team_notes', 'expires_at', iso(now - EXPIRED_GRACE_DAYS * DAY_MS));
+    // NB01: each note that expired, and each one deleted past its grace.
+    // C02: a forgotten note stays until a person deletes it, so the grace sweep names its rows instead of deleting by time.
+    const gone = db.all<{ id: string; project_id: string | null }>('SELECT id, project_id FROM team_notes WHERE expires_at IS NOT NULL AND expires_at < ? AND forgotten_at IS NULL', iso(now - EXPIRED_GRACE_DAYS * DAY_MS));
+    const deleted = db.transaction(() => gone.reduce((n, g) => n + db.delete('team_notes', { id: g.id }), 0));
+    const goneIds = new Set(gone.map((n) => n.id));
+    for (const { id } of due) {
+      if (goneIds.has(id)) continue;
+      const note = this.get(id);
+      if (note) emitNote(note, 'upsert');
+    }
+    for (const n of gone) emitNote({ id: n.id, projectId: n.project_id }, 'delete');
     return { expired: due.length, deleted };
   },
 
   /** Every note of a team (when it is deleted). */
   deleteTeam(teamId: string): number {
-    return database().delete('team_notes', { team_id: teamId });
+    const notes = this.all(teamId); // NB01
+    const removed = database().delete('team_notes', { team_id: teamId });
+    for (const note of notes) emitNote(note, 'delete');
+    return removed;
   },
 };

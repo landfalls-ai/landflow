@@ -4,24 +4,29 @@
  * credentials the agents name into slots, and on use creates the agents and the team with every reference rewritten
  * (`createFromBundle`, `remapWorkflow`). The workflow's own part is the templates module's (./index.ts).
  */
+import { currentPrincipal } from '../auth/guard';
+import { publishAndTrust } from '../trust/publish'; // C27:
 import { chartOrder, type AgentTeam, type AgentTeamConfig, type TeamMember } from '../../shared/agent-teams';
 import type { Agent, AgentConfig, AgentToolConfig, CredentialRef } from '../../shared/agents';
+import { isNodeKnowledge } from '../../shared/agents';
 import type { TemplateBundle, TemplateCredentialSlot, TemplateFace, TemplateTeamSummary } from '../../shared/templates';
 import type { Workflow, WorkflowNode } from '../../shared/types';
 import { agentTeamStore, issuesOf } from '../agent-teams/store';
 import { agentStore, configOf } from '../agents/store';
 import { credentials as vault } from '../credentials/vault';
 import { registry } from '../plugins/registry';
+import { HttpError } from '../errors';
 
 /** Agents one template may hold: the team's members and whoever they delegate to. */
 export const MAX_BUNDLE_AGENTS = 30;
 
-export class BundleError extends Error {
+export class BundleError extends HttpError {
+  static readonly errorName: string = 'BundleError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 
@@ -64,6 +69,7 @@ export function visitAgentCredentials(config: AgentConfig, visit: Visit) {
     const where = `${who} (${'name' in tool ? tool.name : tool.type})`;
     if (tool.type === 'node') visitMap(tool, (key) => qualify(tool.nodeType, key), where, visit);
     else if (tool.type === 'mcp' || tool.type === 'a2a') visitMap(tool, (key) => qualify('core.x', key), where, visit);
+    else if (tool.type === 'knowledge' && isNodeKnowledge(tool)) visitMap(tool, (key) => qualify(tool.nodeType, key), where, visit);
     else if (tool.type === 'knowledge') {
       if (tool.credential) {
         const next = visit(tool.credential, { type: typeOf(tool.credential, 'core.postgres'), optional: false, where });
@@ -218,7 +224,7 @@ export function createFromBundle(bundle: TemplateBundle, picks: Record<string, P
         return [tool];
       });
       const current = agentStore.saveDraft(created[i].id, { tools }) ?? created[i];
-      created[i] = source.published ? (agentStore.publish(current.id) ?? current) : current;
+      created[i] = source.published ? (publishAndTrust(current.id, currentPrincipal()?.user)?.agent ?? current) : current;
     });
 
     const teamConfig = structuredClone(bundle.team);

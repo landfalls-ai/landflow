@@ -6,8 +6,10 @@ import type { LanguageModel } from '@landflow/engine';
 import type { AgentModel, ModelOption, ModelProvider } from '../../shared/agents';
 import { credentials } from '../credentials/vault';
 import { anthropicModel, ollamaModel, openAiConnection, openAiModel, openAiModels } from '../nodes/models';
+import { ollamaUrl } from '../config';
+import { gatewayModelOptions } from '../llm-gateway/models';
+import { isGatewayCredential } from '../llm-gateway/settings';
 
-export const OLLAMA_URL = (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
 
 const ANTHROPIC_MODELS: ModelOption[] = [
   { provider: 'anthropic', model: 'claude-opus-5-5', label: 'Claude Opus 5.5', description: 'Best for agentic work' },
@@ -26,14 +28,14 @@ export async function agentModel(config: AgentModel | undefined): Promise<Langua
       const data = config.credential ? await credentials.dataWithSecrets(config.credential, 'core.anthropicApi') : undefined;
       const apiKey = typeof data?.apiKey === 'string' ? data.apiKey.trim() : '';
       const baseUrl = typeof data?.baseUrl === 'string' ? data.baseUrl.trim() : '';
-      return anthropicModel({ model: config.model, effort: 'medium', maxTokens: 16_000, fallback: true, promptCache: true, ...(apiKey && { apiKey, ...(baseUrl && { baseUrl }) }), ...(config.credential?.id && { credentialId: config.credential.id }) });
+      return anthropicModel({ model: config.model, effort: 'medium', maxTokens: 16_000, fallback: true, promptCache: true, ...(apiKey && { apiKey, ...(baseUrl && { baseUrl }) }), ...(isGatewayCredential(data) && { gateway: 'litellm' as const }), ...(config.credential?.id && { credentialId: config.credential.id }) });
     }
     case 'openai': {
       if (!config.credential) throw new Error('Choose an OpenAI API credential for this agent’s model');
       return openAiModel(openAiConnection(await credentials.dataWithSecrets(config.credential, 'core.openAiApi'), config.credential.id), { model: config.model, ...(temperature !== undefined && { temperature }) });
     }
     case 'ollama':
-      return ollamaModel({ baseUrl: config.baseUrl?.trim() || OLLAMA_URL, model: config.model, ...(temperature !== undefined && { temperature }) });
+      return ollamaModel({ baseUrl: config.baseUrl?.trim() || ollamaUrl(), model: config.model, ...(temperature !== undefined && { temperature }) });
     default:
       throw new Error(`Unknown model provider "${(config as { provider: string }).provider}"`);
   }
@@ -41,22 +43,32 @@ export async function agentModel(config: AgentModel | undefined): Promise<Langua
 
 /** Models for the builder's picker. */
 export async function modelOptions(provider: ModelProvider, options: { credentialId?: string; baseUrl?: string }): Promise<ModelOption[]> {
-  if (provider === 'anthropic') return ANTHROPIC_MODELS;
+  if (provider === 'anthropic') {
+    // A LiteLLM gateway serves its own models; a normal Anthropic credential has the fixed list.
+    if (options.credentialId) {
+      const data = await credentials.dataWithSecrets({ id: options.credentialId, name: options.credentialId }, 'core.anthropicApi').catch(() => undefined);
+      if (data && isGatewayCredential(data)) return gatewayModelOptions({ baseUrl: String(data.baseUrl ?? ''), ...(typeof data.apiKey === 'string' && data.apiKey.trim() && { apiKey: data.apiKey.trim() }) }, provider);
+    }
+    return ANTHROPIC_MODELS;
+  }
   if (provider === 'openai') {
     if (!options.credentialId) return [];
-    const connection = openAiConnection(await credentials.dataWithSecrets({ id: options.credentialId, name: options.credentialId }, 'core.openAiApi'));
+    const data = await credentials.dataWithSecrets({ id: options.credentialId, name: options.credentialId }, 'core.openAiApi');
+    if (isGatewayCredential(data)) return gatewayModelOptions({ baseUrl: String(data.baseUrl ?? ''), ...(typeof data.apiKey === 'string' && data.apiKey.trim() && { apiKey: data.apiKey.trim() }) }, provider);
+    const connection = openAiConnection(data);
     const models = await openAiModels(connection);
     return models
       .filter((m) => !NOT_CHAT.test(m.id))
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((m) => ({ provider, model: m.id, label: m.id, description: `${connection.label}${m.owned_by ? ` · ${m.owned_by}` : ''}` }));
   }
-  const base = (options.baseUrl?.trim() || OLLAMA_URL).replace(/\/+$/, '');
+  const base = (options.baseUrl?.trim() || ollamaUrl()).replace(/\/+$/, '');
   const response = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(3_000) });
   if (!response.ok) throw new Error(`Ollama at ${base} answered ${response.status}`);
   const data = (await response.json()) as { models: Array<{ name: string; details?: { parameter_size?: string }; capabilities?: string[] }> };
   return data.models
-    .filter((m) => !NOT_CHAT.test(m.name) && (!m.capabilities || m.capabilities.includes('completion')))
+    // Ollama's own `capabilities` say whether a model chats; the name regex is the fallback for a server that does not send them.
+    .filter((m) => (m.capabilities ? m.capabilities.includes('completion') : !NOT_CHAT.test(m.name)))
     .map((m) => ({
       provider,
       model: m.name,

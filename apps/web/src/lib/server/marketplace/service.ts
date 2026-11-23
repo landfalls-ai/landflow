@@ -4,7 +4,7 @@
  * plugin's skills attached), library skills and, for Landflow node plugins, a supervised process;
  * it records exactly what it created so uninstall removes that and nothing else.
  */
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import type {
@@ -22,23 +22,29 @@ import type {
   MarketplaceFlowView,
   MarketplaceLocation,
   MarketplaceSummary,
+  NodePluginManifest,
   PluginDetail,
   ResolvedSource,
 } from '../../shared/marketplace';
 import type { KagentPlugin } from '../../shared/agents';
 import { flowLink } from '../../shared/marketplace';
 import { agentStore } from '../agents/store';
+import { currentPrincipal } from '../auth/guard';
+import { pluginSubject, pluginTrust, pluginTrustHash } from '../trust/plugins'; // C27:
+import { approve } from '../trust/store'; // C27:
 import { onConfigChanged } from '../config-store';
 import { clusterActive, clusterState } from '../cluster/state';
 import { registry } from '../plugins/registry';
 import { logger } from '../telemetry';
 import { traceMarketplace } from '../telemetry/marketplace';
 import { agentTeamStore } from '../agent-teams/store';
+import { singleton } from '../singleton';
 import { agentFromClaude, skillFromClaude, titleCase } from './map';
 import { commandLine, contentHash, downloadPlugin, freePort, nodePlugins, portFree, readInstallMarker, writeInstallMarker, type SupervisedPlugin } from './node-plugins';
 import { importTemplate, previewTemplate } from '../templates';
 import { localTemplates } from '../templates/store';
-import { loadFlows, loadPlugin, pool, readFlow, type MarketplaceEntry } from './plugin';
+import { loadFlows, loadPlugin, nodeManifestFromDir, pool, readFlow, type MarketplaceEntry } from './plugin';
+import { HttpError } from '../errors';
 import { clearTreeCache, FetchError, fetchJson, fetchLimited, readerFor } from './reader';
 import { locationLabel, parseMarketplaceInput, resolveSource, sourceLabel } from './sources';
 import { marketplaceStore, PRESETS, type StoredMarketplace } from './store';
@@ -48,14 +54,33 @@ const DETAIL_TTL_MS = 10 * 60_000;
 /** Explore reads every plugin's files in a marketplace this small (and only the Landflow ones in a larger one). */
 const EXPLORE_READ_ALL = 25;
 
-export class MarketplaceError extends Error {
-  constructor(
-    message: string,
-    readonly status = 400,
-    readonly body?: Record<string, unknown>,
-  ) {
-    super(message);
+/** A marketplace request the caller can fix or retry; `body` (extra response fields such as `missing`) travels as the error's details. */
+export class MarketplaceError extends HttpError {
+  static readonly errorName: string = 'MarketplaceError';
+  constructor(message: string, status = 400, readonly body?: Record<string, unknown>) {
+    super(message, status, { code: 'marketplace_error', ...(body && { details: body }) });
   }
+}
+
+/** sources.ts throws plain Errors for input it refuses (a bad address, a path with `..`): the caller's fault, so a 4xx. */
+function refusing<T>(status: number, fn: () => T): T {
+  try {
+    return fn();
+  } catch (caught) {
+    if (caught instanceof HttpError || !(caught instanceof Error)) throw caught;
+    throw new MarketplaceError(caught.message, status, undefined);
+  }
+}
+
+/**
+ * What loadPlugin threw, as the route answers it. Bad input is a FetchError already (an HttpError: path escapes, sizes,
+ * upstream answers) or a warning in the result; a local plugin whose directory or file is gone is the marketplace's
+ * fault, a 422 that does not show the host path; anything else (a TypeError, another filesystem error) stays a plain
+ * Error, so handler() answers the generic 500 and logs it.
+ */
+function pluginReadError(caught: unknown): unknown {
+  if (caught instanceof Error && (caught as NodeJS.ErrnoException).code === 'ENOENT') return new MarketplaceError('A file this plugin lists is missing from its marketplace', 422);
+  return caught;
 }
 
 const sameLocation = (a: MarketplaceLocation, b: MarketplaceLocation) =>
@@ -143,8 +168,22 @@ function linkExported(created: Array<{ file: ClaudeAgentFile; id: string }>, tea
     if (!agent?.tools.some((t) => t.type === 'agent' && bySource.has(t.agentId))) continue;
     agentStore.saveDraft(id, { tools: agent.tools.map((t) => (t.type === 'agent' && bySource.has(t.agentId) ? { ...t, agentId: bySource.get(t.agentId)! } : t)) });
   }
-  if (!team) return;
   const bySlug = new Map(created.map((c) => [c.file.path.split('/').pop()!.replace(/\.md$/i, ''), c.id] as const));
+  // A project export points sub-agent tools at their sibling by slug.
+  for (const { id } of created) {
+    const agent = agentStore.get(id);
+    const slugged = (t: { type: string }) => t.type === 'agent' && typeof (t as { agentSlug?: unknown }).agentSlug === 'string';
+    if (!agent?.tools.some(slugged)) continue;
+    agentStore.saveDraft(id, {
+      tools: agent.tools.flatMap((t) => {
+        if (!slugged(t)) return [t];
+        const { agentSlug, ...rest } = t as typeof t & { agentSlug: string };
+        const target = bySlug.get(agentSlug);
+        return target ? [{ ...rest, agentId: target }] : [];
+      }),
+    });
+  }
+  if (!team) return;
   const members = team.team.members.flatMap((member) => {
     if (member.kind !== 'agent') return [member];
     const agentId = typeof member.agent === 'string' ? bySlug.get(member.agent) : undefined;
@@ -154,6 +193,20 @@ function linkExported(created: Array<{ file: ClaudeAgentFile; id: string }>, tea
   });
   const made = agentTeamStore.create({ ...team.team, members: members as never });
   teams.push({ id: made.id, name: made.draft.name });
+}
+
+/** C27: installs of one plugin key run one after another (the move into place and the approval are not safe to interleave). */
+const installLocks = new Map<string, Promise<unknown>>();
+async function withInstallLock<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const before = installLocks.get(key) ?? Promise.resolve();
+  const run = before.then(work, work);
+  const settled = run.catch(() => undefined);
+  installLocks.set(key, settled);
+  try {
+    return await run;
+  } finally {
+    if (installLocks.get(key) === settled) installLocks.delete(key);
+  }
 }
 
 export const marketplace = {
@@ -166,7 +219,7 @@ export const marketplace = {
   },
 
   async add(input: string): Promise<MarketplaceSummary> {
-    const location = parseMarketplaceInput(input);
+    const location = refusing(400, () => parseMarketplaceInput(input));
     const existing = marketplaceStore.marketplaces().find((m) => sameLocation(m.location, location));
     if (existing) throw new MarketplaceError(`Already added as “${summarize(existing).name}”`, 409, { marketplace: summarize(existing) });
     const preset = PRESETS.find((p) => sameLocation(p.location, location));
@@ -209,7 +262,7 @@ export const marketplace = {
     }
     const installed = new Set(marketplaceStore.installed().map((p) => p.id));
     const plugins: CatalogPlugin[] = (m.entries ?? []).map((entry) => {
-      const source = resolveSource(entry.source, m.location, m.pluginRoot);
+      const source = refusing(422, () => resolveSource(entry.source, m.location, m.pluginRoot));
       const author = entry.author as { name?: unknown } | string | undefined;
       const keywords = [...(Array.isArray(entry.keywords) ? entry.keywords : []), ...(Array.isArray(entry.tags) ? entry.tags : [])].filter((k): k is string => typeof k === 'string');
       return {
@@ -317,10 +370,10 @@ export const marketplace = {
     const m = getMarketplace(id);
     const entry = m.entries?.find((e) => e.name === name);
     if (!plugin || !entry) throw new MarketplaceError(`No plugin “${name}” in this marketplace`, 404);
-    const source = resolveSource(entry.source, m.location, m.pluginRoot);
+    const source = refusing(422, () => resolveSource(entry.source, m.location, m.pluginRoot));
     if (source.kind === 'unsupported') throw new MarketplaceError(`Can’t install “${name}”: ${source.reason}`, 422);
     const fromRoot = typeof entry.source === 'string' && (entry.source === '.' || entry.source === './');
-    const loaded = await traceMarketplace('detail', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name }, () => loadPlugin(readerFor(source), entry, fromRoot));
+    const loaded = await traceMarketplace('detail', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name }, () => loadPlugin(readerFor(source), entry, fromRoot).catch((caught) => Promise.reject(pluginReadError(caught))));
     const flows = loaded.flows.map((flow) => ({ ...flow, needs: [], link: flowLink(marketplaceName(m), name, flow.path, shareSource(m.location)) }));
     const detail: PluginDetail = { marketplaceId: id, plugin, source, ...loaded, flows };
     details.set(key, { at: Date.now(), detail });
@@ -339,6 +392,9 @@ export const marketplace = {
       file = await readFlow(readerFor(detail.source), path);
     } catch (error) {
       if (error instanceof FetchError) throw error;
+      const missing = pluginReadError(error);
+      if (missing !== error) throw missing;
+      // Not JSON, or not a template file: the flow's fault.
       throw new MarketplaceError(`${path}: ${(error as Error).message}`, 422);
     }
     const pluginKey = installedId(name, m);
@@ -355,7 +411,11 @@ export const marketplace = {
     };
   },
 
-  async install(id: string, name: string, options: { confirm?: boolean } = {}): Promise<InstallResult | InstallConfirmation> {
+  /**
+   * `confirm`: the person said yes to the confirmation. `hash` (C27): the files that confirmation showed; when the downloaded files hash
+   * to something else (and that is not an approved hash) the install is refused with 409, so a yes never covers files nobody saw.
+   */
+  async install(id: string, name: string, options: { confirm?: boolean; hash?: string } = {}): Promise<InstallResult | InstallConfirmation> {
     const m = getMarketplace(id);
     const pluginKey = installedId(name, m);
     if (marketplaceStore.installedOne(pluginKey)) throw new MarketplaceError(`${pluginKey} is already installed`, 409);
@@ -366,17 +426,60 @@ export const marketplace = {
       throw new MarketplaceError(`Nothing in “${name}” runs in Landflow yet${parts ? `: it only has ${parts}` : ''}`, 422, { unsupported: detail.unsupported });
     }
     const repository = sourceLabel(detail.source, undefined);
-    if (nodePlugin && !options.confirm) {
-      return {
-        needsConfirmation: true,
-        plugin: name,
-        repository,
-        ...(nodePlugin.install && { install: commandLine(nodePlugin.install) }),
-        command: commandLine(nodePlugin.start),
-        warning: `Installing “${name}” downloads code from ${repository} and runs it on this machine as the host’s user. Only install plugins you trust.`,
-      };
+    // C27: a node plugin is downloaded into a staging folder and hashed BEFORE anything is asked, so the confirmation names the files it
+    // approves. The folder is removed on every way out except the install, which moves it into place.
+    const subject = pluginSubject(marketplaceName(m), name);
+    const stagedDir = nodePlugin ? join(marketplaceStore.dir, 'staging', nanoid(12)) : undefined;
+    let staged: { hash: string; trustHash: string; manifest: NodePluginManifest; source: ResolvedSource } | undefined;
+    try {
+      if (nodePlugin && stagedDir) {
+        sweepStaging();
+        // A branch or tag is pinned to its commit, so queue mode's other processes download the very same files.
+        const downloadSource = await pinnedSource(detail.source);
+        await downloadPlugin(readerFor(downloadSource), stagedDir);
+        // What runs is read again from the downloaded files (plus the marketplace entry's block), not from the unpinned listing, and the
+        // approval covers the files AND that run recipe: a changed start command or environment is asked about even with the same files.
+        const entry = m.entries?.find((e) => e.name === name);
+        const manifest = nodeManifestFromDir(stagedDir, entry?.landflow);
+        if (!manifest) throw new MarketplaceError(`“${name}” has no valid node plugin manifest in the files that were downloaded`, 422);
+        const files = contentHash(stagedDir);
+        staged = { hash: files, trustHash: pluginTrustHash(files, manifest), manifest, source: downloadSource };
+        const trusted = pluginTrust(subject, staged.trustHash);
+        if (!trusted.approved) {
+          if (!options.confirm) {
+            const commit = downloadSource.kind === 'github' ? (downloadSource.sha ?? (/^[0-9a-f]{40}$/i.test(downloadSource.ref) ? downloadSource.ref : undefined)) : undefined;
+            return {
+              needsConfirmation: true,
+              plugin: name,
+              repository,
+              ...(staged.manifest.install && { install: commandLine(staged.manifest.install) }),
+              command: commandLine(staged.manifest.start),
+              warning: trusted.previous
+                ? `“${name}” changed since you approved it on ${trusted.previous.at.slice(0, 10)}. Installing downloads the new code from ${repository} and runs it on this machine as the host’s user. Only install plugins you trust.`
+                : `Installing “${name}” downloads code from ${repository} and runs it on this machine as the host’s user. Only install plugins you trust.`,
+              hash: staged.trustHash,
+              ...(commit && { commit }),
+              ...(trusted.previous && { changedSince: trusted.previous }),
+            };
+          }
+          if (options.hash && options.hash !== staged.trustHash) throw new MarketplaceError('The plugin changed while you were confirming. Look at what it is now before you install.', 409, { hash: staged.trustHash });
+        }
+      }
+      const prepared = staged && stagedDir ? { dir: stagedDir, ...staged, subject, previouslyApproved: pluginTrust(subject, staged.trustHash).approved } : undefined;
+      // One install of a plugin at a time in this process; the second finds it installed and is refused.
+      return await withInstallLock(pluginKey, async () => {
+        if (marketplaceStore.installedOne(pluginKey)) throw new MarketplaceError(`${pluginKey} is already installed`, 409);
+        return this.installConfirmed(id, name, detail, m, pluginKey, prepared);
+      });
+    } finally {
+      if (stagedDir) rmSync(stagedDir, { recursive: true, force: true });
     }
+  },
 
+  /** Not for callers: `install` after its confirmation and hash checks. */
+  async installConfirmed(id: string, name: string, detail: PluginDetail, m: StoredMarketplace, pluginKey: string, staged: { dir: string; hash: string; trustHash: string; manifest: NodePluginManifest; source: ResolvedSource; subject: string; previouslyApproved: boolean } | undefined): Promise<InstallResult> {
+    // The manifest that runs is the one read from the downloaded files and hashed with them.
+    const nodePlugin = staged?.manifest ?? detail.nodePlugin;
     return traceMarketplace('install', { 'landflow.marketplace.id': id, 'landflow.marketplace.plugin': name, 'landflow.marketplace.node_plugin': Boolean(nodePlugin) }, async () => {
       const createdAgents: Array<{ id: string; name: string }> = [];
       const createdFrom: Array<{ file: ClaudeAgentFile; id: string }> = [];
@@ -388,11 +491,11 @@ export const marketplace = {
       try {
         let nodeRecord: InstalledPlugin['nodePlugin'];
         if (nodePlugin && pluginDir) {
-          // The riskiest step first, so a failure leaves nothing else behind. A branch or tag is pinned to its commit, so
-          // queue mode's other processes download the very same files.
-          const downloadSource = await pinnedSource(detail.source);
-          await downloadPlugin(readerFor(downloadSource), pluginDir);
-          const hash = contentHash(pluginDir);
+          // The riskiest step first, so a failure leaves nothing else behind. The files are the ones that were hashed and confirmed (C27).
+          const { hash, source: downloadSource } = staged!;
+          rmSync(pluginDir, { recursive: true, force: true });
+          mkdirSync(join(pluginDir, '..'), { recursive: true });
+          renameSync(staged!.dir, pluginDir);
           const revision = `rev_${nanoid(10)}`;
           const spec = { key: pluginKey, pluginId: nodePlugin.id, dir: pluginDir, manifest: nodePlugin, revision };
           await nodePlugins.prepare(spec, logFile);
@@ -455,6 +558,8 @@ export const marketplace = {
           ...(nodeRecord && { nodePlugin: nodeRecord }),
         };
         marketplaceStore.saveInstalled(installed);
+        // C27: the yes is recorded against the hash that ran (a reinstall of an approved hash records nothing new).
+        if (staged && !staged.previouslyApproved) approve(currentPrincipal()?.user, 'marketplace-plugin', staged.subject, staged.trustHash, undefined, `installed from ${sourceLabel(detail.source, undefined)}`);
         if (nodeRecord) announceNodePlugins();
         logger.info('marketplace plugin installed', {
           'landflow.marketplace.plugin': pluginKey,
@@ -575,6 +680,19 @@ async function pinnedSource(source: ResolvedSource): Promise<ResolvedSource> {
   }
 }
 
+/** Staging folders an install left behind (the process died mid-download) go after an hour. */
+function sweepStaging() {
+  const root = join(marketplaceStore.dir, 'staging');
+  try {
+    for (const entry of readdirSync(root)) {
+      const path = join(root, entry);
+      if (Date.now() - statSync(path).mtimeMs > 3_600_000) rmSync(path, { recursive: true, force: true });
+    }
+  } catch {
+    // No staging folder yet.
+  }
+}
+
 /** Queue mode: tell the other processes the installed node plugins changed (they sync theirs). */
 function announceNodePlugins() {
   if (!clusterActive()) return;
@@ -607,8 +725,8 @@ async function stopOne(key: string) {
   if (running && running.announce === false) for (const endpoint of localEndpoints(running)) registry.removeEndpoint(endpoint);
 }
 
-let syncing: Promise<void> | undefined;
-let syncAgain = false;
+/** The sync guard, shared by every module graph: a second graph's sync must wait for (and re-run after) the first. */
+const syncGuard = () => singleton('marketplace-sync', () => ({ running: undefined as Promise<void> | undefined, again: false }));
 
 /**
  * Queue mode: make this process run exactly the installed node plugins. A plugin is started from its directory when this
@@ -618,17 +736,18 @@ let syncAgain = false;
  * replaced by another install (an update), are stopped.
  */
 async function syncNodePlugins(): Promise<void> {
-  if (syncing) {
-    syncAgain = true;
-    return syncing;
+  const guard = syncGuard();
+  if (guard.running) {
+    guard.again = true;
+    return guard.running;
   }
-  syncing = (async () => {
+  guard.running = (async () => {
     do {
-      syncAgain = false;
+      guard.again = false;
       await syncOnce().catch((error: Error) => logger.warn('marketplace: syncing node plugins failed', { error: error.message }));
-    } while (syncAgain);
-  })().finally(() => (syncing = undefined));
-  return syncing;
+    } while (guard.again);
+  })().finally(() => (guard.running = undefined));
+  return guard.running;
 }
 
 async function syncOnce() {
@@ -679,7 +798,7 @@ async function startHere(installed: InstalledPlugin) {
       const hash = contentHash(dir);
       if (record.contentHash && hash !== record.contentHash) {
         rmSync(dir, { recursive: true, force: true });
-        throw new Error(`its source changed since it was installed (${hash.slice(0, 19)}… instead of ${record.contentHash.slice(0, 19)}…): reinstall it`);
+        throw new MarketplaceError(`its source changed since it was installed (${hash.slice(0, 19)}… instead of ${record.contentHash.slice(0, 19)}…): reinstall it`, 409);
       }
       await nodePlugins.prepare({ key: installed.id, pluginId: record.pluginId, dir, manifest: record.manifest }, logFile);
       writeInstallMarker(dir, { key: installed.id, revision, contentHash: hash });

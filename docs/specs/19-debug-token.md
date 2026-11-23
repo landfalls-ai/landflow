@@ -27,7 +27,7 @@ instance access token, the identity provider) can mistake it for theirs, and it 
 
 ## Debug access dialog (built 2026-11-07)
 
-The Run Trace page (`/runs/:executionId`, `components/run-trace/run-page.tsx`) has a **Debug access** button in its header that opens
+The Run Trace page (`/runs/:executionId`, `components/run-trace/run-page.tsx`) has a **Debug access** item in its header's **⋯** menu that opens
 `components/run-trace/debug-access.tsx`: a bottom sheet on a phone, a centred dialog from 768 px, one column either way. It uses the three routes
 above and adds none:
 
@@ -121,7 +121,7 @@ is a separate scope, behind an owner setting that is **off by default**.
 |---|---|
 | Setting | The "Local node override" card of the Debug access dialog on the Run Trace page (`GET/PATCH /api/settings/debug-node`, owners only to change). `enabled` (default false) and `allowedHosts`. While off, no `runs:debug` token can be minted and none works (also checked on every use, so turning it off kills live tokens). |
 | Scope | `runs:debug`, alone: minting it with `executions:read` or `trace:read` is a 400 ("mint a separate token"). There is no setting that lifts this. |
-| Binding | One execution and one **node** (name or id, which must have run in that execution), fixed at mint (`debug_tokens.node_id`, `node_name`, migration 2046). Another node answers 403, another execution 404. |
+| Binding | One execution and one **node** (name or id, which must have run in that execution), fixed at mint (`debug_tokens.node_id`, `node_name`, migration 2938). Another node answers 403, another execution 404. |
 | Who mints | Someone who can **run** the workflow, not only read it (a viewer gets 403). The token stops working when the minter is deactivated or loses that access. |
 | Lifetime and use | 15 minutes by default, 1 hour at most. **Single use**: the use is spent by inserting the token id in `debug_node_runs` (primary key, so two racing calls cannot both pass). A refusal (wrong node, URL not allowed) does not spend it; a plugin that fails or is unreachable does. |
 | Input | Only the input of the node's **recorded** run (`runData[node].at(-1).inputs`) and its parameters resolved against it. The caller sends no input of its own. |

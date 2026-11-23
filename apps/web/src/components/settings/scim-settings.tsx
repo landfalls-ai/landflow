@@ -14,13 +14,18 @@ import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
+import { HelpTip } from '@/components/ui/help-tip';
 import { Input, SectionLabel } from '@/components/ui/inputs';
+import { keyLimits } from './api-keys-settings';
+import { KeyLimitFields, useKeyLimits } from './key-limit-fields';
 
 const code = (text: string) => <code className="font-mono text-[12px] text-t1">{text}</code>;
 
 export function ScimSettings({ scim: initial }: { scim: ScimSecurityView }) {
   const [scim, setScim] = useState(initial);
   const [label, setLabel] = useState('');
+  // The same two limits as an API key's, fixed at creation.
+  const limits = useKeyLimits();
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ token: string; label: string }>();
   const [confirm, setConfirm] = useState<string>();
@@ -34,9 +39,11 @@ export function ScimSettings({ scim: initial }: { scim: ScimSecurityView }) {
     event.preventDefault();
     setCreating(true);
     try {
-      const result = await api<{ key: ApiKeyView; token: string }>('/api/api-keys', { method: 'POST', json: { label: label.trim() || 'SCIM', scopes: ['scim'] } });
+      const result = await api<{ key: ApiKeyView; token: string }>('/api/api-keys', { method: 'POST', json: { label: label.trim() || 'SCIM', scopes: ['scim'], ...limits.body } });
       setCreated({ token: result.token, label: result.key.label });
       setLabel('');
+      limits.setAddresses('');
+      limits.setCap('');
       await reload();
     } catch (e) {
       toast.error((e as Error).message);
@@ -69,8 +76,10 @@ export function ScimSettings({ scim: initial }: { scim: ScimSecurityView }) {
         </span>
       </div>
       <p className="text-[13px] text-t2">
-        Okta, Entra ID and other identity providers create, update and deactivate users here, and push groups that become project memberships or roles. Give them the base URL and a SCIM token
-        (HTTP header bearer token). Deactivated users are signed out and can’t sign in.
+        Your identity provider creates, updates and deactivates users here.
+        <HelpTip label="How provisioning works" className="ml-1 align-middle">
+          Okta, Entra ID and other identity providers also push groups that become project memberships or roles. Give them the base URL and a SCIM token (HTTP header bearer token). Deactivated users are signed out and can’t sign in.
+        </HelpTip>
       </p>
       <div className="flex items-center gap-1 rounded-[10px] border border-hair bg-wl py-1 pl-3 pr-1">
         <span className="shrink-0 text-[12px] text-t3">Base URL</span>
@@ -98,11 +107,14 @@ export function ScimSettings({ scim: initial }: { scim: ScimSecurityView }) {
         </div>
       )}
 
-      <form onSubmit={create} className="flex flex-wrap items-center gap-2">
-        <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Okta provisioning" maxLength={100} className="min-w-[200px] flex-1" aria-label="Token name" />
-        <Button type="submit" variant="primary" loading={creating}>
-          <Plus className="size-3.5" /> New SCIM token
-        </Button>
+      <form onSubmit={create} className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Okta provisioning" maxLength={100} className="min-w-[200px] flex-1" aria-label="Token name" />
+          <Button type="submit" variant="primary" loading={creating} disabled={limits.invalid}>
+            <Plus className="size-3.5" /> New SCIM token
+          </Button>
+        </div>
+        <KeyLimitFields limits={limits} addressUnverified={scim.addressUnverified} />
       </form>
 
       {scim.tokens.length > 0 && (
@@ -114,9 +126,11 @@ export function ScimSettings({ scim: initial }: { scim: ScimSecurityView }) {
                 <div className="flex items-center gap-1.5 text-[13px] font-semibold text-t1">
                   <span className="truncate">{key.label}</span>
                   <code className="font-mono text-[11px] font-normal text-t3">lf_…{key.hint}</code>
+                  {key.usedUp && <Badge tone="danger">used up</Badge>}
                 </div>
                 <div className="text-[11px] text-t3">
                   {key.userName} · created {timeAgo(key.createdAt)} · {key.lastUsedAt ? `last used ${timeAgo(key.lastUsedAt)}` : 'never used'}
+                  {keyLimits(key).length > 0 && ` · ${keyLimits(key).join(' · ')}`}
                 </div>
               </div>
               {confirm === key.id ? (
@@ -150,7 +164,10 @@ export function ScimSettings({ scim: initial }: { scim: ScimSecurityView }) {
           </span>
         ) : (
           <span className="text-t2">
-            None: a group named like a team project makes its members editors there. Map groups with {code('Landflow Admins=role:admin,Data Team=project:Data:editor')}.
+            None.
+            <HelpTip label="How groups are mapped" className="ml-1 align-middle">
+              A group named like a team project makes its members editors there. Map groups with {code('Landflow Admins=role:admin,Data Team=project:Data:editor')}.
+            </HelpTip>
           </span>
         )}
       </div>

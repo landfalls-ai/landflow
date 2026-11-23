@@ -4,16 +4,38 @@
  * ops to the canvas with an undo, after-run suggestions cached per run, and
  * Spotlight's conversation, kept while the editor is open.
  */
+import { isPhone } from '@/lib/client/use-phone';
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner';
+import { useEditLock } from './edit-lock'; // wave ag4 carryover: a read-only canvas applies nothing
 import { create } from 'zustand';
 import { api, streamEvents } from '@/lib/client/api';
-import { applyOps, digestRun, type AssistantOp, type DescriptorLookup, type RunDigest } from '@/lib/shared/assistant-ops';
+import { applyOps, digestRun, type AssistantOp, type DescriptorLookup, type NewAgentSpec, type RunDigest } from '@/lib/shared/assistant-ops';
 import type { AgentTeamConfig } from '@/lib/shared/agent-teams';
 import { teamFromLead } from '@/lib/shared/turn-into-team';
+import type { ActivityKind, ActivityStep } from '@/lib/shared/activity';
 import type { NodeRun } from '@/lib/shared/types';
+import type { MentionRef } from '@/lib/shared/mentions';
+import type { AgentCard } from '@/lib/shared/agent-card'; // SB16:
+import type { AgentFixEvent } from '@/lib/shared/agent-fix'; // AG20:
+import { askedLine, type AskEvent, type AskPart } from '@/lib/shared/spotlight-wire'; // SB11: (askedLine: SB09 × SB11)
+import type { ReplyInfo } from '../ui/chat';
+import type { CredentialNeedFields, CredentialOfferEvent } from '@/lib/shared/spotlight-wire'; // SB12:
 import { useEditor } from './store';
+import { pickedModel } from './spotlight-model'; // SB19:
+import { emptyStored, withEarlier, type Stored } from './spotlight-history';
+
+import { saveAgentFor, takeBackAgents, type AgentPlace } from './new-agent'; // SB18:
+import type { AgentPublish, AgentSmoke } from '@/lib/shared/agent-card'; // SB18: (AG05: publish)
 import { saveTeamFor } from './turn-into-team';
+import { defaultCollapsed } from './spotlight/states';
+import type { SpotlightScope } from '@/lib/shared/spotlight-scope'; // SB07:
+import type { PlanPart } from './spotlight/plan-part'; // SB13:
+import type { PublishOffer } from '@/lib/shared/agent-versions'; // AG21:
+import type { PublishCardState } from './spotlight/publish-part'; // AG21:
+import type { DraftSummary } from '@/lib/shared/draft-summary'; // SB15:
+
+const freshKept = (): { id?: string; stored: Stored } => ({ stored: emptyStored() });
 
 export type SuggestionKind = 'fix' | 'param' | 'data' | 'next';
 export type ChangeKind = SuggestionKind | 'proposal';
@@ -52,7 +74,38 @@ export function sendFeedback(kind: ChangeKind, action: 'applied' | 'dismissed', 
  * with one undo. Ops that no longer fit (the workflow changed since they were
  * proposed) are skipped. Returns false when nothing applied.
  */
-export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKind; nodeType?: string }>, label: string): boolean {
+/** The flow being drafted on an empty canvas: one request, which Stop, New conversation and another workflow cancel. */
+export const draft: { request?: AbortController } = {};
+
+/** Undo for a change Spotlight applied by itself, by proposal id: its row's Undo button (a phone has no ⌘Z). */
+export const undos = new Map<string, () => void>();
+
+/** AG17: a `changeAgent` op that applied: the agent to change and what to change, in the person's words (Spotlight's change card for that agent). */
+export interface AgentChange {
+  agentId?: string;
+  /** A Run a Team node's team: the card changes its lead. */
+  teamId?: string;
+  change: string;
+  nodeId?: string;
+}
+
+/** The window event an applied changeAgent op raises (`detail`: an AgentChange); Spotlight's card (spotlight/agent-ask.ts) listens, so this module imports nothing of it. */
+export const AGENT_CHANGE_ASKED = 'landflow:agent-change-asked';
+const handOver = (change: AgentChange) => {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(AGENT_CHANGE_ASKED, { detail: change }));
+};
+
+export function applyChanges(
+  changes: Array<{ ops: AssistantOp[]; kind: ChangeKind; nodeType?: string }>,
+  label: string,
+  options: { publishAgents?: boolean; quiet?: boolean; onApplied?: (applied: { undo: () => void; skipped: string[]; agentChanges?: AgentChange[]; /** Wave ag5 fix pass: the ids of the nodes these changes created (what a fix session may later remove without a click). */ added?: string[] }) => void } = {},
+): boolean {
+  // Wave ag4 carryover (the live pass's F3): another tab holds the edit lock, so this canvas is read-only and its editing
+  // actions do nothing: refuse, and never mark a proposal "Applied" that changed nothing.
+  if (useEditLock.getState().readOnly) {
+    toast.error('Couldn’t apply the change', { description: 'This workflow is open for editing in another tab: read-only here. Use Edit here, then apply it again.' });
+    return false;
+  }
   const state = useEditor.getState();
   const lookup = editorLookup();
   let workflow = state.toWorkflow();
@@ -62,11 +115,32 @@ export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKi
   let count = 0;
   /** Teams to save once the graph is swapped: Spotlight's turnIntoTeam ops, read from the graph as it was. */
   const teams: Array<{ nodeId: string; config: AgentTeamConfig }> = [];
+  /** Agents to save once the graph is swapped: Spotlight's newAgent ops, each with the Run an Agent node it added. */
+  const agents: Array<{ nodeId: string; spec: NewAgentSpec; place: AgentPlace }> = [];
+  /** AG17: Spotlight's changeAgent ops: nothing changes in the graph; the agent's change card is the next step. */
+  const agentChanges: AgentChange[] = [];
   for (const change of changes) {
     const before = workflow;
     const result = applyOps(workflow, change.ops, lookup);
     workflow = result.workflow;
     for (const op of result.applied) {
+      if (op.op === 'addNode' && op.newAgent) {
+        const node = result.workflow.nodes.find((n) => n.name === op.name && result.added.includes(n.id));
+        if (node) {
+          // Where it sits, by the steps either side of it, for the architect's request.
+          const nameOf = (id: string) => result.workflow.nodes.find((n) => n.id === id)?.name;
+          const main = result.workflow.connections.filter((c) => c.type === 'main');
+          const after = nameOf(main.find((c) => c.target === node.id)?.source ?? '');
+          const before = nameOf(main.find((c) => c.source === node.id)?.target ?? '');
+          agents.push({ nodeId: node.id, spec: op.newAgent, place: { workflow: result.workflow.name, ...(after && { after }), ...(before && { before }) } });
+        }
+        continue;
+      }
+      if (op.op === 'changeAgent' && (op.agentId || op.teamId)) {
+        const node = op.node ? result.workflow.nodes.find((n) => n.name === op.node || n.id === op.node) : undefined;
+        agentChanges.push({ ...(op.agentId && { agentId: op.agentId }), ...(op.teamId && { teamId: op.teamId }), change: op.change, ...(node && { nodeId: node.id }) });
+        continue;
+      }
       if (op.op !== 'turnIntoTeam') continue;
       const lead = before.nodes.find((n) => n.name === op.node || n.id === op.node);
       const made = lead && teamFromLead(before, lead.id);
@@ -84,13 +158,36 @@ export function applyChanges(changes: Array<{ ops: AssistantOp[]; kind: ChangeKi
     toast.error('Couldn’t apply the change', { description: dropped[0] ?? 'Nothing to change.' });
     return false;
   }
+  // AG17: only changeAgent ops: the graph stays as it is; Spotlight shows each agent's change card.
+  if (agentChanges.length && agentChanges.length === count) {
+    for (const change of agentChanges) handOver(change);
+    options.onApplied?.({ undo: () => {}, skipped: dropped, agentChanges });
+    return true;
+  }
   // Select what changed: the last node added, else the node edited.
   const focusId = added.at(-1) ?? edited;
-  const undo = state.replaceGraph(workflow, focusId ? { id: focusId, added: added.includes(focusId) } : undefined);
+  // Spotlight's own applies leave the selection alone: selecting would hide its chip and put the node in the composer.
+  const undoGraph = state.replaceGraph(workflow, focusId && !options.quiet ? { id: focusId, added: added.includes(focusId) } : undefined);
+  // SB18: Undo also takes back the agents this change made, when nothing else uses them (the row says which).
+  const madeFor = agents.map((a) => a.nodeId);
+  const workflowOf = useEditor.getState().workflowId;
+  const undo = madeFor.length
+    ? () => {
+        undoGraph();
+        const gone = madeFor.filter((id) => !useEditor.getState().nodes.some((n) => n.id === id));
+        if (gone.length) void takeBackAgents(gone, workflowOf);
+      }
+    : undoGraph;
   for (const { nodeId, config } of teams) void saveTeamFor(nodeId, config);
+  for (const { nodeId, spec, place } of agents) void saveAgentFor(nodeId, spec, place, { publish: options.publishAgents });
+  for (const change of agentChanges) handOver(change); // AG17:
+  options.onApplied?.({ undo, skipped: dropped, added: [...added], ...(agentChanges.length && { agentChanges }) });
+  // Spotlight's own applies (autonomous mode, a test-and-fix session) are rows in its timeline, each with Undo.
+  if (options.quiet) return true;
   const skipped = dropped.length ? `Skipped ${dropped.length}: ${dropped[0]}` : undefined;
   // Long enough to look at the canvas before deciding to undo.
-  toast.success(label, { description: skipped, action: { label: 'Undo', onClick: undo }, duration: 15_000 });
+  // A phone's toast sits over the run bar: shorter there.
+  toast.success(label, { description: skipped, action: { label: 'Undo', onClick: undo }, duration: isPhone() ? 5_000 : 15_000 });
   return true;
 }
 
@@ -163,7 +260,7 @@ export const useSuggestions = create<SuggestionsState>((set, get) => ({
     const update = (patch: Partial<SuggestionEntry>) =>
       set((s) => ({ entries: { ...s.entries, [key]: { ...(s.entries[key] ?? { status: 'loading', handled: {} }), ...patch } } }));
     update({ status: 'loading', error: undefined, handled: {} });
-    api<SuggestResult>('/api/assistant/suggest', { method: 'POST', json: { workflow: editor.toWorkflow(), workflowId: editor.workflowId, nodeId, run: digestRun(run) } })
+    api<SuggestResult>('/api/assistant/suggest', { method: 'POST', json: { workflow: editor.toWorkflow(), workflowId: editor.workflowId, nodeId, run: digestRun(run), ...pickedModel() /* SB19 (IR-2): the session's pick, as the chat sends it */ } })
       .then((result) => update({ status: 'done', result }))
       .catch((e: Error) => update({ status: 'error', error: e.message }));
   },
@@ -201,7 +298,48 @@ export interface Proposal {
   ops: AssistantOp[];
   dropped: string[];
   warnings: string[];
-  state?: 'applied' | 'dismissed';
+  /** `stale`: kept from an earlier visit, and its ops no longer apply to the workflow (its card has no Apply). */
+  state?: 'applied' | 'dismissed' | 'undone' | 'stale';
+  /** Ops that no longer fit when it was applied. */
+  skipped?: number;
+}
+
+/**
+ * Something only the person can do before Spotlight tests on (docs/assistant.md#test-and-fix): pick a credential, pick
+ * an agent, add a trigger, or say a test may send for real. Its row has the button that does it and one that goes on.
+ */
+export interface Need extends CredentialNeedFields { // SB12:
+  what: 'credential' | 'agent' | 'trigger' | 'sends' | 'destination' | 'blocked' | 'address' | 'publish'; // SB03: SB18:
+  text: string;
+  /** `sends` and `destination`: where the test would send; the yes is kept for these (SB03). */
+  destinations?: string[];
+  /** `destination`: the fix whose change it was, to undo (SB03). */
+  fix?: { item: string; proposals: string[] };
+  /** `sends` and `destination`: every step the row names; a yes to an expression destination covers these only. */
+  nodes?: string[];
+  /** `sends` and `destination`: the once-yes keys of the expression destinations the row names (one yes covers these, for one run). */
+  once?: string[];
+  /** The node it is about, to open. */
+  node?: string;
+  /** The session's goal, to test on with. */
+  goal?: string;
+  state?: 'done' | 'dismissed';
+}
+
+/**
+ * How a test-and-fix session that didn't pass ended, as a card: why, in one line, and what to do next: open the node it
+ * stopped at, undo every fix it applied (back to the flow as it was before), or try again.
+ */
+export interface Outcome {
+  text: string;
+  /** The node it stopped at. */
+  node?: string;
+  goal?: string;
+  /** The fixes it applied, oldest first: undoing the oldest puts the flow back as it was before the session. */
+  fixes: Array<{ item: string; proposal: string }>;
+  /** The editor's edit count when it stopped (`edits` in ./store.ts): any edit since and Undo all is no longer offered. */
+  edits: number;
+  state?: 'undone';
 }
 
 export interface ToolActivity {
@@ -231,26 +369,161 @@ export type ReplyPart =
   | { kind: 'tool'; tool: ToolActivity }
   | { kind: 'proposal'; proposal: Proposal }
   | { kind: 'run'; run: TestRun }
-  | ({ kind: 'action' } & ReplyAction);
+  | { kind: 'needs'; need: Need }
+  | { kind: 'outcome'; outcome: Outcome }
+  | ({ kind: 'action' } & ReplyAction)
+  | AskPart // SB11: a question back with its choices
+  | { kind: 'plan'; plan: PlanPart } // SB13: the first draft's plan card
+  | { kind: 'summary'; summary: DraftSummary; workflowName: string } // SB15: the build summary
+  | { kind: 'publishOffer'; offer: PublishOffer; card?: PublishCardState } // AG21: publish the draft, or test and publish an agent update (./spotlight/publish-card.tsx)
+  | { kind: 'agentCard'; card: AgentCard }; // SB16: an agent Spotlight designed, to review and create (./spotlight/agent-ask.ts)
 
-/** `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line. */
+/**
+ * `testId`: the test-and-fix session the turn belongs to; Spotlight folds a finished session into one line.
+ * An assistant turn that streamed (`send`) also holds what the chat stream says (C3 in lib/server/assistant/chat.ts):
+ * `steps` (the activity trace), `text` (provisional while streaming, the checked reply at the end), `thinking` (the
+ * words of steps that also called tools, which never reach the reply) and `meta` (model, time, steps, tokens, cost).
+ */
 export type ChatItem =
-  /** `auto`: written by a test-and-fix session, not typed. */
-  | { id: string; role: 'user'; text: string; auto?: boolean; testId?: string }
-  | { id: string; role: 'assistant'; parts: ReplyPart[]; done?: { model: string; durationMs: number; steps: number }; error?: string; testId?: string };
+  /** `auto`: written by a test-and-fix session, not typed. `earlier`: kept from an earlier visit (shown under "Earlier"). `mentions`: the tags the person chose. */
+  | { id: string; role: 'user'; text: string; auto?: boolean; testId?: string; earlier?: boolean; mentions?: KeptMention[] }
+  /** `auto`: autonomous mode applied its changes (drawn as rows, whatever the switch says later). */
+  | {
+      id: string;
+      role: 'assistant';
+      parts: ReplyPart[];
+      done?: { model: string; durationMs: number; steps: number };
+      error?: string;
+      testId?: string;
+      auto?: boolean;
+      /** Kept from an earlier visit (shown under "Earlier", dimmed). */
+      earlier?: boolean;
+      steps?: ActivityStep[];
+      text?: string;
+      thinking?: string[];
+      meta?: ReplyInfo;
+      /** What a failed reply can be continued from (`error` events); the actions come with the chat's error buttons. */
+      checkpoint?: string;
+      /** What failed (`error` events): the model, a usage cap, a stall; and the step it failed at. */
+      errorKind?: 'model' | 'cap' | 'stalled' | 'internal';
+      errorStep?: number;
+      /** When the running model step began (to time it). */
+      stepStartedAt?: number;
+      /** AG04: Spotlight's own reply about the agent card in this item (a revise's reply, the chat's answer to a question under it): the card is still the newest. */
+      forCard?: string;
+      /** AG04: what Try again runs for this failed reply, when it is not a chat message (a revise of an agent card). */
+      retry?: { kind: 'agentRevise'; itemId: string };
+      /** AG20: the chat proposed a change to the agent a run failed in; the test session turns it into the agent's change card. */
+      agentFix?: AgentFixEvent;
+    };
 
-type StreamEvent =
-  | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; label: string; ok: boolean }
+/** A tag as the chat keeps and sends it: what it points at, and the name it showed. */
+export type KeptMention = MentionRef & { name: string };
+
+export type AssistantTurn = Extract<ChatItem, { role: 'assistant' }>;
+
+/** The chat stream's events (C3, lib/server/assistant/chat.ts), as Spotlight reads them. */
+export type StreamEvent =
+  | { type: 'step.start'; step: number; label: string }
+  | { type: 'text.delta'; step: number; text: string }
+  | { type: 'text'; text: string; step?: number }
+  | { type: 'thinking'; step: number; text: string }
+  | { type: 'tool'; name: string; label: string; ok: boolean; id?: string; step?: number; durationMs?: number; detail?: string }
   | ({ type: 'proposal' } & Omit<Proposal, 'state'>)
-  | { type: 'done'; model: string; durationMs: number; steps: number }
-  | { type: 'error'; message: string };
+  | AskEvent // SB11:
+  | { type: 'done'; model: string; durationMs: number; steps: number; usage?: { inputTokens: number; outputTokens: number }; costUsd?: number; local?: boolean }
+  | { type: 'error'; message: string; kind?: 'model' | 'cap' | 'stalled' | 'internal'; checkpoint?: string; step?: number }
+  | CredentialOfferEvent // SB12:
+  | { type: 'publishOffer'; offer: PublishOffer } // AG21:
+  | AgentFixEvent; // AG20: a change to the agent the run failed in
+
+/** What kind of trace row a tool call is. */
+export function toolKind(name: string): ActivityKind {
+  if (/^search/.test(name)) return 'search';
+  if (/^(get|read|describe)/.test(name)) return 'read';
+  if (/^(propose|write|set|add|apply)/.test(name)) return 'write';
+  if (/^(run|execute|test)/.test(name)) return 'run';
+  return 'tool';
+}
+
+const clip = (text: string | undefined) => (text ? text.slice(0, 300) : undefined);
+
+/** Close the model step that is running: it took until `now`. */
+function settleModel(turn: AssistantTurn, now: number, status: 'ok' | 'failed' = 'ok'): ActivityStep[] {
+  return (turn.steps ?? []).map((s) => (s.kind === 'model' && s.status === 'running' ? { ...s, status, ...(turn.stepStartedAt !== undefined && { durationMs: Math.max(0, now - turn.stepStartedAt) }) } : s));
+}
+
+/**
+ * One chat event applied to a turn (a pure reducer, so the stream is tested without a store): `step.start` opens a
+ * running model step; `text.delta` grows the provisional text and `text` replaces it with the checked one; `thinking`
+ * goes to the trace and never to the reply; `tool` adds a timed step; `done` fills `meta` with the usage; `error` keeps the
+ * checkpoint to continue from. `now` is for tests.
+ */
+export function applyStreamEvent(turn: AssistantTurn, event: StreamEvent, now: number = Date.now()): AssistantTurn {
+  const steps = turn.steps ?? [];
+  const checked = turn.parts.some((p) => p.kind === 'text');
+  switch (event.type) {
+    case 'step.start':
+      // The new step's words start from nothing: the last step's provisional text went to the trace as thinking.
+      return { ...turn, text: checked ? turn.text : '', steps: [...settleModel(turn, now), { id: `model${event.step}`, label: event.label, kind: 'model', status: 'running' }], stepStartedAt: now };
+    case 'text.delta':
+      return { ...turn, text: `${turn.text ?? ''}${event.text}` };
+    case 'text': {
+      const at = turn.parts.findLastIndex((p) => p.kind === 'text');
+      const part: ReplyPart = { kind: 'text', text: event.text };
+      return { ...turn, text: event.text, parts: at >= 0 ? turn.parts.map((p, i) => (i === at ? part : p)) : [...turn.parts, part] };
+    }
+    case 'thinking':
+      return {
+        ...turn,
+        // Its deltas were provisional text: they belong to the trace now.
+        text: checked ? turn.text : '',
+        thinking: [...(turn.thinking ?? []), event.text],
+        steps: [...steps, { id: `think${event.step}-${steps.length}`, label: 'Thought', kind: 'think', status: 'ok', detail: clip(event.text) }],
+      };
+    case 'tool':
+      return {
+        ...turn,
+        parts: [...turn.parts, { kind: 'tool', tool: { name: event.name, label: event.label, ok: event.ok } }],
+        steps: [
+          ...steps,
+          { id: `tool${event.id ?? steps.length}`, label: event.label, kind: toolKind(event.name), status: event.ok ? 'ok' : 'failed', ...(event.durationMs !== undefined && { durationMs: event.durationMs }), ...(clip(event.detail) && { detail: clip(event.detail) }) },
+        ],
+      };
+    case 'proposal': {
+      const { type: _type, ...proposal } = event;
+      return { ...turn, parts: [...turn.parts, { kind: 'proposal', proposal }] };
+    }
+    case 'ask': // SB11: the question and its chips; the question's words arrive as the reply's text
+      return { ...turn, parts: [...turn.parts, { kind: 'ask', ask: { question: event.question, choices: event.choices } }] };
+    case 'done':
+      return {
+        ...turn,
+        steps: settleModel(turn, now),
+        done: { model: event.model, durationMs: event.durationMs, steps: event.steps },
+        meta: { model: event.model, durationMs: event.durationMs, steps: event.steps, ...(event.usage && { inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens }), ...(event.costUsd !== undefined && { costUsd: event.costUsd }), ...(event.local && { local: true }) },
+      };
+    case 'error':
+      return { ...turn, steps: settleModel(turn, now, 'failed'), error: event.message, ...(event.checkpoint && { checkpoint: event.checkpoint }), ...(event.kind && { errorKind: event.kind }), ...(event.step !== undefined && { errorStep: event.step }) };
+    // SB12: a step that needs a credential: a "Needs you" row with the picker (decision D2), never one set by Spotlight.
+    case 'credential':
+      return { ...turn, parts: [...turn.parts, { kind: 'needs', need: { what: 'credential', text: event.text, node: event.node, ...(event.nodeId && { nodeId: event.nodeId }), credentialTypes: event.credentialTypes } }] };
+    // AG21: a card to publish the draft or to test and publish an agent update: the person's click does it, never the chat.
+    case 'publishOffer':
+      return { ...turn, parts: [...turn.parts, { kind: 'publishOffer', offer: event.offer }] };
+    // AG20: a failed run's cause is inside an agent: the session shows the agent's change card (./test-session.ts).
+    case 'agent-fix':
+      return { ...turn, agentFix: event };
+  }
+}
 
 export interface SendOptions {
-  /** What the user tagged with Spotlight's bubbles: node ids on the canvas, node type ids. */
-  mentions?: { nodes: string[]; types: string[] };
+  /** What the user tagged with @ (the picker's chips, and node types chosen from the bubbles): the server reads them as the caller. */
+  mentions?: KeptMention[];
   /** Leave the selected node out of the context (its chip was removed). */
   withoutSelection?: boolean;
+  /** SB07: the scope the composer showed as a chip; `null` when the person lifted it. Not sent with a test-and-fix session's `fix` or `review`. */
+  scope?: SpotlightScope | null;
   /** Sent by a test-and-fix session: shown as a note, not as something the user typed. */
   auto?: boolean;
   /** The node to put in the context as if selected (the one a test run failed at). */
@@ -258,29 +531,104 @@ export interface SendOptions {
   /** Send without the earlier turns: a test-and-fix session's requests carry what they need (the run is in the context). */
   fresh?: boolean;
   /** A test-and-fix session's request: for a fix (a reply that proposes nothing is sent back once), or a review. */
-  session?: 'fix' | 'review';
+  session?: 'fix' | 'review' | 'auto';
+  /** What Spotlight may do alone in that session, so the assistant words its reply right (the server's default is asks-first). */
+  autonomy?: 'auto' | 'asks-first';
   /** The test-and-fix session the request belongs to. */
   testId?: string;
+  /** Carry on from the checkpoint of a reply that failed after some steps, instead of starting the reply over. */
+  resume?: { checkpoint: string };
+  /**
+   * With `resume`: what the failed reply had already sent (its changes and tool calls, and its trace). The server holds those
+   * changes in its working graph but does not send them again, so the new reply keeps them.
+   */
+  carry?: ChatItem;
+}
+
+/** The parts and trace of a failed reply that a resumed reply keeps: its proposals and tool calls, its steps (the failed one marked). */
+export function carriedFrom(failed: ChatItem | undefined): { parts: ReplyPart[]; steps: ActivityStep[] } {
+  if (failed?.role !== 'assistant') return { parts: [], steps: [] };
+  return { parts: failed.parts.filter((p) => p.kind === 'proposal' || p.kind === 'tool'),
+    // The resumed stream restarts at the failed step's number: the kept row gets its own id, so trace rows stay unique.
+    steps: (failed.steps ?? []).map((s) => (s.kind === 'model' && s.status === 'failed' ? { ...s, id: `${s.id}-failed` } : s)),
+  };
+}
+
+/** An agent Spotlight is having the Agent architect design (./new-agent.ts), shown as a row of its timeline. */
+export interface AgentProgress {
+  /** The Run an Agent node it is for. */
+  nodeId: string;
+  name: string;
+  state: 'designing' | 'testing' | 'tested' | 'untested' | 'publishing' | 'published' | 'draft' | 'failed'; // SB18: (AG05: publishing)
+  /** SB18: what its smoke test said (lib/shared/agent-card.ts). */
+  smoke?: AgentSmoke;
+  /** SB18: why a publish after a pass was held (the eval gate's score), in words. */
+  held?: string;
+  /** AG05: the publish as it goes and what it ended in (`publishLine`): the eval gate's cases, then published, held with the verdict, or failed. `held` is the same words for older callers. */
+  publish?: AgentPublish;
+  /** SB18: Undo took it back: removed, or kept because something else uses it. */
+  taken?: { deleted: boolean; usedBy?: string[] };
+  /** "ollama/qwen3-coder:30b · 1 knowledge base", or why it failed. */
+  summary?: string;
+  agentId?: string;
+  /** AG11: brought back from a stored conversation as tested: Publish waits for Test again to pass in this page load. */
+  restored?: boolean;
+  /** The conversation item it follows. */
+  after?: string;
+}
+
+const COLLAPSED_KEY = 'landflow-spotlight-collapsed';
+
+function readCollapsed(): boolean {
+  try {
+    const saved = localStorage.getItem(COLLAPSED_KEY);
+    // Not chosen yet: folded everywhere, to a strip on a desktop and to the bar on a phone (docs/assistant.md#the-spotlight-panel).
+    return defaultCollapsed(saved);
+  } catch {
+    return true;
+  }
 }
 
 interface AssistantState {
-  /** The conversation is shown above Spotlight's bar. */
-  open: boolean;
+  /**
+   * The Spotlight panel is folded to its pill (docs/assistant.md#the-spotlight-panel). Only the person changes it: no
+   * draft, reply or test session opens, closes or moves the panel. Kept in the browser.
+   */
+  collapsed: boolean;
+  setCollapsed(collapsed: boolean): void;
+  /** A phone's open sheet: a third of the screen with the newest of the timeline, or half (docs/mobile.md#spotlights-dock). */
+  phoneHeight: 'peek' | 'half';
+  /** A phone's three heights: folded to its bar, peek or half. Only the person moves it, as with `collapsed`. */
+  setDock(dock: 'bar' | 'peek' | 'half'): void;
+  /** Agents being designed and those done, in the order they were asked for. */
+  agents: AgentProgress[];
+  setAgent(nodeId: string, patch: Partial<AgentProgress> & { name?: string }): void;
   workflowId?: string;
   items: ChatItem[];
+  /**
+   * The conversation these items are kept in (docs/assistant.md#conversation-history) and what of them is stored: held here
+   * beside the items, so a panel that mounts again over the same chat (Home, then Back) reattaches instead of storing every
+   * turn a second time. Cleared when another workflow is bound, on `reset` and when a conversation replaces the chat.
+   */
+  kept: { id?: string; stored: Stored };
+  setKept(id: string | undefined, stored?: Stored): void;
+  /** The checkpoint of the last reply that failed: it can be continued from there (the buttons come with the chat's error actions). */
+  lastCheckpoint?: { replyId: string; checkpoint: string; step?: number };
   pending: boolean;
   abort?: AbortController;
   /** A test-and-fix session is running (./test-session.ts); aborting it stops the session. */
   testing?: AbortController;
+  /** The running session's id (its items' `testId`): that session stays unfolded. */
+  testingId?: string;
   /** The flow builder is drafting a flow on the empty canvas. */
   drafting: boolean;
   /** The node a test-and-fix session is asking a fix for: the canvas marks it. */
   fixing?: string;
-  /**
-   * While Spotlight works on its own (drafting, testing and fixing), the conversation waits in a card at the side of the
-   * canvas so the flow stays in view; true shows it in full instead.
-   */
-  detail: boolean;
+  /** What a test-and-fix session fixed, by node id: a bubble on the node until dismissed (or a minute passes). */
+  fixNotes: Record<string, { text: string; at: number }>;
+  noteFix(nodeIds: string[], text: string): void;
+  dismissFix(nodeId: string): void;
+  /** ⌘I: unfold the panel (setCollapsed(!open)). */
   setOpen(open: boolean): void;
   /** Start over when another workflow is opened. */
   bind(workflowId: string): void;
@@ -289,13 +637,20 @@ interface AssistantState {
   append(items: ChatItem[]): void;
   stop(): void;
   reset(): void;
-  setProposalState(itemId: string, proposalId: string, state: 'applied' | 'dismissed'): void;
+  /**
+   * Show a kept conversation: its turns go first, under "Earlier". `replace` puts it in place of the chat (the history
+   * button); otherwise what was said since stays below it (resuming on arrival).
+   */
+  showEarlier(turns: ChatItem[], options?: { replace?: boolean; agents?: AgentProgress[] /* AG11: the rows of the agents the conversation made */ }): void;
+  setProposalState(itemId: string, proposalId: string, state: 'applied' | 'dismissed' | 'undone', skipped?: number): void;
   /** Change the parts of one reply (a test-and-fix session adds and updates its runs; buttons record what was chosen). */
   updateParts(itemId: string, fn: (parts: ReplyPart[]) => ReplyPart[]): void;
+  /** SB11: a chip of a question back: marks it picked, then sends it as a typed message (not `auto`, no session). */
+  answerAsk(itemId: string, choice: string): Promise<void>;
 }
 
 /** What the model sees of earlier turns: the text, plus a note of each proposal and whether it was applied. */
-function historyOf(items: ChatItem[]) {
+export function historyOf(items: ChatItem[]) {
   return items.map((item) => {
     if (item.role === 'user') return { role: 'user' as const, content: item.text };
     const content = item.parts
@@ -303,6 +658,9 @@ function historyOf(items: ChatItem[]) {
         if (part.kind === 'text') return part.text;
         if (part.kind === 'proposal') return `[Proposed “${part.proposal.summary}”: ${part.proposal.state ?? 'not applied yet'}]`;
         if (part.kind === 'run' && part.run.state !== 'running') return `[Test run ${part.run.round} ${part.run.state}: ${part.run.summary ?? ''}]`;
+        // The plan card: the steps the person was shown, so the builder chat knows the flow that was agreed.
+        if (part.kind === 'plan') return `[Plan “${part.plan.plan.name}” (${part.plan.state}): ${part.plan.plan.steps.map((s, i) => `${i + 1}. ${s.name}: ${s.does}`).join('; ')}]`;
+        if (part.kind === 'ask') return askedLine(part.ask.choices); // SB09 × SB11: the next message is the answer, the server reads the request across it
         return '';
       })
       .filter(Boolean)
@@ -317,21 +675,64 @@ export function pendingProposals(items: ChatItem[]): Array<{ summary: string; op
 }
 
 export const useAssistant = create<AssistantState>((set, get) => ({
-  open: false,
+  collapsed: readCollapsed(),
+  phoneHeight: 'half',
+  agents: [],
+  fixNotes: {},
+
+  noteFix(nodeIds, text) {
+    const at = Date.now();
+    // One note on the canvas at a time: the newest fix. Older ones are rows of the timeline.
+    set({ fixNotes: Object.fromEntries(nodeIds.map((id) => [id, { text, at }])) });
+  },
+
+  dismissFix(nodeId) {
+    set((s) => {
+      const { [nodeId]: _gone, ...rest } = s.fixNotes;
+      return { fixNotes: rest };
+    });
+  },
   items: [],
+  kept: freshKept(),
   pending: false,
   drafting: false,
-  detail: false,
+
+  setCollapsed(collapsed) {
+    try {
+      localStorage.setItem(COLLAPSED_KEY, collapsed ? 'yes' : 'no');
+    } catch {
+      // Private mode: the choice still holds for this page.
+    }
+    set({ collapsed });
+  },
 
   setOpen(open) {
-    set({ open });
+    get().setCollapsed(!open);
+  },
+
+  setDock(dock) {
+    if (dock !== 'bar') set({ phoneHeight: dock });
+    get().setCollapsed(dock === 'bar');
+  },
+
+  setAgent(nodeId, patch) {
+    set((s) => {
+      const known = s.agents.some((a) => a.nodeId === nodeId);
+      if (known) return { agents: s.agents.map((a) => (a.nodeId === nodeId ? { ...a, ...patch } : a)) };
+      return { agents: [...s.agents, { nodeId, name: patch.name ?? 'Agent', state: 'designing', after: s.items.at(-1)?.id, ...patch }] };
+    });
+  },
+
+  setKept(id, stored) {
+    set((s) => ({ kept: { id, stored: stored ?? s.kept.stored } }));
   },
 
   bind(workflowId) {
     if (get().workflowId === workflowId) return;
     get().abort?.abort();
     get().testing?.abort();
-    set({ workflowId, items: [], pending: false, abort: undefined, testing: undefined, fixing: undefined, detail: false });
+    draft.request?.abort();
+    set({ workflowId, items: [], kept: freshKept(), lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
     useSuggestions.getState().clear();
   },
 
@@ -340,12 +741,15 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     if (!message || get().pending) return;
     const editor = useEditor.getState();
     const group = options.testId ? { testId: options.testId } : {};
-    const user: ChatItem = { id: nanoid(8), role: 'user', text: message, ...(options.auto && { auto: true }), ...group };
-    const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: [], ...group };
+    const user: ChatItem = { id: nanoid(8), role: 'user', text: message, ...(options.auto && { auto: true }), ...(options.mentions?.length && { mentions: options.mentions }), ...group };
+    const carried = options.resume ? carriedFrom(options.carry) : { parts: [], steps: [] };
+    const reply: ChatItem = { id: nanoid(8), role: 'assistant', parts: carried.parts, steps: carried.steps, text: '', thinking: [], ...group };
     const abort = new AbortController();
-    const messages = historyOf(options.fresh ? [user] : [...get().items, user]);
+    // The route takes 60 messages at most: the newest, from a person's turn on (a long kept conversation can be longer).
+    const recent = historyOf(options.fresh ? [user] : [...get().items, user]).slice(-59);
+    const messages = recent.slice(Math.max(0, recent.findIndex((m) => m.role === 'user')));
     const pending = options.fresh ? [] : pendingProposals(get().items).slice(-20);
-    set((s) => ({ open: true, items: [...s.items, user, reply], pending: true, abort }));
+    set((s) => ({ items: [...s.items, user, reply], pending: true, abort }));
     const patch = (fn: (item: Extract<ChatItem, { role: 'assistant' }>) => Partial<Extract<ChatItem, { role: 'assistant' }>>) =>
       set((s) => ({ items: s.items.map((item) => (item.id === reply.id && item.role === 'assistant' ? { ...item, ...fn(item) } : item)) }));
     try {
@@ -358,56 +762,85 @@ export const useAssistant = create<AssistantState>((set, get) => ({
           selectedNodeId: options.nodeId ?? (options.withoutSelection ? undefined : (editor.openNodeId ?? editor.nodes.find((n) => n.selected)?.id)),
           runs: runDigests(),
           ...(pending.length && { pending }),
-          ...(options.mentions && { mentions: options.mentions }),
+          ...(options.mentions?.length && { mentions: { refs: options.mentions } }),
+          ...(options.scope !== undefined && options.session !== 'fix' && options.session !== 'review' && { scope: options.scope }), // SB07:
           ...(options.session && { session: options.session }),
+          ...(options.session && options.autonomy && { autonomy: options.autonomy }),
+          ...(options.resume && { resume: options.resume }),
+          ...pickedModel(), // SB19:
         },
         (_event, data) => {
           const event = data as StreamEvent;
-          if (event.type === 'text') patch((item) => ({ parts: [...item.parts, { kind: 'text', text: event.text }] }));
-          else if (event.type === 'tool') patch((item) => ({ parts: [...item.parts, { kind: 'tool', tool: { name: event.name, label: event.label, ok: event.ok } }] }));
-          else if (event.type === 'proposal') {
-            const { type: _type, ...proposal } = event;
-            patch((item) => ({ parts: [...item.parts, { kind: 'proposal', proposal }] }));
-          } else if (event.type === 'done') patch(() => ({ done: { model: event.model, durationMs: event.durationMs, steps: event.steps } }));
-          else if (event.type === 'error') patch(() => ({ error: event.message }));
+          patch((item) => applyStreamEvent(item, event));
+          if (event.type === 'error' && event.checkpoint) set({ lastCheckpoint: { replyId: reply.id, checkpoint: event.checkpoint, ...(event.step !== undefined && { step: event.step }) } });
         },
         abort.signal,
       );
     } catch (e) {
       if ((e as Error).name !== 'AbortError') patch(() => ({ error: (e as Error).message }));
     } finally {
+      // Stopped or cut off: no row keeps spinning.
+      patch((item) => ({ steps: item.steps?.map((s) => (s.status === 'running' ? { ...s, status: 'ok' as const } : s)) }));
       if (get().abort === abort) set({ pending: false, abort: undefined });
     }
   },
 
   append(items) {
-    set((s) => ({ open: true, items: [...s.items, ...items] }));
+    set((s) => ({ items: [...s.items, ...items] }));
   },
 
   stop() {
     get().abort?.abort();
     get().testing?.abort();
-    set({ pending: false, abort: undefined, testing: undefined, fixing: undefined });
+    draft.request?.abort();
+    set({ pending: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
   },
 
   reset() {
     get().abort?.abort();
     get().testing?.abort();
-    set({ items: [], pending: false, abort: undefined, testing: undefined, fixing: undefined, detail: false });
+    draft.request?.abort();
+    set({ items: [], kept: freshKept(), lastCheckpoint: undefined, agents: [], fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
   },
 
-  setProposalState(itemId, proposalId, state) {
+  showEarlier(turns, options = {}) {
+    if (options.replace) {
+      get().abort?.abort();
+      get().testing?.abort();
+      draft.request?.abort();
+      set({ items: turns, kept: freshKept(), lastCheckpoint: undefined, agents: options.agents ?? [] /* AG11: */, fixNotes: {}, pending: false, drafting: false, abort: undefined, testing: undefined, testingId: undefined, fixing: undefined });
+    } else set((s) => ({ items: withEarlier(turns, s.items), agents: [...s.agents, ...(options.agents ?? []).filter((r) => !s.agents.some((a) => a.nodeId === r.nodeId))] /* AG11: */ }));
+  },
+
+  setProposalState(itemId, proposalId, state, skipped) {
     set((s) => ({
       items: s.items.map((item) =>
         item.id === itemId && item.role === 'assistant'
-          ? { ...item, parts: item.parts.map((part) => (part.kind === 'proposal' && part.proposal.id === proposalId ? { ...part, proposal: { ...part.proposal, state } } : part)) }
+          ? { ...item, parts: item.parts.map((part) => (part.kind === 'proposal' && part.proposal.id === proposalId ? { ...part, proposal: { ...part.proposal, state, ...(skipped && { skipped }) } } : part)) }
           : item,
       ),
+      // An undone fix leaves no "Fixed" bubble on the canvas (there is one at a time).
+      ...(state === 'undone' && { fixNotes: {} }),
     }));
   },
 
   updateParts(itemId, fn) {
     set((s) => ({ items: s.items.map((item) => (item.id === itemId && item.role === 'assistant' ? { ...item, parts: fn(item.parts) } : item)) }));
+  },
+
+  async answerAsk(itemId, choice) { // SB11:
+    if (get().pending) return;
+    get().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'ask' && !p.ask.answered ? { ...p, ask: { ...p.ask, answered: choice } } : p)));
+    // SB07 × SB11 (the integrator's line): a choice that is a step's name is the scope of the change that follows.
+    const step = useEditor.getState().nodes.find((n) => n.data.wf.name === choice);
+    await get().send(choice, step ? { scope: { kind: 'only', nodes: [step.id] } } : {});
+    // SB11 (N3): the send failed (a cap, a dropped connection) before anything came back: the question is open again, so the chips work.
+    const last = get().items.at(-1);
+    if (last && last.role === 'assistant' && last.id !== itemId && last.error && !last.parts.length) {
+      // The failed pair (the answer and its empty, errored reply) goes too, so the history the next answer sends still reads the question straight before it.
+      set((s) => ({ items: s.items.filter((item) => item.id !== last.id && !(item.role === 'user' && item.id === s.items.at(-2)?.id)) }));
+      get().updateParts(itemId, (parts) => parts.map((p) => (p.kind === 'ask' && p.ask.answered === choice ? { ...p, ask: { ...p.ask, answered: undefined } } : p)));
+    }
   },
 }));
 
@@ -419,3 +852,53 @@ export const offersTest = (items: ChatItem[]) => {
 
 /** Spotlight works on its own: drafting a flow, testing and fixing it, or a drafted flow waiting for its test. */
 export const useWorking = () => useAssistant((s) => s.drafting || Boolean(s.testing) || offersTest(s.items));
+
+/** The execution of the last run Spotlight started: its end is a row, not a toast, even once the session is over. */
+let ownedRun: string | undefined;
+export const ownRun = (executionId: string | undefined) => (ownedRun = executionId);
+
+/** A run Spotlight started (a test-and-fix session, a draft's first test): its timeline says how it went, not a toast. */
+export function spotlightOwnsRun(): boolean {
+  const { executionId } = useEditor.getState();
+  if (executionId && executionId === ownedRun) return true;
+  const s = useAssistant.getState();
+  return Boolean(s.testing || s.pending || s.drafting) || s.items.some((item) => item.role === 'assistant' && item.parts.some((p) => p.kind === 'run' && p.run.state === 'running'));
+}
+
+/**
+ * The node that shows what a fix changed, once applied: the node the fix was asked for when the fix touched it (or touched
+ * nothing by name), else the first node its ops change or add (by its name after the change). One bubble, not one per
+ * node: on a small canvas several would cover the flow.
+ */
+export function fixedNodes(ops: AssistantOp[], fallback?: string): string[] {
+  const nodes = useEditor.getState().nodes;
+  const byName = (name: string) => nodes.find((n) => n.data.wf.name === name || n.id === name)?.id;
+  const names = ops.flatMap((op) => {
+    if (op.op === 'addNode') return [op.name];
+    if (op.op === 'renameNode') return [op.name];
+    if (op.op === 'setParameters' || op.op === 'setNodeSettings') return [op.node];
+    if (op.op === 'connect') return [op.to];
+    return [];
+  });
+  const ids = [...new Set(names.flatMap((name) => (name ? [byName(name)] : [])).filter((id): id is string => Boolean(id)))];
+  const asked = fallback && nodes.some((n) => n.id === fallback) ? fallback : undefined;
+  if (asked && (!ids.length || ids.includes(asked))) return [asked];
+  return ids.slice(0, 1);
+}
+
+/**
+ * Put words in Spotlight's box and the caret after them (a starter, "Fix <node>: <error>"): unfolds the panel, sets the
+ * value through the input's own setter so React's controlled text area sees it.
+ */
+export function prefillSpotlight(text: string) {
+  useAssistant.getState().setCollapsed(false);
+  requestAnimationFrame(() => {
+    const box = document.getElementById('spotlight-input') as HTMLTextAreaElement | HTMLInputElement | null;
+    if (!box) return;
+    const proto = box instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(box, text);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.focus();
+    box.setSelectionRange(text.length, text.length);
+  });
+}

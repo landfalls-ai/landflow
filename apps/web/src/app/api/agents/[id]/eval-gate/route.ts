@@ -6,8 +6,10 @@
  * DELETE { caseId } — remove a test case.
  */
 import { z } from 'zod';
-import { addCase, deleteCase, EvalGateError, listCases, listEvalRuns, runEval } from '@/lib/server/agents/eval-gate';
+import { addCase, replaceCases, deleteCase, EvalGateError, listCases, listEvalRuns, runEval } from '@/lib/server/agents/eval-gate';
 import { agentStore } from '@/lib/server/agents/store';
+import { resourceAccess } from '@/lib/server/projects/access';
+import { routeActor } from '@/lib/server/projects/http';
 import { error, handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +20,7 @@ const failure = (caught: unknown) => (caught instanceof EvalGateError ? error(ca
 export const GET = handler(async (_request: Request, { params }: Ctx) => {
   const { id } = await params;
   if (!agentStore.get(id)) return error('Agent not found', 404);
+  if (!resourceAccess(routeActor(), 'agent', id)?.home) return error('Agent not found', 404);
   return json({ cases: listCases(id), runs: listEvalRuns(id) });
 });
 
@@ -39,6 +42,19 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
   if (!body.ok) return body.response;
   try {
     return json({ run: await runEval(id, body.data.version ?? 'draft', { signal: request.signal }) });
+  } catch (caught) {
+    return failure(caught);
+  }
+});
+
+/** PATCH { remove: string[], add: [{ input, expected? }] } — replace cases in one step: all or nothing → { cases }. */
+export const PATCH = handler(async (request: Request, { params }: Ctx) => {
+  const { id } = await params;
+  if (!agentStore.get(id)) return error('Agent not found', 404);
+  const body = await parseBody(request, z.object({ remove: z.array(z.string().min(1)).max(50), add: z.array(z.object({ input: z.string().min(1).max(4_000), expected: z.string().max(4_000).optional() })).max(50) }));
+  if (!body.ok) return body.response;
+  try {
+    return json({ cases: replaceCases(id, body.data.remove, body.data.add) });
   } catch (caught) {
     return failure(caught);
   }

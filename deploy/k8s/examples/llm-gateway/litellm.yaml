@@ -1,0 +1,80 @@
+# The database job, the proxy and its Service. Image: see the pin note in deploy/compose.infra.yml (v1.108.2-lts, by digest;
+# verify with deploy/scripts/verify-litellm-image.sh). The image runs as root (its config says so), so runAsNonRoot is not set.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llm-gateway-db
+  labels: { app.kubernetes.io/name: llm-gateway-db, app.kubernetes.io/part-of: landflow }
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: create-db
+          image: pgvector/pgvector:pg16
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: llm-gateway-keys, key: POSTGRES_PASSWORD } }
+          command: [sh, -c]
+          args:
+            - |
+              until pg_isready -h postgres -U landflow -d landflow; do sleep 2; done
+              psql -h postgres -U landflow -d landflow -tc "SELECT 1 FROM pg_database WHERE datname='litellm'" | grep -q 1 || psql -h postgres -U landflow -d landflow -c "CREATE DATABASE litellm"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-gateway
+  labels: { app.kubernetes.io/name: llm-gateway, app.kubernetes.io/part-of: landflow }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: llm-gateway }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: llm-gateway, app.kubernetes.io/part-of: landflow }
+    spec:
+      containers:
+        - name: litellm
+          image: ghcr.io/berriai/litellm:v1.108.2-lts@sha256:d8b4ac356743d647a13bb93f45b941fcd5f5354122cfd205948a1b192790389d
+          args: ["--config", "/app/config.yaml", "--port", "4000"]
+          env:
+            - { name: LITELLM_TELEMETRY_DISABLED, value: "true" }
+            - { name: LITELLM_LOG, value: INFO }
+            - { name: STORE_MODEL_IN_DB, value: "False" }
+            # The gateway's split of each call (docs/llm-gateway.md, "The gateway's split"): off until the Secret has
+            # LANDFLOW_PARTS_SECRET (the host's LANDFLOW_LLM_GATEWAY_PARTS_SECRET).
+            - { name: LANDFLOW_PARTS_URL, value: "http://host.docker.internal:3000/api/gateway-parts" }
+            - { name: LANDFLOW_PARTS_SECRET, valueFrom: { secretKeyRef: { name: llm-gateway-keys, key: LANDFLOW_PARTS_SECRET, optional: true } } }
+          envFrom:
+            - secretRef: { name: llm-gateway-keys }
+          ports:
+            - { name: http, containerPort: 4000 }
+          readinessProbe:
+            httpGet: { path: /health/readiness, port: http }
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            httpGet: { path: /health/liveliness, port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits: { memory: 2Gi }
+          volumeMounts:
+            - { name: config, mountPath: /app/config.yaml, subPath: config.yaml, readOnly: true }
+            - { name: config, mountPath: /app/custom_callbacks.py, subPath: custom_callbacks.py, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: llm-gateway-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-gateway
+  labels: { app.kubernetes.io/name: llm-gateway, app.kubernetes.io/part-of: landflow }
+spec:
+  selector: { app.kubernetes.io/name: llm-gateway }
+  ports: [{ name: http, port: 4000, targetPort: http }]

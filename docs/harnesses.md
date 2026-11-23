@@ -1,6 +1,6 @@
 # Harnesses: running Landflow agents in Claude Code and other coding agents (plan)
 
-Status: **plan**. The phase 0 spike is done (results below); nothing is built in the app yet. The
+Status: **plan**, with one part built: [live status](#live-status) (Claude Code hooks, the harness registry and `landflow harness detect`). The phase 0 spike is done (results below); the rest is not built in the app yet. The
 goal is to take an agent built in Landflow (instructions, skills, tools, approvals, memory) and
 run it inside a *harness*: an agent runtime with its own loop and tools, such as Claude Code,
 where it can read and edit code, run commands and use Landflow's integrations.
@@ -105,7 +105,7 @@ Claude Desktop.
   `remember` / `recall` when cross-session memory is on. Skills don't go through MCP; they ship in
   the plugin. `/api/mcp` (all agents: `list_agents`, `ask_agent`) comes in phase 2.
 - **Sessions:** `initialize` returns an `Mcp-Session-Id`. Calls with the same id go into one
-  Landflow session (source `harness`, `harness: { type: 'claude-code' }`), so the Sessions tab
+  Landflow session (source `harness`, `harness: { type: 'claude-code' }`), so Activity → Sessions
   shows what a Claude Code session did with Landflow's tools. Phase 1 checks that Claude Code
   echoes the header. Without it, calls are grouped by token and day.
 - **Auth:** per-agent tokens `lf_pat_<id>_<secret>`. They are created in the dialog and shown once,
@@ -238,16 +238,9 @@ Sessions show harness tool calls and diffs.
 
 ### 5. Hooks and observability
 
-- **Hooks (phase 2).** The bundle adds HTTP hooks to `/api/harness/claude-code/hooks`, with the
-  token in an `Authorization: Bearer $LANDFLOW_TOKEN` header (`allowedEnvVars: ["LANDFLOW_TOKEN"]`).
-  `session_id` keys a Landflow session (source `harness`):
-  - `UserPromptSubmit` → a user entry;
-  - `PostToolUse` → tool entries for Claude Code's own tools;
-  - `Stop` → the assistant entry (`last_assistant_message`);
-  - `SessionStart` → the remembered facts as `additionalContext`. Check whether an HTTP hook's JSON
-    response is honored. Otherwise use a command hook that runs `curl`.
-  - The first `PostToolUse` of an `mcp__plugin_landflow-…` tool carries the same `tool_use_id`
-    as the MCP call's `_meta`. That links the MCP session to the Claude Code session.
+- **Hooks.** Status from Claude Code's hooks is built: see [Live status](#live-status). Phase 2 still adds the
+  bundle's own hooks that mirror prompts and replies into the agent's Sessions and bring remembered facts back as
+  `additionalContext` at `SessionStart`.
 - **Direction A telemetry:**
   - Each MCP request is an `mcp.request` span (`mcp.method.name`, `mcp.session.id`, `landflow.agent.id`).
   - Each call is the existing `execute_tool {tool}` span, with `gen_ai.tool.call.id` = Claude Code's
@@ -261,6 +254,50 @@ Sessions show harness tool calls and diffs.
 - **Metrics:** the `landflow.agent.*` metrics get a `landflow.agent.harness` attribute. Claude
   Code's `claude_code.token.usage` / `cost.usage` carry the agent id. Cost is only meaningful for
   Claude models.
+
+### Live status
+
+Built (specs C04 and C15). Claude Code can report what it is doing, and Landflow shows it as a chip on the agent's card,
+in the agent's Sessions and, for your own sessions, on `/connect`.
+
+- **The registry.** `@landflow/protocol/harnesses` (`packages/protocol/src/harnesses.ts`) is the one list of harnesses: id,
+  label, how to detect it (binaries, config files), where its MCP config goes, how Landflow can observe it
+  (`native-hooks`, `plugin`, `extension`, `wrapper` or `mcp-only`) and, when it sends events, which event names set which
+  status. `/connect`, the kagent runtime labels, `landflow harness detect` and the hook route all read it, and a source scan
+  (`apps/web/test/harness-registry-scan.test.ts`) fails when another module declares its own list. Only Claude Code sends
+  events today; the others are `mcp-only` until their event names are checked against a live install.
+- **Sending.** `POST /api/harness/claude-code/hooks` with an API key that has `harness:write` (**Send live status** on
+  `/connect`). The `/connect` page gives a `hooks` block for `.claude/settings.local.json` (or `~/.claude/settings.json`, never the committed
+  project settings): one background (`async`) command hook per event that runs a small `node -e` filter. The filter forwards
+  only `hook_event_name`, `session_id`, `tool_name`, `notification_type`, `duration_ms` and `error` (and `error_details` only when an agent was picked), only strings and numbers, strings cut to 300
+  characters, so no prompt, tool input or output, working directory, transcript path or `agent_type` ever leaves the machine,
+  and gives up after 1.5 seconds. It reads the key from `$LANDFLOW_HOOK_KEY` (a key of its own with only `harness:write`, made
+  on `/connect`), and puts an order number from the clock in `X-Landflow-Hook-Seq`, because each event arrives on its own
+  connection and a later one can arrive first; the number needs no counter file, so parallel hooks never share one. The brain mod can send the same events for you
+  ([`/brain status-sharing`](landflow-brain-mod.md#status-sharing)).
+- **Statuses.** Thinking, Working, Compacting, Waiting for you, Idle, Error, Blocked, Ended. A session with no event for
+  30 minutes reads **Idle (stale)** and closes after 24 hours. Error and Blocked stay until a newer prompt, tool use or
+  session start.
+- **Who sees what.** A session binds to a Landflow agent only through its first event, a `SessionStart` sent with an `X-Landflow-Agent: <agent id>` header naming an agent you may run: `/connect` adds the header when you pick the agent in the Live status step. Nothing in the event itself binds a session, `agent_type` included, because a plugin of any author can use any name; a later event never binds or rebinds, and a session that began as your own never becomes an agent's. A bound session: its card shows the chip and its
+  Sessions tab lists a **Claude Code** session. Any other session is yours alone, an admin's view included: it keeps the
+  status, times, tool names, counts and (when you or the brain mod name it) the repository, never prompt text, tool input or
+  output, a file path or the working directory.
+- **The UI.** The Agents page reads `GET /api/harness/sessions?open=1` once and follows `harness` events on `/api/events`;
+  each card shows its newest open session as a chip ("Working · 2 min ago", "Waiting for you"). `/connect` → Claude Code
+  has a **Live status** step with the hooks block and **Your sessions**.
+- **`landflow harness detect`** lists which registry harnesses are on the machine ([CLI](features/cli.md)).
+- **Codex: `landflow harness watch codex`.** Codex runs no hook when a turn dies on a provider limit; it writes the failure into
+  its rollout file. The watch starts `codex` on your terminal and reads only the rollout files of the sessions it started
+  (`$CODEX_HOME/sessions`, default `~/.codex/sessions`): the first read starts at most 64 KB before a file's end, a tick reads at
+  most 256 KB, and a turn is never timed out. When a turn ends on a usage limit or out-of-credits, it sends one `quota_blocked`
+  event to `POST /api/harness/codex/hooks` with the session id, the kind of limit and the provider's message, and nothing else:
+  no prompt, tool output or path. The Codex registry entry is a `wrapper` that accepts that one event (any other name is stored
+  and counted as unknown); binding works as for any harness (only a first `SessionStart` with the `X-Landflow-Agent` header binds), and the watch sends
+  no `SessionStart`, so a Codex session is **yours alone**. Blocked lasts until the session goes stale (about the usual idle
+  window): no other Codex event is accepted, so nothing clears it earlier. The chip reads "Blocked: Codex usage limit reached · since 14:32". The kinds count as
+  `landflow.harness.blocked{kind, harness=codex}`. The classifier is the protocol's (`@landflow/protocol/quota-block`), shared
+  with the A2A path. The entry is marked unverified: it was built against Codex's documented rollout records and fixtures, not
+  a live Codex that hit its limit ([limitations](limitations.md)).
 
 ### 6. Security
 
@@ -311,7 +348,7 @@ Sessions show harness tool calls and diffs.
   calls a Landflow node tool over MCP and answers with its result:
   - with a Claude model, when an Anthropic key is available;
   - with `qwen3-coder:30b` on Ollama.
-- The call appears in the agent's Sessions tab and as a span in the trace.
+- The call appears in the agent's Activity → Sessions and as a span in the trace.
 - The dialog is checked in Chrome, and a revoked token stops the next call.
 - 141+ web tests pass and `tsc` is clean.
 
@@ -324,6 +361,16 @@ Sessions show harness tool calls and diffs.
 | **2. Keep it in sync** | M | Landflow marketplace for Claude Code (`marketplace.json`, updates on publish), HTTP hooks (memory, session mirroring), `/api/mcp` with `ask_agent`, telemetry env in the dialog | republishing updates the installed plugin; a Claude Code session shows its prompts, tools and reply in Sessions |
 | **3. Run on Claude Code** | L | `claude-code` adapter on the Agent SDK, workspaces and worktrees, `canUseTool` approval bridge, timeline and diff entries, Harness card | from the test chat the agent fixes a failing test in a sample repo on its own branch, with a Landflow approval before `Bash`, all in one trace |
 | **4. More harnesses** | S–M each | exporters and adapters for Codex CLI, Gemini CLI and OpenCode, chosen by demand | per harness, the same checks as phases 1 and 3 |
+
+## dot-agent-deck from a flow
+
+A flow can start a unit of work in the person's [dot-agent-deck](https://github.com/dot-agent-deck) and wait for it: the opt-in
+`plugins/deck` plugin has a **dot-agent-deck** node with a **Dispatch** operation, and a core Wait ("On Webhook Call") after it
+resumes the run when the unit reports. The plugin runs inside a deck pane (the deck's CLI refuses anywhere else), calls the deck's
+CLI with argument arrays and the task on stdin, and never changes or trusts anything in the deck. Delegate (orchestrator only), a
+deck view in Landflow (Landlens's, later) and trace parenting (needs a deck change) are not built. See
+[plugins/deck](../plugins/deck/README.md) for the flow pattern, what the deck lets a pane read, the safety rules and the two asks for
+the deck project.
 
 ## Other harnesses
 
@@ -348,6 +395,11 @@ kagent's **Claude Code** Harness with its persona, its tools (those that need ap
 kagent pauses on them) and its **Claude Code plugins** from the added marketplaces, which Landflow pins and serves to
 kagent as OCI images ([a2a.md](a2a.md#on-claude-code)). Checked live with a developer agent on qwen3-coder through
 Ollama: it writes and tests code in the sandbox and hands it in through an approval card. Stage 2 (a harness image with
-real toolchains, and Claude models) is open.
+real toolchains, and Claude models) is open. Stage 2 reads the project's
+[workspace](projects-and-goals.md#workspace) (default branch, worktree per run or shared, branch template, setup
+commands) from the project context. The setup commands are a risk: Landflow never runs them, and a stage 2 that does
+must show them to a person before running them in its sandbox. It must also check the branch it fills in
+(`{run}`, `{date}`, `{task}`) with `isValidBranch` (`lib/shared/project-workspace.ts`): `branchFor` makes a token's value
+safe but can still leave `..`, a trailing `.` or a trailing `.lock` that git refuses.
 Google's AX was looked at the same day and left out: a sandboxed task runner for coding agents, with no A2A, result
 stream or approval protocol yet.

@@ -17,8 +17,9 @@
  */
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange } from '@xyflow/react';
 import { nanoid } from 'nanoid';
+import { toast } from 'sonner'; // AG17:
 import { create } from 'zustand';
-import { defaultParameters, defaultVersionOf, portParameters, withPropertyDefaults } from '@landflow/protocol';
+import { defaultParameters, defaultVersionOf, decideQuestions, decideRoutingFinished, expandPorts, portParameters, remapExpandedConnections, withPropertyDefaults } from '@landflow/protocol';
 import type { NodeProgress } from '@/lib/client/node-progress';
 import { edgeCountsOf, statusesOf, waitSummary, withWaiting, type NodeStatus, type WaitInfo } from '@/lib/client/run-data';
 import type { FlowTemplate } from '@/lib/client/templates';
@@ -39,7 +40,10 @@ import type {
 } from '@/lib/shared/types';
 import { STICKY_DEFAULT_CONTENT, STICKY_DEFAULT_SIZE } from '../canvas/sticky-note';
 import { preparePaste, remapReferences, selectionOrigin, serializeSelection, type ClipboardData } from './clipboard';
+import { boundCountOf } from '@/lib/client/agent-bubble-data'; // AG16
+import { clearOfBubbles, occupiedOf, type ClearBox } from './bubble-clearance'; // AG16
 import { GROUP_NAME_MAX, NODE_TILE, NODE_WIDE_TILE, ancestorsOf, clearSpot, descendantGroupIds, descendantNodeIds, nodeBox, normalizeGroups } from '@/lib/shared/groups';
+import { boundAgentRef } from '@/lib/shared/assistant-ops'; // AG17:
 import { autoBind, bindSlot, compositeLookup, compositeOfNode, instantiateComposite, unbindSlot, type CompositeFix, type CompositeTypeInfo } from '@/lib/shared/composites';
 import {
   adoptFrames,
@@ -64,6 +68,40 @@ import {
 const TIDY_GAP_X = 280 - NODE_TILE;
 /** Tidy up: from one sub-node to the next under their parent, wider than a sub-node's name. */
 const SUBNODE_PITCH = 170;
+/** AG12 (ag3 fix): a sub-node sits this far under a tall parent's measured height: the ~50 px block of slot labels and + buttons, then the sub-node's own handle. */
+export const SUBNODE_CLEARANCE = 64;
+
+/** AG16: the bound nodes' boxes for the layout (each node's size, its bubbles' count and the real sub-nodes wired into it). */
+function bubbleBoxes(nodes: readonly FlowNode[], edges: readonly FlowEdge[], types: Record<string, NodeTypeInfo>, skip?: ReadonlySet<string>): ClearBox[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const next = new Map<string, string[]>();
+  for (const e of edges) if (e.data?.connectionType === 'main') next.set(e.source, [...(next.get(e.source) ?? []), e.target]);
+  /** Every node after `id` on the main chain. */
+  const downstream = (id: string) => {
+    const seen = new Set<string>();
+    const todo = [...(next.get(id) ?? [])];
+    while (todo.length) {
+      const at = todo.pop()!;
+      if (seen.has(at) || at === id) continue;
+      seen.add(at);
+      todo.push(...(next.get(at) ?? []));
+    }
+    return seen;
+  };
+  return nodes
+    .filter((n) => !skip?.has(n.id))
+    .map((n) => ({
+      id: n.id,
+      x: n.position.x,
+      y: n.position.y,
+      width: n.measured?.width ?? (types[n.data.wf.type]?.descriptor.inputs.some((p) => p.type !== 'main') ? NODE_WIDE_TILE : NODE_TILE),
+      height: n.measured?.height ?? NODE_TILE,
+      bubbles: boundCountOf(n.data.wf, n.id),
+      subNodes: new Set(edges.filter((e) => e.target === n.id && e.data?.connectionType !== 'main').map((e) => e.source)),
+      occupied: occupiedOf(n, edges, byId), // the kept wired sub-nodes the drawn bubble row is shifted past
+      downstream: downstream(n.id),
+    }));
+}
 
 export type { NodeRunState, NodeStatus } from '@/lib/client/run-data';
 export type { GroupData, GroupFlowNode } from './groups';
@@ -128,10 +166,13 @@ export interface PaletteRequest {
 }
 
 /** What the toolbar, node toolbars and the node panel can ask the editor to run. */
-export type RunCommand = { kind: 'run' } | { kind: 'debug' } | { kind: 'node'; nodeId: string; scope: 'from' | 'only' };
+/** `by: 'spotlight'`: Spotlight asked for the run, so its timeline reports it, not a toast. */
+export type RunCommand = { kind: 'run'; by?: 'spotlight'; approvals?: import('@/lib/shared/fix-autonomy').SpotlightRunApprovals /* AG22: an autonomous fix session's test run lets Spotlight approve its tool calls (AG23 reads it) */; items?: Array<{ json: Record<string, unknown> }> /* ag5 carryover: the trigger's last event, for a session's run of a flow whose trigger waits for a test event */ } | { kind: 'debug' } | { kind: 'node'; nodeId: string; scope: 'from' | 'only' };
 
 interface EditorState {
   workflowId: string;
+  /** The `updatedAt` of the stored workflow this tab last loaded or saved: sent as `If-Match`, so a save over a newer one is refused (412). */
+  baseUpdatedAt?: string;
   name: string;
   description?: string;
   active: boolean;
@@ -145,6 +186,8 @@ interface EditorState {
   groups: GroupFlowNode[];
   /** Undo / redo depth, for the toolbar buttons. */
   history: { past: number; future: number };
+  /** Counts every recorded edit, undo and redo: whether the graph changed since a moment (Spotlight's Undo all fixes). */
+  edits: number;
   nodeTypes: Record<string, NodeTypeInfo>;
   /** Composite types (GET /api/composites): the contracts composite frames are checked against. */
   composites: CompositeTypeInfo[];
@@ -198,9 +241,10 @@ interface EditorState {
   onNodesChange(changes: NodeChange<CanvasNode>[]): void;
   onEdgesChange(changes: EdgeChange<FlowEdge>[]): void;
   onConnect(connection: Connection): void;
-  addNode(type: string, position: { x: number; y: number }, connectFrom?: PaletteRequest['from']): string | undefined;
+  /** `parameters`: the node starts with these set (an action picked from the node creator), what depends on them at its defaults. */
+  addNode(type: string, position: { x: number; y: number }, connectFrom?: PaletteRequest['from'], parameters?: Record<string, unknown>): string | undefined;
   /** Add a node from the node creator: placed, wired and (for edge splits) inserted. */
-  placeNode(type: string, request: PaletteRequest, fallback: { x: number; y: number }): string | undefined;
+  placeNode(type: string, request: PaletteRequest, fallback: { x: number; y: number }, parameters?: Record<string, unknown>): string | undefined;
   setPinData(nodeId: string, items?: NodeItem[]): void;
   /** Drop a starter flow onto the canvas (fresh ids, defaults filled in). */
   applyTemplate(template: FlowTemplate, origin?: { x: number; y: number }): void;
@@ -251,7 +295,12 @@ interface EditorState {
   commitName(): void;
   openNode(id?: string): void;
   openPalette(request?: PaletteRequest): void;
-  markSaved(): void;
+  /** The draft is saved: `updatedAt` is the stored workflow's new version. */
+  markSaved(updatedAt?: string, stored?: Workflow): void;
+  /** True when `stored` has the content this tab last loaded or saved: only `active`, `updatedAt` or the folder moved. */
+  storedMatchesSaved(stored: Workflow): boolean;
+  /** Take `updatedAt` as the baseline for the next save, with no change to the draft. */
+  rebase(updatedAt: string): void;
   toggleBreakpoint(id: string): void;
   startRun(debug?: boolean): void;
   applyEvent(event: ExecutionEvent): void;
@@ -360,9 +409,24 @@ interface Snapshot {
 }
 const HISTORY_LIMIT = 100;
 /** `saved`: savedContent() of the last save (or load), so undo / redo back to it is not "Unsaved". */
-const history = { past: [] as Snapshot[], future: [] as Snapshot[], last: undefined as { key: string; at: number } | undefined, batch: 0, dragging: false, resizing: false, saved: '' };
+const history = { past: [] as Snapshot[], future: [] as Snapshot[], last: undefined as { key: string; at: number } | undefined, batch: 0, dragging: false, resizing: false, saved: '', stored: '' };
 
 const snapshotOf = (s: Snapshot): Snapshot => ({ nodes: s.nodes, edges: s.edges, stickies: s.stickies, groups: s.groups, pinData: s.pinData, name: s.name, description: s.description, tags: s.tags, settings: s.settings });
+
+/** `history.saved`'s form for a stored workflow, so two stored versions compare in the server's own key order and shape. */
+const storedContent = (w: Workflow) => {
+  const flow = toFlow(w);
+  return savedContent({
+    ...flow,
+    stickies: toStickies(w.stickyNotes),
+    groups: toFrames(normalizeGroups(w.groups, w.nodes.map((n) => n.id))),
+    pinData: w.pinData ?? {},
+    name: w.name,
+    description: w.description,
+    tags: w.tags ?? [],
+    settings: w.settings ?? {},
+  });
+};
 
 /** What saving a snapshot writes, without selection and measurements. */
 const savedContent = (s: Snapshot) =>
@@ -398,6 +462,9 @@ function writeBreakpoints(workflowId: string, ids: string[]) {
   } catch {}
 }
 
+/** Per node, the last parameters whose routing was finished (see updateNode): what its connections' output numbers match. */
+const finishedParameters = new Map<string, Record<string, unknown>>();
+
 export const useEditor = create<EditorState>((set, get) => {
   /**
    * Save the canvas as an undo step before an edit. Edits with the same `key` within `windowMs` share one step (a drag,
@@ -414,7 +481,7 @@ export const useEditor = create<EditorState>((set, get) => {
     if (history.past.length > HISTORY_LIMIT) history.past.shift();
     history.future = [];
     history.last = key ? { key, at: now } : undefined;
-    set({ history: { past: history.past.length, future: 0 } });
+    set((s) => ({ history: { past: history.past.length, future: 0 }, edits: s.edits + 1 }));
   };
   const batch = <T,>(fn: () => T): T => {
     record();
@@ -438,6 +505,7 @@ export const useEditor = create<EditorState>((set, get) => {
       settings: snapshot.settings,
       openNodeId: snapshot.nodes.some((n) => n.id === s.openNodeId) ? s.openNodeId : undefined,
       history: { past: history.past.length, future: history.future.length },
+      edits: s.edits + 1,
       // Back at what was saved: "Saved" again.
       dirty: savedContent(snapshot) !== history.saved,
     }));
@@ -530,6 +598,7 @@ export const useEditor = create<EditorState>((set, get) => {
   stickies: [],
   groups: [],
   history: { past: 0, future: 0 },
+  edits: 0,
   nodeTypes: {},
   composites: [],
   dirty: false,
@@ -538,9 +607,11 @@ export const useEditor = create<EditorState>((set, get) => {
   ...emptyRun,
 
   load(workflow, nodeTypes) {
-    Object.assign(history, { past: [], future: [], last: undefined, batch: 0, dragging: false, resizing: false, saved: '' });
+    finishedParameters.clear();
+    Object.assign(history, { past: [], future: [], last: undefined, batch: 0, dragging: false, resizing: false, saved: '', stored: '' });
     set({
       workflowId: workflow.id,
+      baseUpdatedAt: workflow.updatedAt,
       name: workflow.name,
       description: workflow.description,
       active: Boolean(workflow.active),
@@ -560,6 +631,7 @@ export const useEditor = create<EditorState>((set, get) => {
       ...emptyRun,
     });
     history.saved = savedContent(get());
+    history.stored = storedContent(workflow);
   },
 
   setNodeTypes(nodeTypes) {
@@ -632,6 +704,14 @@ export const useEditor = create<EditorState>((set, get) => {
     const source = parseHandle(connection.sourceHandle);
     const target = parseHandle(connection.targetHandle);
     if (source.type !== target.type) return;
+    // AG17: a Run an Agent / Run a Team node runs a saved agent: its model, memory and tools are the agent's, so a drag that would wire one in is refused.
+    if (['ai_languageModel', 'ai_memory', 'ai_tool'].includes(target.type)) {
+      const bound = get().nodes.find((n) => n.id === connection.target);
+      if (bound && boundAgentRef(bound.data.wf)) {
+        toast.message(`${bound.data.wf.name}’s model, memory and tools are the agent’s: use + under the slot to change the agent`);
+        return;
+      }
+    }
     record();
     set((s) => {
       // Respect maxConnections on the target port.
@@ -650,7 +730,7 @@ export const useEditor = create<EditorState>((set, get) => {
     });
   },
 
-  addNode(type, position, connectFrom) {
+  addNode(type, position, connectFrom, initial) {
     const info = get().nodeTypes[type];
     if (!info) return undefined;
     return batch(() => {
@@ -668,7 +748,11 @@ export const useEditor = create<EditorState>((set, get) => {
           name: uniqueName(info.descriptor.displayName, get().nodes),
           type,
           typeVersion: defaultVersionOf(info.descriptor),
-          parameters: slotPort?.displayOptions ? withPropertyDefaults(info.descriptor.properties, portParameters(slotPort)) : defaultParameters(info.descriptor),
+          parameters: initial
+            ? withPropertyDefaults(info.descriptor.properties, initial)
+            : slotPort?.displayOptions
+              ? withPropertyDefaults(info.descriptor.properties, portParameters(slotPort))
+              : defaultParameters(info.descriptor),
         },
       },
       selected: true,
@@ -694,7 +778,7 @@ export const useEditor = create<EditorState>((set, get) => {
     });
   },
 
-  placeNode(type, request, fallback) {
+  placeNode(type, request, fallback, initial) {
     const state = get();
     const info = state.nodeTypes[type];
     if (!info) return undefined;
@@ -708,10 +792,12 @@ export const useEditor = create<EditorState>((set, get) => {
       if (from.handleType === 'target' && handle.type !== 'main') {
         // Sub-node: under the parent's port, next to its siblings.
         const siblings = state.edges.filter((e) => e.target === anchor.id && e.data?.connectionType !== 'main').length;
-        position = { x: anchor.position.x + siblings * 110, y: anchor.position.y + 190 };
+        // AG12: a tall parent (an agent's band, a team's roster) keeps its sub-nodes clear of its slot labels and + buttons.
+        position = { x: anchor.position.x + siblings * 110, y: anchor.position.y + Math.max(190, (anchor.measured?.height ?? 0) + SUBNODE_CLEARANCE) };
       } else {
         // Next step: one column to the right, branches fanned out by output index.
-        const outputs = state.nodeTypes[anchor.data.wf.type]?.descriptor.outputs.filter((p) => p.type === 'main').length ?? 1;
+        const anchorType = state.nodeTypes[anchor.data.wf.type];
+        const outputs = anchorType ? expandPorts(anchorType.descriptor.outputs, anchor.data.wf.parameters).filter((p) => p.type === 'main').length : 1;
         position = { x: anchor.position.x + 260, y: anchor.position.y + (handle.index - (outputs - 1) / 2) * 150 };
       }
     }
@@ -719,6 +805,14 @@ export const useEditor = create<EditorState>((set, get) => {
     // Don't drop it on top of another node.
     const taken = (p: { x: number; y: number }) => state.nodes.some((n) => Math.abs(n.position.x - p.x) < 120 && Math.abs(n.position.y - p.y) < 110);
     if (!split) for (let i = 0; i < 12 && taken(position); i++) position = { x: position.x, y: position.y + 140 };
+    // AG16: never on a bound node's bubbles: a next step lands right of them (+ 40), anything else below.
+    if (!split && !(from?.handleType === 'target' && parseHandle(from.handleId).type !== 'main')) {
+      const info = state.nodeTypes[type];
+      const width = info?.descriptor.inputs.some((p) => p.type !== 'main') ? NODE_WIDE_TILE : NODE_TILE;
+      const probe: ClearBox = { id: '__new__', x: position.x, y: position.y, width, height: NODE_TILE };
+      const moved = clearOfBubbles([...bubbleBoxes(state.nodes, state.edges, state.nodeTypes), probe], new Set(['__new__']))['__new__'];
+      if (moved) position = moved;
+    }
 
     if (split) {
       // Make room: everything downstream of the split shifts one column right.
@@ -730,7 +824,7 @@ export const useEditor = create<EditorState>((set, get) => {
       set((s) => ({ nodes: s.nodes.map((n) => (downstream.has(n.id) ? { ...n, position: { x: n.position.x + 260, y: n.position.y } } : n)), edges: s.edges.filter((e) => e.id !== split.id) }));
       position = { x: (anchor?.position.x ?? position.x) + 260, y: anchor?.position.y ?? position.y };
     }
-    const id = get().addNode(type, position, from);
+    const id = get().addNode(type, position, from, initial);
     if (id && split && info.descriptor.inputs.some((p) => p.type === 'main') && info.descriptor.outputs.some((p) => p.type === 'main')) {
       get().onConnect({ source: id, sourceHandle: handleId('main', 0), target: split.target, targetHandle: split.targetHandle ?? handleId('main', 0) });
     }
@@ -798,7 +892,7 @@ export const useEditor = create<EditorState>((set, get) => {
 
   replaceGraph(workflow, focus) {
     record();
-    const before = { nodes: get().nodes, edges: get().edges, pinData: get().pinData, groups: get().groups };
+    const before = { nodes: get().nodes, edges: get().edges, pinData: get().pinData, groups: get().groups, settings: get().settings };
     const flow = toFlow(workflow);
     set((s) => {
       const oldNodes = new Map(s.nodes.map((n) => [n.id, n]));
@@ -813,12 +907,17 @@ export const useEditor = create<EditorState>((set, get) => {
         }),
         edges: flow.edges.map((e) => oldEdges.get(e.id) ?? e),
         pinData: workflow.pinData ?? {},
+        settings: workflow.settings ?? s.settings,
         ...(focus?.added && { lastAddedId: focus.id }),
         openNodeId: flow.nodes.some((n) => n.id === s.openNodeId) ? s.openNodeId : undefined,
         dirty: true,
       };
     });
-    return () => set({ ...before, dirty: true });
+    // Undoing is an edit too: ⌘Z afterwards goes back to before the undo.
+    return () => {
+      record();
+      set({ ...before, dirty: true });
+    };
   },
 
   tidyUp() {
@@ -883,7 +982,20 @@ export const useEditor = create<EditorState>((set, get) => {
       const node = nodes.find((n) => n.id === parent);
       if (!base || !node) continue;
       const left = base.x + widthOf(node) / 2 - ((children.length - 1) * SUBNODE_PITCH + 64) / 2;
-      children.forEach((id, i) => (positions[id] = { x: left + i * SUBNODE_PITCH, y: base.y + 200 }));
+      // AG12: below the slot labels and + buttons of a tall parent (a banded agent or team tile), 200 otherwise (ag3 fix: SUBNODE_CLEARANCE).
+      const below = Math.max(200, (node.measured?.height ?? 0) + SUBNODE_CLEARANCE);
+      children.forEach((id, i) => (positions[id] = { x: left + i * SUBNODE_PITCH, y: base.y + below }));
+    }
+    // AG16: nothing sits on a bound node's bubbles (its footprint): what overlaps goes right of it (a next step) or below it.
+    const laidOut = nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id], measured: { width: widthOf(n), height: n.measured?.height ?? NODE_TILE } } : n));
+    const clear = clearOfBubbles(bubbleBoxes(laidOut, edges, nodeTypes, new Set(subIds)));
+    // A node moved off the bubbles takes its wired sub-nodes along (they were centred under it by the pass above).
+    const before = { ...positions };
+    for (const [id, at] of Object.entries(clear)) positions[id] = at;
+    for (const e of subEdges) {
+      const to = clear[e.target];
+      const was = before[e.target];
+      if (to && was && positions[e.source] && !clear[e.source]) positions[e.source] = { x: positions[e.source].x + to.x - was.x, y: positions[e.source].y + to.y - was.y };
     }
     set((s) => {
       const nodes = s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n));
@@ -893,10 +1005,33 @@ export const useEditor = create<EditorState>((set, get) => {
 
   updateNode(id, patch) {
     record(`node:${id}`, 1500);
-    set((s) => ({
-      nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { wf: { ...n.data.wf, ...patch } } } : n)),
-      dirty: true,
-    }));
+    set((s) => {
+      const node = s.nodes.find((n) => n.id === id);
+      let edges = s.edges;
+      if (node && patch.parameters && s.nodeTypes[node.data.wf.type]?.descriptor.outputs.some((p) => p.expand)) {
+        // The question being routed by was renamed (a keystroke in its Name): Route By follows it in the same change.
+        const was = decideQuestions(node.data.wf.parameters.questions);
+        const now = decideQuestions(patch.parameters.questions);
+        const route = String(node.data.wf.parameters.routeBy ?? '').trim();
+        const renamed = route && was.length === now.length ? now.find((q, i) => String(was[i].name ?? '').trim() === route && String(q.name ?? '').trim() !== route) : undefined;
+        if (renamed && patch.parameters.routeBy === node.data.wf.parameters.routeBy) patch = { ...patch, parameters: { ...patch.parameters, routeBy: String(renamed.name ?? '').trim() } };
+        // A node whose outputs follow its parameters (Decide): a connection stays on the output of the same name when the
+        // options change. While the routing is unfinished (half-typed name, cleared options) nothing moves: the next
+        // finished state is compared with the last finished one, which the connections still match.
+        if (decideRoutingFinished(patch.parameters!)) {
+          const base = finishedParameters.get(id) ?? node.data.wf.parameters;
+          const mine = (e: FlowEdge) => e.source === id && (e.data?.connectionType ?? 'main') === 'main';
+          const indexOf = (e: FlowEdge) => Number((e.sourceHandle ?? 'main:0').split(':')[1] ?? 0);
+          const moved = remapExpandedConnections(base, patch.parameters!, s.edges.filter(mine).map((e) => ({ edge: e, sourceIndex: indexOf(e) })));
+          const kept = new Map(moved.map((m) => [m.edge.id, `main:${m.sourceIndex}`]));
+          edges = s.edges.flatMap((e) => (!mine(e) ? [e] : kept.has(e.id) ? [{ ...e, sourceHandle: kept.get(e.id) }] : []));
+          finishedParameters.set(id, patch.parameters!);
+        } else if (!finishedParameters.has(id) && decideRoutingFinished(node.data.wf.parameters)) {
+          finishedParameters.set(id, node.data.wf.parameters);
+        }
+      }
+      return { nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { wf: { ...n.data.wf, ...patch } } } : n)), edges, dirty: true };
+    });
   },
 
   renameNode(id, name) {
@@ -1108,6 +1243,7 @@ export const useEditor = create<EditorState>((set, get) => {
   },
 
   undo() {
+    finishedParameters.clear();
     const previous = history.past.pop();
     if (!previous) return;
     history.future.push(snapshotOf(get()));
@@ -1116,6 +1252,7 @@ export const useEditor = create<EditorState>((set, get) => {
   },
 
   redo() {
+    finishedParameters.clear();
     const next = history.future.pop();
     if (!next) return;
     history.past.push(snapshotOf(get()));
@@ -1153,9 +1290,18 @@ export const useEditor = create<EditorState>((set, get) => {
     set({ palette: request });
   },
 
-  markSaved() {
+  storedMatchesSaved(stored) {
+    return storedContent(stored) === history.stored;
+  },
+
+  rebase(updatedAt) {
+    set({ baseUpdatedAt: updatedAt });
+  },
+
+  markSaved(updatedAt, stored) {
     history.saved = savedContent(get());
-    set({ dirty: false });
+    history.stored = stored ? storedContent(stored) : history.saved;
+    set({ dirty: false, ...(updatedAt && { baseUpdatedAt: updatedAt }) });
   },
 
   toggleBreakpoint(id) {
@@ -1349,7 +1495,8 @@ export const useEditor = create<EditorState>((set, get) => {
       settings: s.settings,
       stickyNotes: fromStickies(s.stickies),
       groups: fromFrames(s.groups, s.nodes),
-      pinData: Object.keys(s.pinData).length ? Object.fromEntries(Object.entries(s.pinData).filter(([id]) => s.nodes.some((n) => n.id === id))) : undefined,
+      // AG01: always sent, `{}` when there are none, so the last Unpin reaches the server.
+      pinData: Object.fromEntries(Object.entries(s.pinData).filter(([id]) => s.nodes.some((n) => n.id === id))),
       nodes: s.nodes.map((n) => ({ ...n.data.wf, position: [Math.round(n.position.x), Math.round(n.position.y)] as [number, number] })),
       connections: s.edges.map((e) => {
         const source = parseHandle(e.sourceHandle);

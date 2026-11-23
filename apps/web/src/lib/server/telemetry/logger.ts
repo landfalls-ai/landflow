@@ -1,11 +1,15 @@
 /**
  * Structured logger: one JSON object per line on stdout (or `pretty` lines),
  * stamped with the active span's trace and span ids. String values under
- * secret-looking keys are redacted. See docs/observability.md §3.
+ * secret-looking keys are redacted and secret-shaped values (Bearer tokens, API keys, URL userinfo, private keys) are
+ * scrubbed from every string. Inside an API request each line also carries the request id, user, API key id and route. See docs/observability.md §3.
  */
 import { context, logs, SeverityNumber, trace } from '@opentelemetry/api';
+import { requestLogFields } from '../audit/context';
+import { redactPatterns } from '../secrets/redact';
 import { singleton } from '../singleton';
 import { SECRET_KEY, telemetryConfig, type LogLevel } from './config';
+import { exceptionFingerprint } from './fingerprint';
 
 export type LogAttributes = Record<string, unknown>;
 
@@ -13,7 +17,7 @@ export interface Logger {
   debug(message: string, attributes?: LogAttributes): void;
   info(message: string, attributes?: LogAttributes): void;
   warn(message: string, attributes?: LogAttributes): void;
-  /** `attributes.error` may be an Error: its message, type and stack are logged. */
+  /** `attributes.error` may be an Error: its message, type, fingerprint and stack are logged. */
   error(message: string, attributes?: LogAttributes): void;
   /** A logger that adds these attributes to every line. */
   child(attributes: LogAttributes): Logger;
@@ -26,8 +30,12 @@ export function isEnabled(level: LogLevel) {
   return SEVERITY[level] >= SEVERITY[telemetryConfig.logLevel];
 }
 
-/** Redact string values under secret-looking keys, recursively (numbers such as token counts are kept). */
+/**
+ * Redact string values under secret-looking keys, recursively (numbers such as token counts are kept), and replace
+ * secret-shaped values in every other string (secrets/redact `redactPatterns`; one pass, so a line is walked once).
+ */
 export function redact(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') return redactPatterns(value);
   if (depth > 6 || value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map((entry) => redact(entry, depth + 1));
   const out: Record<string, unknown> = {};
@@ -39,9 +47,9 @@ export function redact(value: unknown, depth = 0): unknown {
 
 function errorFields(error: unknown): LogAttributes {
   if (error instanceof Error) {
-    return { error: error.message, 'exception.type': error.name, ...(error.stack && { 'exception.stacktrace': error.stack }) };
+    return { error: error.message, 'exception.type': error.name, 'exception.fingerprint': exceptionFingerprint(error), ...(error.stack && { 'exception.stacktrace': error.stack }) };
   }
-  return { error: String(error) };
+  return { error: String(error), 'exception.fingerprint': exceptionFingerprint(error) };
 }
 
 /** Write one record. `fields` are written after ts/level/service/msg/trace ids, in order. */
@@ -51,8 +59,10 @@ export function writeRecord(level: LogLevel, message: string, fields: LogAttribu
     ts: at.toISOString(),
     level,
     service: telemetryConfig.serviceName,
-    msg: message,
+    msg: redactPatterns(message),
     ...(ids && trace.isSpanContextValid(ids) && { trace_id: ids.traceId, span_id: ids.spanId }),
+    // Added here, not through redact(): kept apart from the caller's fields so the ids need no key-name rule.
+    ...requestLogFields(),
     ...(redact(fields) as LogAttributes),
   };
   const scrubbed = scrub(record);

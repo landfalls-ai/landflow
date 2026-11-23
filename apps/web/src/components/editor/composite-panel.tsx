@@ -66,7 +66,7 @@ export function CompositePanel({ groupId, report, onClose }: { groupId: string; 
   return (
     <div
       ref={ref}
-      className="nodrag nowheel flex max-h-[min(70vh,640px)] w-[340px] flex-col overflow-hidden rounded-[14px] border border-hair bg-sf text-[12.5px] shadow-pop animate-in"
+      className="nodrag nowheel flex max-h-[min(70vh,640px)] w-[340px] flex-col overflow-hidden rounded-[14px] border border-hair bg-sf text-[12px] shadow-pop animate-in"
       style={room ? { maxHeight: room } : undefined}
       onClick={(e) => e.stopPropagation()}
     >
@@ -75,8 +75,8 @@ export function CompositePanel({ groupId, report, onClose }: { groupId: string; 
           <NodeIcon icon={descriptor?.icon ?? 'lucide:boxes'} size={15} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13.5px] font-semibold text-t1">{descriptor?.displayName ?? report.type}</div>
-          <div className="truncate font-mono text-[10.5px] text-t3">
+          <div className="truncate text-[13px] font-semibold text-t1">{descriptor?.displayName ?? report.type}</div>
+          <div className="truncate font-mono text-[11px] text-t3">
             {report.type} v{report.version}
             {info?.source.kind === 'plugin' ? ` · ${info.source.pluginName}` : info ? ' · saved here' : ''}
           </div>
@@ -113,10 +113,10 @@ export function CompositePanel({ groupId, report, onClose }: { groupId: string; 
                     {slot.locked && <Lock className="size-3 text-t3" aria-label="Locked" />}
                     <span className="ml-auto text-[11px] text-t3">{bounds(slot)}</span>
                   </div>
-                  <div className="text-[11.5px] text-t3">Takes {describeMatcher(slot.accepts, lookup)}</div>
+                  <div className="text-[11px] text-t3">Takes {describeMatcher(slot.accepts, lookup)}</div>
                   <div className="flex flex-wrap items-center gap-1">
                     {slot.filled.map((id) => (
-                      <span key={id} className="flex h-6 items-center gap-1 rounded-full border border-hair bg-sf2 pl-1.5 pr-1 text-[11.5px] text-t1">
+                      <span key={id} className="flex h-6 items-center gap-1 rounded-full border border-hair bg-sf2 pl-1.5 pr-1 text-[11px] text-t1">
                         <NodeIcon icon={iconOf(id) ?? 'lucide:boxes'} size={11} />
                         <button className="max-w-[150px] truncate hover:underline" onClick={() => nodes.some((n) => n.id === id) && openNode(id)}>
                           {nameOf(id)}
@@ -129,11 +129,11 @@ export function CompositePanel({ groupId, report, onClose }: { groupId: string; 
                       </span>
                     ))}
                     {room && !slot.composite && (
-                      <button onClick={() => add(slot)} className="flex h-6 items-center gap-1 rounded-full border border-dashed border-bd px-2 text-[11.5px] text-t2 hover:border-ac hover:text-ac">
+                      <button onClick={() => add(slot)} className="flex h-6 items-center gap-1 rounded-full border border-dashed border-bd px-2 text-[11px] text-t2 hover:border-ac hover:text-ac">
                         <Plus className="size-3" /> Add
                       </button>
                     )}
-                    {room && slot.composite && !slot.filled.length && <span className="text-[11.5px] text-t3">Drag a composite frame of that type into this one</span>}
+                    {room && slot.composite && !slot.filled.length && <span className="text-[11px] text-t3">Drag a composite frame of that type into this one</span>}
                   </div>
                 </div>
               );
@@ -153,7 +153,7 @@ export function CompositePanel({ groupId, report, onClose }: { groupId: string; 
                   <span className="min-w-0 truncate text-t1">{nameOf(id)}</span>
                   <span className="flex-1" />
                   {fits.map((slot) => (
-                    <button key={slot.name} onClick={() => bindSlotOf(groupId, id, slot.name)} className="h-6 rounded-full border border-hair px-2 text-[11.5px] text-t2 hover:border-ac hover:text-ac">
+                    <button key={slot.name} onClick={() => bindSlotOf(groupId, id, slot.name)} className="h-6 rounded-full border border-hair px-2 text-[11px] text-t2 hover:border-ac hover:text-ac">
                       Bind to {slot.displayName}
                     </button>
                   ))}
@@ -198,10 +198,10 @@ export function CompositePanel({ groupId, report, onClose }: { groupId: string; 
         {descriptor?.onError === 'fallback' && (
           <section className="flex flex-col gap-1.5">
             <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-t3">On failure</h3>
-            <p className="text-[11.5px] leading-snug text-t3">A node failing inside stops this frame, not the run: what entered the frame goes to these nodes with the error added.</p>
+            <p className="text-[11px] leading-snug text-t3">A node failing inside stops this frame, not the run: what entered the frame goes to these nodes with the error added.</p>
             <div className="flex flex-wrap items-center gap-1">
               {fallback.map((f) => (
-                <span key={f.target} className="flex h-6 items-center gap-1 rounded-full border border-hair bg-sf2 pl-1.5 pr-1 text-[11.5px] text-t1">
+                <span key={f.target} className="flex h-6 items-center gap-1 rounded-full border border-hair bg-sf2 pl-1.5 pr-1 text-[11px] text-t1">
                   <CornerDownRight className="size-3 text-t3" />
                   <span className="max-w-[150px] truncate">{nameOf(f.target)}</span>
                   <button aria-label={`Stop sending failures to ${nameOf(f.target)}`} onClick={() => setComposite({ fallback: fallback.filter((g) => g.target !== f.target) })} className="grid size-4 place-items-center rounded-full text-t3 hover:text-t1">
@@ -210,7 +210,7 @@ export function CompositePanel({ groupId, report, onClose }: { groupId: string; 
                 </span>
               ))}
               {fallbackChoices.length > 0 && (
-                <Select aria-label="Send failures to" className="h-6 w-auto text-[11.5px]" value="" onChange={(e) => e.target.value && setComposite({ fallback: [...fallback, { target: e.target.value }] })}>
+                <Select aria-label="Send failures to" className="h-6 w-auto text-[11px]" value="" onChange={(e) => e.target.value && setComposite({ fallback: [...fallback, { target: e.target.value }] })}>
                   <option value="">Send failures to…</option>
                   {fallbackChoices.map((n) => (
                     <option key={n.id} value={n.id}>
@@ -219,7 +219,7 @@ export function CompositePanel({ groupId, report, onClose }: { groupId: string; 
                   ))}
                 </Select>
               )}
-              {!fallback.length && !fallbackChoices.length && <span className="text-[11.5px] text-t3">Add a node outside the frame to send failures to.</span>}
+              {!fallback.length && !fallbackChoices.length && <span className="text-[11px] text-t3">Add a node outside the frame to send failures to.</span>}
             </div>
           </section>
         )}

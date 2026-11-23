@@ -272,6 +272,14 @@ all constant-time: `verify_github_signature`, `verify_stripe_signature(secret, b
 `verify_slack_signature(secret, body, timestamp, signature)`, `verify_hmac_sha256(secret, payload, signature,
 prefix=..., encoding=...)`, `safe_equal`, and `github_signature` / `stripe_signature` / `slack_signature` for tests.
 
+### Activity items (`landflow_sdk.activity`)
+
+`activity_item(source=, source_id=, occurred_at=, kind=, title=, summary=, url=, actor_email=, team_hint=,
+initiative_hint=, customer_hint=, raw=, cursor=)` returns the normalised item an integration trigger or List Changed
+Since operation outputs ([protocol §16](../../docs/protocol.md#16-activity-items)), and `ACTIVITY_ITEM_SCHEMA` is its
+`outputSchema`. It raises `ValueError` on a missing source or id, a bad kind or time; TypeScript and Go build the same
+item from the same input.
+
 ### JWTs for GitHub Apps (`landflow_sdk.jwt`)
 
 A service that authenticates the *client* with a signed token (GitHub Apps) needs RS256. `landflow_sdk.jwt` does it in pure standard

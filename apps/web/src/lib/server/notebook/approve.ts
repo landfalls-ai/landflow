@@ -3,13 +3,15 @@
  * (brain/proposals.ts applyProposal). Kept apart from the service so the second brain can call it without a cycle.
  */
 import { noteStore } from './store';
+import { HttpError } from '../errors';
 
-export class NoteError extends Error {
+export class NoteError extends HttpError {
+  static readonly errorName: string = 'NoteError';
   constructor(
     message: string,
-    readonly status = 400,
+    status = 400,
   ) {
-    super(message);
+    super(message, status, { expose: true });
   }
 }
 

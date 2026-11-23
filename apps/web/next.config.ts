@@ -34,7 +34,11 @@ const nextConfig: NextConfig = {
     // the SQS client is kept external like the S3 one.
     '@aws-sdk/client-sqs',
     '@google-cloud/pubsub',
+    // Strict expression backend (LANDFLOW_EXPRESSION_SANDBOX=isolate): a native addon, an optional dependency of the engine.
+    'isolated-vm',
   ],
+  // No `x-powered-by: Next.js` fingerprint.
+  poweredByHeader: false,
   devIndicators: false,
   // No persistent Turbopack cache for `next dev`: a stale one in .next/dev/cache made the browser reload in a loop.
   experimental: { turbopackFileSystemCacheForDev: false },

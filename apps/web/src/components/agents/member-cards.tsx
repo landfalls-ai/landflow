@@ -1,6 +1,6 @@
 'use client';
 /**
- * The team's members as cards (docs/agent-teams.md#member-cards), above the org chart in the new look: a big face, the
+ * The team's members as cards (docs/agent-teams.md#member-cards), above the org chart: a big face, the
  * team's name and the member's title, “what I do” lines, and chips for where it runs, who it may consult, its budget and
  * how its last turn went. While a run goes on, the member at work is outlined in its colour and says “Working…”. On a
  * phone the cards swipe sideways (scroll-snap); on a wide screen they wrap. A tap opens the agent's page.
@@ -15,6 +15,7 @@ import { Chip } from '../ui/badge';
 import { AgentAvatar } from './avatar';
 import { faceOf } from './faces';
 import { modelLabel, type LastTeamRun } from './team-run-data';
+import { DevOnly } from '@/lib/client/developer-details';
 
 /** Where a member runs, in a few words: Claude Code on kagent, or its model. */
 export function runsOnLabel(member: TeamMember, agent?: AgentSummary): string | undefined {
@@ -93,7 +94,11 @@ export function MemberCards({ config, teamName, agents, run }: { config: AgentTe
                   <div className="flex flex-1 flex-col p-3.5">{body}</div>
                 )}
                 <div className="mt-auto flex flex-wrap gap-1.5 border-t border-hair px-3.5 py-2.5">
-                  {runsOn && <Chip tone="accent">{runsOn}</Chip>}
+                  {runsOn && (
+                    <DevOnly>
+                      <Chip tone="accent">{runsOn}</Chip>
+                    </DevOnly>
+                  )}
                   {consults.length > 0 && <Chip className="whitespace-normal border-dashed">Consults {consults.join(', ')}</Chip>}
                   {member.budgetTokens !== undefined && <Chip>{formatTokens(member.budgetTokens)} tokens a run</Chip>}
                   {turn && <Chip tone={turn.startsWith('Over') ? 'danger' : 'muted'}>{turn}</Chip>}

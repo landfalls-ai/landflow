@@ -39,6 +39,9 @@ FROM deps AS build
 COPY . .
 # Turns on `output: 'standalone'` in apps/web/next.config.ts.
 ENV LANDFLOW_NEXT_OUTPUT=standalone
+# The docs for agents (docs/published.json → docs/llms.txt and the built, uncommitted docs/llms-full.txt, C25), served by the host
+# at /llms.txt and /llms-full.txt. Fails the build on a published page that holds a secret-looking string or an internal link.
+RUN node scripts/llms.mjs --write
 # pulsar-client's package.json is patched (patches/pulsar-client@1.18.0.patch, installed by pnpm in the deps stage): its
 # node-pre-gyp `binary` block gets the `napi_versions` field Turbopack's externals tracing needs, with module_path and remote_path
 # written so node-pre-gyp still finds the same binary (lib/binding/pulsar.node) at run time.
@@ -48,17 +51,21 @@ RUN pnpm --filter @landflow/web build \
 # the same image runs mains (`node server.js`) and workers (`node worker.mjs`). The broker clients with native addons or
 # file-based protos stay external (next.config.ts serverExternalPackages): the standalone output ships them, and the
 # worker resolves them from apps/web/node_modules like the mains do.
+# The banner gives the ESM bundle CommonJS's require, __filename and __dirname: bundled CommonJS dependencies read them
+# (next/server's compiled ua-parser reads __dirname when it loads).
 RUN ESBUILD="$(ls -d /app/node_modules/.pnpm/esbuild@*/node_modules/esbuild/bin/esbuild | sort -V | tail -1)" \
  && cd apps/web && "$ESBUILD" src/lib/server/cluster/worker-main.ts --bundle --platform=node --format=esm --target=node22 \
     --tsconfig=tsconfig.json --outfile=dist/worker.mjs --log-level=warning \
-    --external:@confluentinc/kafka-javascript --external:pulsar-client --external:@aws-sdk/client-sqs --external:@google-cloud/pubsub \
-    --banner:js="import { createRequire as __lfCreateRequire } from 'node:module'; const require = __lfCreateRequire(import.meta.url);"
+    --external:@confluentinc/kafka-javascript --external:pulsar-client --external:@aws-sdk/client-sqs --external:@google-cloud/pubsub --external:isolated-vm \
+    --banner:js="import { createRequire as __lfCreateRequire } from 'node:module'; import { fileURLToPath as __lfPath } from 'node:url'; const require = __lfCreateRequire(import.meta.url); const __filename = __lfPath(import.meta.url); const __dirname = __lfPath(new URL('.', import.meta.url));"
 
 FROM ${NODE_IMAGE} AS runtime
 LABEL org.opencontainers.image.title="landflow-host" \
       org.opencontainers.image.description="Landflow host: UI, API, engine and plugin registry (Next.js standalone)"
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_MANUAL_SIG_HANDLE=true \
+    NODE_OPTIONS=--no-node-snapshot \
     HOSTNAME=0.0.0.0 \
     PORT=3000 \
     LANDFLOW_DATA_DIR=/data
@@ -71,6 +78,8 @@ COPY --from=build --chown=node:node /app/apps/web/.next/static ./apps/web/.next/
 COPY --from=build --chown=node:node /app/apps/web/dist/worker.mjs ./apps/web/worker.mjs
 # Landflow's own Claude Code plugins (the landflow-harness mod), packed into images for kagent's agents (kagent/oci.ts).
 COPY --from=build --chown=node:node /app/apps/web/claude-plugins ./apps/web/claude-plugins
+# The two files the host serves at /llms.txt and /llms-full.txt (lib/server/llms.ts reads `<cwd>/llms`).
+COPY --from=build --chown=node:node /app/docs/llms.txt /app/docs/llms-full.txt ./apps/web/llms/
 # The worker bundle keeps the broker clients external (above). Next's standalone output ships them inside the pnpm store
 # and reaches them through its own hashed aliases, which only the mains use: link them where /app/apps/web/worker.mjs finds
 # them. The tracer also skips the native addons (kafka-javascript's build/, pulsar-client's lib/binding/), so they are
@@ -84,11 +93,21 @@ RUN --mount=type=bind,from=build,source=/app/node_modules/.pnpm,target=/store \
          done \
       && mkdir -p "/app/node_modules/$(dirname "$m")" && ln -sfn "$dir" "/app/node_modules/$m" || exit 1; \
     done
+# isolated-vm (LANDFLOW_EXPRESSION_SANDBOX=isolate, an optional dependency of the engine): linked where the mains and the
+# worker find it, with its addon. NODE_OPTIONS above is the flag it needs on Node 20+ and is harmless while it is unused.
+# An install that could not fetch or build it leaves nothing to copy, and the image then runs the realm only.
+RUN --mount=type=bind,from=build,source=/app/node_modules/.pnpm,target=/store \
+    rel="$(cd /store && ls -d isolated-vm@*/node_modules/isolated-vm 2>/dev/null | head -1)"; \
+    if [ -n "$rel" ]; then \
+      dir="/app/node_modules/.pnpm/$rel" && mkdir -p "$dir" && cp -a "/store/$rel/." "$dir/" \
+      && cp -aL "/store/$rel/../node-gyp-build" "$dir/../node-gyp-build" \
+      && ln -sfn "$dir" /app/node_modules/isolated-vm; \
+    fi
 USER node
 VOLUME ["/data"]
 # 5690: a worker's /healthz and /metrics (`node worker.mjs`, queue mode).
 EXPOSE 3000 7070 5690
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
-  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/health" || exit 1
+  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/health/ready" || exit 1
 WORKDIR /app/apps/web
 CMD ["node", "server.js"]

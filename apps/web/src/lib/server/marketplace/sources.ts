@@ -5,10 +5,11 @@
  */
 import { isAbsolute, resolve } from 'node:path';
 import type { MarketplaceLocation, ResolvedSource } from '../../shared/marketplace';
+import { envFlag } from '../config';
 
 const OWNER_REPO = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([A-Za-z0-9._-]{1,100})$/;
 
-export const localAllowed = () => process.env.LANDFLOW_MARKETPLACE_ALLOW_LOCAL === '1';
+export const localAllowed = () => envFlag('LANDFLOW_MARKETPLACE_ALLOW_LOCAL', false);
 
 /** `owner/repo` from a GitHub shorthand or a github.com URL (`.git` and trailing paths allowed). */
 export function githubRepo(value: string): { owner: string; repo: string; ref?: string; path?: string } | undefined {

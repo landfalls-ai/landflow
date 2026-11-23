@@ -1,0 +1,35 @@
+{
+  "event": "pull_request",
+  "action": "closed",
+  "deliveryId": "d-merged",
+  "body": {
+    "action": "closed",
+    "number": 42,
+    "pull_request": {
+      "number": 42,
+      "title": "Retry the sync job",
+      "html_url": "https://github.com/acme-demo/widgets/pull/42",
+      "body": "Adds a retry. Contact dev@example.com. x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x ",
+      "user": {
+        "login": "octo-dev"
+      },
+      "created_at": "2026-11-10T09:00:00Z",
+      "updated_at": "2026-11-10T09:00:00Z",
+      "merged": true,
+      "merged_at": "2026-11-11T10:00:00Z",
+      "closed_at": "2026-11-11T10:00:00Z",
+      "merged_by": {
+        "login": "octo-lead"
+      }
+    },
+    "repository": {
+      "full_name": "acme-demo/widgets"
+    },
+    "sender": {
+      "login": "octo-lead"
+    }
+  },
+  "headers": {
+    "x-github-event": "pull_request"
+  }
+}

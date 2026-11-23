@@ -1,0 +1,273 @@
+{
+  "kind": "landflow/template",
+  "version": 1,
+  "template": {
+    "name": "Landledger: incident cost to the room",
+    "description": "When a Landfall incident ends, this flow reads the room's services and the window it was open, asks Landledger what those services cost over that window (estimated: a share of each day's cost, the services' spend while it was open, not what the incident added), and posts it in the room as a note with a link to Landledger's Explore, for the postmortem. Landfall knows nothing of Landledger: Landflow carries the figure, through the landfall plugin.",
+    "categories": [
+      "incident-response",
+      "finance"
+    ],
+    "credentials": [
+      {
+        "id": "landfall",
+        "type": "landfall.landfallApi",
+        "name": "Landfall",
+        "description": "Base URL, org slug and an lf_key_ API key (it reads rooms and posts the note as its member)."
+      },
+      {
+        "id": "landledger",
+        "type": "landledger.landledgerApi",
+        "name": "Landledger (read)",
+        "description": "Landledger's API URL (in the cluster http://landledger-api.landflow-dev.svc.cluster.local:4810, on this machine http://127.0.0.1:4810) and an ll_ key with read."
+      }
+    ],
+    "setup": [
+      "Pick or add **Landfall** (an `lf_key_` API key) and **Landledger (read)** (an `ll_` key with `read`).",
+      "In **Settings**, set `LANDLEDGER_CONSOLE_URL` for the Explore link, and `SERVICE_NAMES` where Landfall names a service differently from Landledger's Explore.",
+      "Publish: **Room ended** polls Landfall every minute. For each incident that ends, the flow posts \"Pro-rated spend of these services during the incident (estimated), not the incident's extra cost: …\" in its room, per service, with the window and a link to Explore; \"No matching services: cost unknown\" when Landledger knows none of them, never $0.00.",
+      "A window over the 1st of a month says how much falls on that day: Landledger charges invoice lines with no daily estimate on the 1st, so that share may be part of a month's invoice. A room open longer than 31 days is asked in 31-day parts and added up (a year at most).",
+      "The landfall plugin can't write a postmortem section, so the cost is a room note; the postmortem is written from the room. A room that names no service gets nothing."
+    ],
+    "workflow": {
+      "name": "Landledger: incident cost to the room",
+      "description": "When a Landfall incident ends, this flow reads the room's services and the window it was open, asks Landledger what those services cost over that window (estimated: a share of each day's cost, the services' spend while it was open, not what the incident added), and posts it in the room as a note with a link to Landledger's Explore, for the postmortem. Landfall knows nothing of Landledger: Landflow carries the figure, through the landfall plugin.",
+      "groups": [],
+      "stickyNotes": [],
+      "nodes": [
+        {
+          "id": "ended",
+          "name": "Room ended",
+          "type": "landfall.landfallTrigger",
+          "typeVersion": 1,
+          "position": [
+            0,
+            200
+          ],
+          "parameters": {
+            "pollInterval": 60,
+            "events": [
+              "incidentEnded"
+            ]
+          },
+          "credentials": {
+            "landfallApi": {
+              "id": "landfall",
+              "name": "Landfall"
+            }
+          },
+          "notes": "Polls Landfall: an incident seen open that now has an ended status (resolved, closed, mitigated, recovered, done, archived), once."
+        },
+        {
+          "id": "settings",
+          "name": "Settings",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            260,
+            200
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// Settings. Landledger's console, for the Explore link; which Landfall entities are services; and Landfall's names for\n// services that Landledger's Explore names differently (Landfall name → Landledger name).\nconst LANDLEDGER_CONSOLE_URL = 'http://localhost:4811';\nconst SERVICE_KINDS = ['service'];\nconst SERVICE_NAMES = {};\nreturn { ...$json, settings: { consoleUrl: LANDLEDGER_CONSOLE_URL.replace(/\\/+$/, ''), serviceKinds: SERVICE_KINDS, serviceNames: SERVICE_NAMES } };"
+          },
+          "notes": "Landledger's console URL, which entity kinds are services, Landfall → Landledger service names."
+        },
+        {
+          "id": "room",
+          "name": "Read the room",
+          "type": "landfall.landfall",
+          "typeVersion": 1,
+          "position": [
+            520,
+            200
+          ],
+          "parameters": {
+            "resource": "incident",
+            "operation": "getRoom",
+            "incidentId": "{{ $json.incident.id }}"
+          },
+          "credentials": {
+            "landfallApi": {
+              "id": "landfall",
+              "name": "Landfall"
+            }
+          }
+        },
+        {
+          "id": "window",
+          "name": "Window and services",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            780,
+            200
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "all",
+            "code": "// The incident's services and window, from the room (not the poll's copy). Services: the alert's entity, entities\n// attached to the room, and service:<name> hints on its triggers, when their kind is a service. The window: from the\n// room's opening to the status change that ended it (or now, if none is in the timeline).\nconst { incident: seen, settings } = $('Settings').first().json;\nconst room = $input.first().json;\nconst events = room.events ?? [];\nconst ENDED = ['resolved', 'closed', 'mitigated', 'recovered', 'done', 'archived'];\nconst kinds = settings.serviceKinds.map((k) => k.toLowerCase());\nconst names = new Set();\nconst add = (kind, id) => { if (kind && id && kinds.includes(String(kind).toLowerCase())) names.add(settings.serviceNames[id] ?? String(id)); };\nconst hints = (list) => { for (const h of Array.isArray(list) ? list : []) { const i = String(h).indexOf(':'); if (i > 0) add(String(h).slice(0, i), String(h).slice(i + 1).trim()); } };\nadd(seen.alertEntity?.kind, seen.alertEntity?.id);\nif (seen.alertContext && typeof seen.alertContext === 'object') hints(seen.alertContext.entityHints);\nfor (const e of events) {\n  const p = e.payload ?? {};\n  if (e.type === 'context.attached') add(p.kind ?? p.entity?.kind, p.id ?? p.entity?.id);\n  add(p.entity?.kind, p.entity?.id);\n  hints(p.entityHints);\n}\nconst opened = events.find((e) => e.type === 'incident.opened');\nconst from = seen.createdAt ?? opened?.occurredAt;\nconst end = [...events].reverse().find((e) => e.type === 'status.changed' && ENDED.includes(String(e.payload?.status ?? '').toLowerCase()));\nconst to = end?.occurredAt ?? new Date().toISOString();\nconst services = [...names].sort();\nreturn [{ json: {\n  route: services.length && from && Date.parse(from) < Date.parse(to) ? 0 : 1,\n  incidentId: seen.id,\n  displayId: seen.displayId ?? room.incident?.displayId ?? seen.id,\n  title: seen.title ?? room.incident?.title ?? '',\n  status: end?.payload?.status ?? room.incident?.status ?? seen.status,\n  services,\n  from,\n  to,\n  consoleUrl: settings.consoleUrl,\n} }];"
+          }
+        },
+        {
+          "id": "named",
+          "name": "Services named?",
+          "type": "core.switch",
+          "typeVersion": 1,
+          "position": [
+            1040,
+            200
+          ],
+          "parameters": {
+            "mode": "expression",
+            "output": "{{ $json.route }}",
+            "options": {
+              "fallbackOutput": "none"
+            }
+          }
+        },
+        {
+          "id": "cost",
+          "name": "Cost of the window",
+          "type": "landledger.landledger",
+          "typeVersion": 1,
+          "position": [
+            1300,
+            120
+          ],
+          "parameters": {
+            "resource": "cost",
+            "operation": "window",
+            "services": "{{ $json.services.join(',') }}",
+            "windowFrom": "{{ $json.from }}",
+            "windowTo": "{{ $json.to }}"
+          },
+          "credentials": {
+            "landledgerApi": {
+              "id": "landledger",
+              "name": "Landledger (read)"
+            }
+          },
+          "notes": "Cost → Window: each day's cost of the services, by the share of the day inside the window; always estimated. Landledger answers at most 31 days a call: the node asks a longer window in 31-day parts (at most 12) and adds them up."
+        },
+        {
+          "id": "write",
+          "name": "Write the note",
+          "type": "core.code",
+          "typeVersion": 1,
+          "position": [
+            1560,
+            120
+          ],
+          "parameters": {
+            "language": "javascript",
+            "mode": "each",
+            "codeEach": "// The note: the services' pro-rated spend while the room was open, labelled estimated and not the incident's extra\n// cost, per service, with a link to Landledger's Explore. Posted as a room note, because the landfall plugin can't write\n// a postmortem section. Money as Landledger posts it: to the cent, half away from zero, on the decimal (no float).\nconst w = $('Window and services').first().json;\nconst cost = $input.first().json;\nconst micros = (v) => {\n  const m = /^(-)?(\\d+)(?:\\.(\\d{1,6}))?$/.exec(String(v ?? '').trim());\n  if (!m) return 0n;\n  const x = BigInt(m[2]) * 1000000n + BigInt((m[3] ?? '').padEnd(6, '0'));\n  return m[1] ? -x : x;\n};\nconst usd = (x) => {\n  const negative = x < 0n;\n  const abs = negative ? -x : x;\n  const cents = abs / 10000n + (abs % 10000n >= 5000n ? 1n : 0n);\n  return `${negative && cents ? '-' : ''}$${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;\n};\nconst at = (iso) => new Date(iso).toISOString().slice(0, 16).replace('T', ' ');\nconst list = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);\nconst minutes = Math.round((Date.parse(w.to) - Date.parse(w.from)) / 60000);\nconst span = minutes >= 1440 ? `${Math.floor(minutes / 1440)} d ${Math.floor((minutes % 1440) / 60)} h` : minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;\nconst window = `${at(w.from)} to ${at(w.to)} UTC (${span})`;\nconst services = cost.services ?? [];\nconst known = services.filter((s) => s.known);\nconst total = known.reduce((sum, s) => sum + micros(s.amount), 0n);\nconst lines = services.map((s) => (s.known ? `- ${s.service}: ${usd(micros(s.amount))}` : `- ${s.service}: no cost in Landledger under this name`));\n// The 1st of a month: Landledger charges an invoice's lines that have no daily estimate on that day, whole, so a window\n// over a 1st takes a share of a month's invoice, not only spend while the room was open. Said, with the amount.\nconst firsts = new Map();\nfor (const s of known) for (const d of s.days ?? []) if (/-01$/.test(String(d.day)) && micros(d.amount) !== 0n) firsts.set(d.day, (firsts.get(d.day) ?? 0n) + micros(d.amount));\nconst firstDays = [...firsts.keys()].sort();\nconst month = w.from.slice(0, 7);\nconst explore = `${w.consoleUrl}/explore?by=service&month=${month}&filter=${encodeURIComponent(w.services.map((s) => `service:${s}`).join(','))}`;\nconst text = [\n  known.length\n    ? `Pro-rated spend of these services during the incident (estimated), not the incident's extra cost: ${usd(total)} (USD), ${window}.`\n    : `No matching services: cost unknown. Landledger has no cost under ${list(w.services)}, ${window}.`,\n  ...lines,\n  ...(known.length ? [\"Estimated: each day's cost of these services in Landledger, by the share of the day inside the incident's window: what they cost while it was open, not what the incident added. Not an invoiced figure.\"] : []),\n  ...(firstDays.length ? [`Of this, ${usd([...firsts.values()].reduce((a, b) => a + b, 0n))} falls on ${list(firstDays)}: Landledger charges invoice lines that have no daily estimate on the 1st of the month, so ${firstDays.length > 1 ? 'those days' : 'that day'} may hold part of a month's invoice rather than spend during the incident.`] : []),\n  ...(Number(cost.chunks ?? 1) > 1 ? [`The window is longer than the 31 days Landledger answers at a time: it was asked in ${cost.chunks} parts and added up.`] : []),\n  `Explore in Landledger: ${explore}`,\n  `Posted by Landflow as a room note: it can't write a postmortem section.`,\n].join('\\n');\nreturn { incidentId: w.incidentId, text, total: known.length ? cost.total : null, known: known.length, services: cost.services, from: w.from, to: w.to, explore, chunks: Number(cost.chunks ?? 1) };"
+          }
+        },
+        {
+          "id": "post",
+          "name": "Post it in the room",
+          "type": "landfall.landfall",
+          "typeVersion": 1,
+          "position": [
+            1820,
+            120
+          ],
+          "parameters": {
+            "resource": "timeline",
+            "operation": "addNote",
+            "incidentId": "{{ $json.incidentId }}",
+            "text": "{{ $json.text }}"
+          },
+          "credentials": {
+            "landfallApi": {
+              "id": "landfall",
+              "name": "Landfall"
+            }
+          },
+          "notes": "A note (chat.message) in the room, as the member who owns the Landfall key. The landfall plugin has no postmortem operation, so the cost goes in the room's timeline, where the postmortem is written from."
+        },
+        {
+          "id": "noServices",
+          "name": "No service named: nothing to cost",
+          "type": "core.noOp",
+          "typeVersion": 1,
+          "position": [
+            1300,
+            320
+          ],
+          "parameters": {},
+          "notes": "The room names no service (no alert entity, attached entity or service: hint), or its window is empty."
+        }
+      ],
+      "connections": [
+        {
+          "id": "c1",
+          "type": "main",
+          "source": "ended",
+          "sourceIndex": 0,
+          "target": "settings",
+          "targetIndex": 0
+        },
+        {
+          "id": "c2",
+          "type": "main",
+          "source": "settings",
+          "sourceIndex": 0,
+          "target": "room",
+          "targetIndex": 0
+        },
+        {
+          "id": "c3",
+          "type": "main",
+          "source": "room",
+          "sourceIndex": 0,
+          "target": "window",
+          "targetIndex": 0
+        },
+        {
+          "id": "c4",
+          "type": "main",
+          "source": "window",
+          "sourceIndex": 0,
+          "target": "named",
+          "targetIndex": 0
+        },
+        {
+          "id": "c5",
+          "type": "main",
+          "source": "named",
+          "sourceIndex": 0,
+          "target": "cost",
+          "targetIndex": 0
+        },
+        {
+          "id": "c6",
+          "type": "main",
+          "source": "named",
+          "sourceIndex": 1,
+          "target": "noServices",
+          "targetIndex": 0
+        },
+        {
+          "id": "c7",
+          "type": "main",
+          "source": "cost",
+          "sourceIndex": 0,
+          "target": "write",
+          "targetIndex": 0
+        },
+        {
+          "id": "c8",
+          "type": "main",
+          "source": "write",
+          "sourceIndex": 0,
+          "target": "post",
+          "targetIndex": 0
+        }
+      ]
+    }
+  }
+}

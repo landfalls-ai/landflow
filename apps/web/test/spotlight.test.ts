@@ -6,14 +6,14 @@
 import { describe, expect, it } from 'vitest';
 import { completeBubbles, idleBubbles, liveMentions, mentionAt, type SpotlightContext, type SpotlightNode, type SpotlightType } from '@/lib/shared/spotlight';
 
-const type = (t: string, displayName: string, plugin = 'Built in', extra: Partial<SpotlightType> = {}): SpotlightType => ({ type: t, displayName, plugin, trigger: false, keywords: [], ...extra });
+const type = (t: string, displayName: string, plugin = 'Built-in', extra: Partial<SpotlightType> = {}): SpotlightType => ({ type: t, displayName, plugin, trigger: false, keywords: [], ...extra });
 const TYPES: SpotlightType[] = [
-  type('core.webhook', 'Webhook', 'Built in', { trigger: true }),
-  type('core.schedule', 'Schedule Trigger', 'Built in', { trigger: true }),
-  type('core.chatTrigger', 'Chat Trigger', 'Built in', { trigger: true }),
+  type('core.webhook', 'Webhook', 'Built-in', { trigger: true }),
+  type('core.schedule', 'Schedule Trigger', 'Built-in', { trigger: true }),
+  type('core.chatTrigger', 'Chat Trigger', 'Built-in', { trigger: true }),
   type('core.aiAgent', 'AI Agent'),
-  type('core.httpRequest', 'HTTP Request', 'Built in', { keywords: ['api', 'rest'] }),
-  type('core.removeDuplicates', 'Remove Duplicates', 'Built in', { keywords: ['dedupe', 'unique'] }),
+  type('core.httpRequest', 'HTTP Request', 'Built-in', { keywords: ['api', 'rest'] }),
+  type('core.removeDuplicates', 'Remove Duplicates', 'Built-in', { keywords: ['dedupe', 'unique'] }),
   type('messaging.slack', 'Slack', 'Messaging'),
   type('messaging.telegram', 'Telegram', 'Messaging'),
 ];
@@ -107,5 +107,16 @@ describe('Spotlight bubbles', () => {
     ];
     expect(liveMentions('Send @Format reply to Slack', mentions)).toHaveLength(2);
     expect(liveMentions('Send it to Telegram', mentions)).toEqual([]);
+  });
+});
+
+describe('bubbles after a test session', () => {
+  const flow = { nodes: [node('t', 'Webhook', { trigger: true, outgoing: true }), node('p', 'Post to Slack', { x: 300 })], types: [] };
+  it('offers to harden what passed, never to test again; and nothing to test while the person is needed', () => {
+    const passed = idleBubbles({ ...flow, outcome: 'passed' }, 9).map((b) => b.label);
+    expect(passed).toContain('Add error handling to “Post to Slack”');
+    expect(passed).not.toContain('Test it and fix what fails');
+    expect(idleBubbles({ ...flow, outcome: 'needs' }, 9).map((b) => b.label)).not.toContain('Test it and fix what fails');
+    expect(idleBubbles(flow, 9).map((b) => b.label)).toContain('Test it and fix what fails');
   });
 });

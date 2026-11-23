@@ -4,6 +4,8 @@
  */
 import type { JournalEvent } from '../../shared/run-trace';
 import { database } from '../db';
+import { isCold } from '../db/hot-mirror';
+import { readExecutionEvents, readRows } from '../db/reads';
 import { parse } from '../db/rows';
 
 /** A batch hit a sequence number somebody else wrote (a resumed run's other process): nothing of it was stored. */
@@ -13,14 +15,20 @@ export class SeqClash extends Error {
   }
 }
 
-/** The highest seq stored for an execution (0 = none). */
+/**
+ * The highest seq stored for an execution (0 = none). Postgres mode: the journal of a cold run is in Postgres, not in the
+ * copy, so this says 1 ("has events") for it, and `append` refuses it; a writer calls `promoteExecution` first (./checks).
+ */
 export function lastSeq(executionId: string): number {
+  if (isCold(database(), executionId)) return 1;
   return Number(database().get<{ seq: number | null }>('SELECT MAX(seq) AS seq FROM execution_events WHERE execution_id = ?', executionId)?.seq ?? 0);
 }
 
 /** Store a batch in one transaction. Throws SeqClash (and stores nothing) when one of the numbers is taken. */
 export function append(executionId: string, events: JournalEvent[]) {
   const db = database();
+  // The copy has none of a cold run's events, so it would number these from 1 over what Postgres holds.
+  if (isCold(db, executionId)) throw new Error('the journal of a cold run is in Postgres: load it with promoteExecution before appending');
   db.transaction(() => {
     for (const event of events) {
       const inserted = db.insertNew('execution_events', {
@@ -90,4 +98,48 @@ export function spanEvents(executionId: string): JournalEvent[] {
   return database()
     .all<{ data: string }>("SELECT data FROM execution_events WHERE execution_id = ? AND type LIKE 'span.%' ORDER BY seq", executionId)
     .flatMap((row) => parse<JournalEvent>(row.data) ?? []);
+}
+
+// Async readers over the read seam (db/reads.ts), for callers that may read a finished run's journal. The synchronous
+// ones above stay for writers that run during an execution.
+
+/** `read`, async. */
+export async function readEventsAsync(executionId: string, after = 0, limit = 500): Promise<JournalEvent[]> {
+  return (await readExecutionEvents(executionId, after, limit)).flatMap((text) => parse<JournalEvent>(text) ?? []);
+}
+
+/** `readAll`, async. */
+export async function readAllAsync(executionId: string): Promise<JournalEvent[]> {
+  const events: JournalEvent[] = [];
+  for (let after = 0; events.length < MAX_READ; ) {
+    const page = await readEventsAsync(executionId, after, 2000);
+    events.push(...page);
+    if (page.length < 2000) break;
+    after = page[page.length - 1].seq;
+  }
+  return events;
+}
+
+/** `lastSeq`, async. */
+export async function lastSeqAsync(executionId: string): Promise<number> {
+  const rows = await readRows<{ seq: number | null }>('SELECT MAX(seq) AS seq FROM execution_events WHERE execution_id = ?', executionId);
+  return Number(rows[0]?.seq ?? 0);
+}
+
+/** `checksSince`, async. */
+export async function checksSinceAsync(since: string): Promise<JournalEvent[]> {
+  const rows = await readRows<{ data: string }>("SELECT data FROM execution_events WHERE type = 'check' AND at >= ? ORDER BY at, seq", since);
+  return rows.flatMap((row) => parse<JournalEvent>(row.data) ?? []);
+}
+
+/** `spanStart`, async. */
+export async function spanStartAsync(executionId: string, spanId: string): Promise<Extract<JournalEvent, { type: 'span.started' }> | undefined> {
+  const rows = await readRows<{ data: string }>("SELECT data FROM execution_events WHERE execution_id = ? AND span_id = ? AND type = 'span.started' ORDER BY seq LIMIT 1", executionId, spanId);
+  return parse<Extract<JournalEvent, { type: 'span.started' }>>(rows[0]?.data);
+}
+
+/** `spanEvents`, async. */
+export async function spanEventsAsync(executionId: string): Promise<JournalEvent[]> {
+  const rows = await readRows<{ data: string }>("SELECT data FROM execution_events WHERE execution_id = ? AND type LIKE 'span.%' ORDER BY seq", executionId);
+  return rows.flatMap((row) => parse<JournalEvent>(row.data) ?? []);
 }

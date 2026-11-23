@@ -175,6 +175,10 @@ export function verifySlackRequest(secret: string, headers: Headers, body: strin
 
 export const APPROVE_ACTION = 'landflow_approve';
 export const REJECT_ACTION = 'landflow_reject';
+/** Ask a Person: opens a modal with the draft. */
+export const EDIT_ACTION = 'landflow_edit';
+/** The callback id of that modal. */
+export const EDIT_MODAL = 'landflow_confirm_edit';
 
 /** What a button carries back (its `value`, JSON): a workflow execution's or an agent session's tool call. */
 export type ApprovalTarget =
@@ -212,6 +216,49 @@ export function decidedBlocks(request: { title: string; tool: string; input: unk
     { type: 'section', text: { type: 'mrkdwn', text: `\`\`\`${escape(preview(request.input))}\`\`\`` } },
     { type: 'context', elements: [{ type: 'mrkdwn', text: `${request.approved ? '✅ Approved' : '❌ Rejected'}${who}${request.note ? ` — ${escape(request.note)}` : ''}` }] },
   ];
+}
+
+/** A section block's text may not pass 3,000 characters. */
+const draftText = (text: string) => (text.length > 2_800 ? `${text.slice(0, 2_800)}…` : text);
+
+/** Ask a Person: the draft with Approve / Edit (when allowed) / Reject. */
+export function confirmBlocks(request: { title: string; text: string; allowEdit: boolean; target: ApprovalTarget }): JsonObject[] {
+  const value = JSON.stringify(request.target);
+  const elements: JsonObject[] = [{ type: 'button', action_id: APPROVE_ACTION, style: 'primary', text: { type: 'plain_text', text: 'Approve' }, value }];
+  if (request.allowEdit && request.text.length <= 3_000) elements.push({ type: 'button', action_id: EDIT_ACTION, text: { type: 'plain_text', text: 'Edit' }, value });
+  elements.push({ type: 'button', action_id: REJECT_ACTION, style: 'danger', text: { type: 'plain_text', text: 'Reject' }, value });
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text: `*${escape(request.title)}*` } },
+    { type: 'section', text: { type: 'mrkdwn', text: escape(draftText(request.text)) } },
+    { type: 'actions', block_id: 'landflow_approval', elements },
+  ];
+}
+
+/** The same message once answered: the buttons replaced by who decided what (the text as approved, when edited). */
+export function confirmDecidedBlocks(request: { title: string; text: string; approved: boolean; edited?: boolean; user?: string; note?: string; comment?: string }): JsonObject[] {
+  const who = request.user ? ` by <@${request.user}>` : '';
+  const verdict = request.approved ? (request.edited ? '✅ Approved with changes' : '✅ Approved') : '❌ Rejected';
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text: `*${escape(request.title)}*` } },
+    { type: 'section', text: { type: 'mrkdwn', text: escape(draftText(request.text)) } },
+    { type: 'context', elements: [{ type: 'mrkdwn', text: `${verdict}${who}${request.note ? ` — ${escape(request.note)}` : ''}${request.comment ? `: “${escape(request.comment)}”` : ''}` }] },
+  ];
+}
+
+/** The modal Edit opens: the draft in a text box, and an optional comment. `meta` comes back with the submission. */
+export function editModal(request: { text: string; meta: string }): JsonObject {
+  return {
+    type: 'modal',
+    callback_id: EDIT_MODAL,
+    private_metadata: request.meta,
+    title: { type: 'plain_text', text: 'Edit and approve' },
+    submit: { type: 'plain_text', text: 'Approve' },
+    close: { type: 'plain_text', text: 'Cancel' },
+    blocks: [
+      { type: 'input', block_id: 'text', label: { type: 'plain_text', text: 'Text' }, element: { type: 'plain_text_input', action_id: 'text', multiline: true, initial_value: request.text.slice(0, 3_000) } },
+      { type: 'input', block_id: 'comment', optional: true, label: { type: 'plain_text', text: 'Comment' }, element: { type: 'plain_text_input', action_id: 'comment', multiline: true } },
+    ],
+  };
 }
 
 /** Slack's three mrkdwn control characters. */

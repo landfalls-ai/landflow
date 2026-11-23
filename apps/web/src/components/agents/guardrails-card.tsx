@@ -1,6 +1,6 @@
 'use client';
 /**
- * Build tab → Guardrails: checks on what goes into the agent (each user message) and what comes out (the final
+ * Abilities → Guardrails: checks on what goes into the agent (each user message) and what comes out (the final
  * answer), with the Guardrails node's checks. A rule blocks (the person gets the reply written here) or sanitizes
  * (PII, secrets, keywords and URLs are replaced and the run goes on). What a rule did shows in the session view.
  */
@@ -174,7 +174,7 @@ function RuleEditor({ stage, rule, onChange }: { stage: Stage; rule: AgentGuardr
               {checks.custom?.map((check, index) => (
                 <div key={index} className="mt-2 grid grid-cols-[1fr_auto] gap-2">
                   <Input aria-label="Check name" value={check.name} onChange={(e) => setChecks({ custom: checks.custom!.map((c, i) => (i === index ? { ...c, name: e.target.value } : c)) })} />
-                  <button type="button" aria-label="Remove check" className="text-t3 hover:text-red-600" onClick={() => setChecks({ custom: checks.custom!.filter((_, i) => i !== index).length ? checks.custom!.filter((_, i) => i !== index) : undefined })}>
+                  <button type="button" aria-label="Remove check" className="text-t3 hover:text-rd" onClick={() => setChecks({ custom: checks.custom!.filter((_, i) => i !== index).length ? checks.custom!.filter((_, i) => i !== index) : undefined })}>
                     <Trash2 className="size-3.5" />
                   </button>
                   <Textarea

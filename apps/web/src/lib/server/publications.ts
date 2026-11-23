@@ -13,7 +13,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Workflow } from '@landflow/engine';
 import type { PublishLogEntry, WorkflowPublication } from '../shared/publish';
-import { currentActorId } from './auth/context';
 import { database } from './db';
 import { singleton } from './singleton';
 import { logger } from './telemetry/logger';
@@ -169,28 +168,31 @@ export function publishLog(workflowId: string, limit = 50): PublishLogEntry[] {
     }));
 }
 
-/** Forget a deleted workflow's publication and timeline. */
-export function deletePublications(workflowId: string) {
-  if (!ID.test(workflowId)) return;
+/**
+ * Forget a deleted workflow's publication and timeline. Listeners are not told here: the returned function tells them,
+ * and a caller inside a larger transaction calls it after the commit (a rollback must not have announced anything).
+ */
+export function deletePublications(workflowId: string): () => void {
+  if (!ID.test(workflowId)) return () => {};
   const db = database();
   const had = Boolean(publishedVersionId(workflowId));
   db.transaction(() => {
     db.delete('workflow_publications', { workflow_id: workflowId });
     db.delete('workflow_publish_log', { workflow_id: workflowId });
   });
-  if (had) changed(workflowId);
+  return had ? () => changed(workflowId) : () => {};
 }
 
 /**
  * Keep the publication in line with a saved workflow's `active` flag (the store calls it inside the save's
  * transaction, with the version the save recorded or matched): active without a publication publishes that version,
- * inactive with one unpublishes. Saving an active workflow otherwise changes only the draft.
+ * inactive with one unpublishes, as `actor` (the saver; undefined: nobody). Saving an active workflow otherwise changes only the draft.
  */
-export function syncPublication(saved: Workflow, versionId: string | undefined): void {
+export function syncPublication(saved: Workflow, versionId: string | undefined, actor: string | undefined): void {
   try {
     const published = publishedVersionId(saved.id);
-    if (saved.active && !published && versionId) setPublication(saved.id, versionId, currentActorId(), 'Activated');
-    else if (!saved.active && published) clearPublication(saved.id, currentActorId(), 'Deactivated');
+    if (saved.active && !published && versionId) setPublication(saved.id, versionId, actor, 'Activated');
+    else if (!saved.active && published) clearPublication(saved.id, actor, 'Deactivated');
   } catch (error) {
     logger.warn('could not sync the publication with the active flag', { error, 'landflow.workflow.id': saved.id });
   }

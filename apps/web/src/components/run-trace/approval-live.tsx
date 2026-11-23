@@ -2,7 +2,7 @@
 /**
  * The approval card where the page has no Run Trace model of its own (the editor's waiting node, the execution view's phone
  * card): it reads the run's journal, finds the tool approval the member waits on and draws the same decision card as Needs you
- * (approval-card.tsx). New look only. `fallback` is drawn until the journal has the wait.
+ * (approval-card.tsx). `fallback` is drawn until the journal has the wait.
  */
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';

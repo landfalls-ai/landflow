@@ -22,6 +22,7 @@ Object.assign(process.env, ENV);
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
+const { singleton } = await import('@/lib/server/singleton');
 const { credentials } = await import('@/lib/server/credentials/vault');
 const { runWorkflow } = await import('@/lib/server/runner');
 const { hydrateToolImages, modelSeesImages } = await import('@/lib/server/nodes/tool-images');
@@ -206,7 +207,7 @@ describe('models that cannot see', () => {
 
 describe('references, never base64, in memory, the run record and the stream', () => {
   it('keeps references in memory and the journal, and the stream gets a size label', async () => {
-    const memoryStore = (globalThis as { __landflowMemory?: Map<string, unknown> }).__landflowMemory!;
+    const memoryStore = singleton('agent-memory', () => new Map<string, unknown>());
     memoryStore.clear();
     const record = await runAgent(models.openai(), {}, { memory: true });
     const everything = JSON.stringify(record);
@@ -226,7 +227,7 @@ describe('references, never base64, in memory, the run record and the stream', (
   });
 
   it('a later turn loads the remembered images again from their references, still newest N', async () => {
-    const memoryStore = (globalThis as { __landflowMemory?: Map<string, unknown> }).__landflowMemory!;
+    const memoryStore = singleton('agent-memory', () => new Map<string, unknown>());
     memoryStore.clear();
     // Turn 1 takes one screenshot; turn 2 (same workflow and session) takes two more.
     const id = 'wf_tool_images_memory';

@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 import { error, handler, json, parseBody } from '@/lib/server/http';
-import { externalSecrets, SecretsError } from '@/lib/server/secrets';
+import { externalSecrets } from '@/lib/server/secrets';
 
 export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ name: string }> };
@@ -17,12 +17,7 @@ export const GET = handler(async (_request: Request, { params }: Ctx) => {
 export const PATCH = handler(async (request: Request, { params }: Ctx) => {
   const body = await parseBody(request, z.strictObject({ enabled: z.boolean().optional(), settings: z.record(z.string(), z.union([z.string().max(20_000), z.number(), z.null()])).optional() }));
   if (!body.ok) return body.response;
-  try {
-    return json(externalSecrets.update((await params).name, body.data));
-  } catch (caught) {
-    if (caught instanceof SecretsError) return error(caught.message, caught.status);
-    throw caught;
-  }
+  return json(externalSecrets.update((await params).name, body.data));
 });
 
 export const DELETE = handler(async (_request: Request, { params }: Ctx) => (externalSecrets.delete((await params).name) ? json({ ok: true }) : error('Provider not found', 404)));

@@ -8,8 +8,8 @@
  */
 import { z } from 'zod';
 import { currentPrincipal } from '@/lib/server/auth/guard';
-import { CompositeError, listCompositeTypes, saveLocalComposite } from '@/lib/server/composites';
-import { error, handler, json, parseBody } from '@/lib/server/http';
+import { listCompositeTypes, saveLocalComposite } from '@/lib/server/composites';
+import { handler, json, parseBody } from '@/lib/server/http';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,10 +20,5 @@ const bodySchema = z.object({ descriptor: z.record(z.string(), z.unknown()) });
 export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, bodySchema);
   if (!body.ok) return body.response;
-  try {
-    return json({ composite: saveLocalComposite(body.data.descriptor, currentPrincipal()?.user.id) }, 201);
-  } catch (caught) {
-    if (caught instanceof CompositeError) return error(caught.message, caught.status, caught.details ? { details: caught.details } : {});
-    throw caught;
-  }
+  return json({ composite: saveLocalComposite(body.data.descriptor, currentPrincipal()?.user.id) }, 201);
 });

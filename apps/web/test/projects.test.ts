@@ -30,6 +30,7 @@ const { liveEventFilter } = await import('@/lib/server/projects/events');
 const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
+const { agentStore } = await import('@/lib/server/agents/store');
 const { runWorkflow } = await import('@/lib/server/runner');
 const { resourceCan } = await import('@/lib/shared/projects');
 
@@ -44,6 +45,8 @@ const credentialTransferRoute = await import('@/app/api/credentials/[id]/transfe
 const credentialTestRoute = await import('@/app/api/credentials/test/route');
 const dataTablesRoute = await import('@/app/api/data-tables/route');
 const agentsRoute = await import('@/app/api/agents/route');
+const agentRoute = await import('@/app/api/agents/[id]/route');
+const agentDesignRoute = await import('@/app/api/agents/design/route');
 const executionsRoute = await import('@/app/api/executions/route');
 const projectsRoute = await import('@/app/api/projects/route');
 const projectRoute = await import('@/app/api/projects/[id]/route');
@@ -250,9 +253,25 @@ describe('every resource route checks project access', () => {
   });
 
   it('routes that aren’t one resource are left to their handlers', () => {
-    for (const path of ['/api/workflows/import', '/api/credentials/test', '/api/agents/import', '/api/agents/models', '/api/agents/workflow-tools', '/api/executions/stop-all']) {
+    for (const path of ['/api/workflows/import', '/api/credentials/test', '/api/agents/import', '/api/agents/models', '/api/agents/workflow-tools']) {
       expect(guard(path === '/api/agents/models' || path === '/api/agents/workflow-tools' ? 'GET' : 'POST', path, dave), path).toBe('ok');
     }
+    // Stopping every project's runs is instance-wide: admins only (policy.ts).
+    expect(guard('POST', '/api/executions/stop-all', dave)).toBe(403);
+    expect(guard('POST', '/api/executions/stop-all', admin)).toBe('ok');
+  });
+
+  it('Spotlight\'s /api/agents/design is a route, not an agent called "design": an editor of a team project (and no one else\'s) reaches it, and its DELETE takes back an agent of their project', async () => {
+    for (const method of ['POST', 'DELETE']) expect([method, guard(method, '/api/agents/design', dave)]).toEqual([method, 'ok']);
+    expect(guard('DELETE', '/api/agents/design', bob)).toBe('ok');
+    const made = await call(agentsRoute.POST, `/api/agents?projectId=${team}`, 'POST', bob, { name: 'Spotlight made this' });
+    const id = made.body.agent.id as string;
+    // The route's own check: the agent's project says who may delete it.
+    expect((await call(agentDesignRoute.DELETE, '/api/agents/design', 'DELETE', dave, { agentId: id, workflowId: 'wf_none' })).status).toBe(404);
+    expect((await call(agentDesignRoute.DELETE, '/api/agents/design', 'DELETE', carol, { agentId: id, workflowId: 'wf_none' })).status).toBe(404);
+    const taken = await call(agentDesignRoute.DELETE, '/api/agents/design', 'DELETE', bob, { agentId: id, workflowId: 'wf_none' });
+    expect(taken.status).toBe(200);
+    expect(taken.body).toEqual({ deleted: true });
   });
 
   it('unknown ids answer 404 to members (nothing leaks) and reach the handler for owners and admins', () => {
@@ -328,6 +347,32 @@ describe('lists show what the caller can see', () => {
     expect(picker.body.credentials.map((c: { id: string }) => c.id)).toEqual([ids.credential]);
     const ownerPicker = await call(credentialsRoute.GET, `/api/credentials?workflowId=${ids.ownerWorkflow}`, 'GET', owner);
     expect(ownerPicker.body.credentials.map((c: { id: string }) => c.id)).toEqual([ids.ownerCredential]);
+  });
+
+  it('the credential picker for an agent offers what the agent’s project may use', async () => {
+    const picker = await call(credentialsRoute.GET, `/api/credentials?agentId=${ids.agent}`, 'GET', owner);
+    expect(picker.body.credentials.map((c: { id: string }) => c.id)).toEqual([ids.credential]);
+    expect(picker.body.projectId).toBe(team);
+  });
+
+  it('an agent’s save refuses a credential its project may not use', async () => {
+    const withTool = (credential: string) => ({ name: 'Team agent', tools: [{ id: 't1', type: 'node', nodeType: 'core.httpRequest', credentials: { auth: { id: credential, name: 'x' } } }] });
+    const refused = await call(agentRoute.PUT, `/api/agents/${ids.agent}`, 'PUT', owner, withTool(ids.ownerCredential), { id: ids.agent });
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toMatch(/can’t use/);
+    const allowed = await call(agentRoute.PUT, `/api/agents/${ids.agent}`, 'PUT', owner, withTool(ids.credential), { id: ids.agent });
+    expect(allowed.status).toBe(200);
+  });
+
+  it('an agent that already holds an out-of-scope credential can still be edited; only a new one is refused', async () => {
+    const tool = (credential: string) => ({ id: 't1', type: 'node', nodeType: 'core.httpRequest', credentials: { auth: { id: credential, name: 'x' } } });
+    const save = (name: string, credential: string) => call(agentRoute.PUT, `/api/agents/${ids.agent}`, 'PUT', owner, { name, tools: [tool(credential)] }, { id: ids.agent });
+    // A legacy pick: written straight to the store, as before the rule existed.
+    agentStore.saveDraft(ids.agent, { name: 'Legacy', tools: [tool(ids.ownerCredential)] } as never);
+    expect((await save('Renamed', ids.ownerCredential)).status).toBe(200);
+    const second = (await call(credentialsRoute.POST, '/api/credentials', 'POST', owner, { name: 'Owner second', type: 'core.httpHeaderAuth', data: { name: 'x', value: 'v' } })).body.credential.id;
+    expect((await save('Renamed', second)).status).toBe(403);
+    agentStore.saveDraft(ids.agent, { name: 'Team agent', tools: [] } as never);
   });
 
   it('live events reach the members of the workflow’s project only', () => {

@@ -10,6 +10,7 @@
  */
 import { underPath } from '../../shared/auth-paths';
 import { currentEnvironment, isProtectedEnvironment } from './settings';
+import { HttpError } from '../errors';
 
 const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -33,11 +34,10 @@ export function protectedWriteRefusal(method: string, path: string): string | un
   return isProtectedEnvironment() ? protectedMessage() : undefined;
 }
 
-export class ProtectedEnvironmentError extends Error {
-  readonly status = 403;
+export class ProtectedEnvironmentError extends HttpError {
+  static readonly errorName: string = 'ProtectedEnvironmentError';
   constructor() {
-    super(protectedMessage());
-    this.name = 'ProtectedEnvironmentError';
+    super(protectedMessage(), 403);
   }
 }
 

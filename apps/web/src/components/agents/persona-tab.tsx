@@ -5,7 +5,7 @@
  * runtime and kagent get it (personaPrompt), and what changed since the published version.
  */
 import { useMemo, useState } from 'react';
-import { AudioLines, FlaskConical, Info, ListChecks, MessagesSquare, NotebookPen, Plus, ScrollText, UserRound, X } from 'lucide-react';
+import { AudioLines, ChevronRight, Eye, FlaskConical, Info, ListChecks, MessagesSquare, NotebookPen, Plus, ScrollText, UserRound, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Agent, AgentConfig, AgentPersona } from '@/lib/shared/agents';
 import { ANSWER_LENGTHS, PERSONA_TONES, cleanPersona, personaPrompt } from '@/lib/shared/persona';
@@ -14,6 +14,8 @@ import { Input, Select } from '../ui/inputs';
 import { Field, Section } from './dialog';
 import { AutoTextarea } from './model-card';
 import type { UpdateConfig } from './util';
+import { useContextPreview } from './context-preview';
+import { injectedText } from './project-names';
 
 const LANGUAGES = ['English', 'Spanish', 'French', 'German', 'Portuguese', 'Italian', 'Dutch', 'Polish', 'Turkish', 'Hebrew', 'Arabic', 'Hindi', 'Russian', 'Japanese', 'Korean', 'Chinese'];
 const MAX_EXAMPLES = 10;
@@ -60,6 +62,49 @@ function TonePicker({ tones, onChange }: { tones: string[]; onChange: (tones: st
         className="h-7 w-[104px] rounded-full border border-dashed border-bd bg-transparent px-3 text-[12px] text-t1 outline-none placeholder:text-t3 focus:border-ac"
       />
     </div>
+  );
+}
+
+/** The words on the agent's cards (the list and a team page), folded: most agents never need them. */
+export function CardTextFields({
+  description,
+  whatIDo,
+  onWhatIDo,
+  onDescription,
+  onDescriptionBlur,
+}: {
+  description: string;
+  whatIDo?: string[];
+  onWhatIDo?: (lines: string[]) => void;
+  onDescription?: (description: string) => void;
+  onDescriptionBlur?: () => void;
+}) {
+  return (
+    <details className="group rounded-xl border border-hair bg-wl">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[13px] font-semibold text-t2 hover:text-t1 focus-visible:outline-2 focus-visible:outline-ac [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" /> Card text (optional)
+      </summary>
+      <div className="space-y-3 px-3 pb-3">
+        <Field id="persona-description" label="Description" hint="Shown in the agent list and to agents that delegate to this one; it also closes the prompt.">
+          <Input id="persona-description" value={description} placeholder="Tidies drafts for the docs team" onChange={(e) => onDescription?.(e.target.value)} onBlur={onDescriptionBlur} />
+        </Field>
+        <Field label="What I do" hint="Up to three short lines for its card on a team page. Left empty, they come from what it does. Not part of the prompt.">
+          <div className="space-y-1.5">
+            {[0, 1, 2].map((i) => (
+              <Input
+                key={i}
+                id={`persona-whatido-${i}`}
+                aria-label={`What I do, line ${i + 1}`}
+                maxLength={120}
+                value={whatIDo?.[i] ?? ''}
+                placeholder={['Reviews every pull request', 'Flags risky changes', 'Explains what it found'][i]}
+                onChange={(e) => onWhatIDo?.([0, 1, 2].map((j) => (j === i ? e.target.value : whatIDo?.[j] ?? '')))}
+              />
+            ))}
+          </div>
+        </Field>
+      </div>
+    </details>
   );
 }
 
@@ -162,13 +207,18 @@ function lineDiff(before: string, after: string): DiffLine[] | undefined {
   return out;
 }
 
-function PromptPreview({ agent, config, nextVersion, testable, onTest }: { agent: Agent; config: AgentConfig; nextVersion: number; testable: boolean; onTest: () => void }) {
+export function PromptPreview({ agent, config, nextVersion, testable, onTest, onEdit, initiallyOpen = false }: { agent: Agent; config: AgentConfig; nextVersion: number; testable: boolean; onTest: () => void; onEdit?: () => void; initiallyOpen?: boolean }) {
+  const [open, setOpen] = useState(initiallyOpen);
   const prompt = useMemo(() => personaPrompt(config), [config]);
+  // What a run adds after the skills: the home project's block and the approved practices (the same text the test chat previews).
+  const { preview } = useContextPreview(agent.id, undefined, open, `${config.projectContext ?? ''}${(config as { practices?: string }).practices ?? ''}`);
+  const injected = injectedText(preview);
+  const shown = useMemo(() => (injected ? personaPrompt(config, { context: injected }) : prompt), [config, injected, prompt]);
   const published = agent.published;
   const before = useMemo(() => (published ? personaPrompt(published.config) : undefined), [published]);
   const changed = before !== undefined && before !== prompt;
   const [view, setView] = useState<'draft' | 'changes'>('draft');
-  const comparing = changed && view === 'changes';
+  const comparing = open && changed && view === 'changes';
   const diff = useMemo(() => (comparing ? lineDiff(before!, prompt) : undefined), [comparing, before, prompt]);
   const kagentRuns = Boolean(agent.kagent && published && agent.kagent.version === published.version);
 
@@ -182,7 +232,7 @@ function PromptPreview({ agent, config, nextVersion, testable, onTest }: { agent
           <h2 id="prompt-preview-title" className="text-[14px] font-semibold text-t1">
             What the model reads
           </h2>
-          <p className="text-[12px] leading-snug text-t3">The system prompt, here and on kagent, as you edit.</p>
+          <p className="text-[12px] leading-snug text-t3">The system prompt, here and on kagent. Open it to read it.</p>
         </div>
       </div>
       <div
@@ -198,7 +248,17 @@ function PromptPreview({ agent, config, nextVersion, testable, onTest }: { agent
             ? `Changed since v${published.version}. Publish v${nextVersion} to use it here${agent.kagent ? ' and on kagent' : ''}.`
             : `The same as published v${published.version}${kagentRuns ? ', the version kagent runs' : ''}.`}
       </div>
-      {changed && (
+      <div className="mx-4 mb-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="outline" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          <Eye className="size-3.5" /> {open ? 'Hide prompt' : 'View prompt'}
+        </Button>
+        {open && onEdit && (
+          <Button size="sm" variant="ghost" onClick={onEdit}>
+            <NotebookPen className="size-3.5" /> Edit
+          </Button>
+        )}
+      </div>
+      {open && changed && (
         <div role="group" aria-label="Prompt view" className="mx-4 mb-2 inline-flex self-start rounded-[10px] border border-hair bg-wl p-0.5">
           {(
             [
@@ -218,6 +278,7 @@ function PromptPreview({ agent, config, nextVersion, testable, onTest }: { agent
           ))}
         </div>
       )}
+      {open && (
       <div className="min-h-[160px] flex-1 overflow-auto border-y border-hair bg-wl py-3 font-mono text-[12px] leading-[1.6]" tabIndex={0} aria-label="System prompt">
         {comparing ? (
           diff ? (
@@ -234,16 +295,17 @@ function PromptPreview({ agent, config, nextVersion, testable, onTest }: { agent
             <p className="px-4 font-sans text-t3">Too long to compare here.</p>
           )
         ) : (
-          prompt.split('\n').map((line, i) => (
+          shown.split('\n').map((line, i) => (
             <div key={i} className={cn('whitespace-pre-wrap break-words px-4', line.startsWith('## ') ? 'font-semibold text-t1' : 'text-t2')}>
               {line || ' '}
             </div>
           ))
         )}
       </div>
+      )}
       <div className="flex items-center gap-3 px-4 py-2.5">
         <p className="min-w-0 flex-1 text-[11px] leading-snug text-t3">
-          {prompt.length.toLocaleString()} characters, about {Math.ceil(prompt.length / 4).toLocaleString()} tokens. Each run adds the date and time
+          {shown.length.toLocaleString()} characters, about {Math.ceil(shown.length / 4).toLocaleString()} tokens.{injected ? ' Shown with the home project’s block and practices.' : ''} Each run adds the date and time
           {config.memory.crossSession ? ' and what it remembers about the person' : ''}.
         </p>
         <span title={testable ? 'Chat with the draft' : 'Choose a model and describe the persona first'}>
@@ -327,33 +389,7 @@ export function PersonaTab({
                   onChange={(e) => set({ mission: e.target.value })}
                 />
               </Field>
-              <Field label="What I do" hint="Up to three short lines for its card on a team page. Left empty, they come from what it does. Not part of the prompt.">
-                <div className="space-y-1.5">
-                  {[0, 1, 2].map((i) => (
-                    <Input
-                      key={i}
-                      id={`persona-whatido-${i}`}
-                      aria-label={`What I do, line ${i + 1}`}
-                      maxLength={120}
-                      value={persona.whatIDo?.[i] ?? ''}
-                      placeholder={['Reviews every pull request', 'Flags risky changes', 'Explains what it found'][i]}
-                      onChange={(e) => set({ whatIDo: [0, 1, 2].map((j) => (j === i ? e.target.value : persona.whatIDo?.[j] ?? '')) })}
-                    />
-                  ))}
-                </div>
-              </Field>
-              <Field id="persona-description" label="Description" hint="Shown in the agent list and to agents that delegate to this one; it also closes the prompt.">
-                <Input
-                  id="persona-description"
-                  value={config.description}
-                  placeholder="Tidies drafts for the docs team"
-                  onChange={(e) => {
-                    const description = e.target.value;
-                    update((c) => ({ ...c, description }));
-                  }}
-                  onBlur={() => config.description !== config.description.trim() && update((c) => ({ ...c, description: c.description.trim() }))}
-                />
-              </Field>
+              <CardTextFields description={config.description} whatIDo={persona.whatIDo} onWhatIDo={(whatIDo) => set({ whatIDo })} onDescription={(description) => update((c) => ({ ...c, description }))} onDescriptionBlur={() => config.description !== config.description.trim() && update((c) => ({ ...c, description: c.description.trim() }))} />
             </div>
           </Section>
         </div>
@@ -429,7 +465,7 @@ export function PersonaTab({
         </div>
       </div>
 
-      <PromptPreview agent={agent} config={config} nextVersion={nextVersion} testable={testable} onTest={onTest} />
+      <PromptPreview agent={agent} config={config} nextVersion={nextVersion} testable={testable} onTest={onTest} onEdit={toInstructions} />
     </div>
   );
 }

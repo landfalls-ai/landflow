@@ -1,5 +1,5 @@
 /**
- * The Run a Team node in the editor's new look (docs/agent-teams.md#the-team-node-in-the-editor), the parts that are
+ * The Run a Team node in the editor (docs/agent-teams.md#the-team-node-in-the-editor), the parts that are
  * words and data: how its panel splits the node's fields (the team picker, then "What to ask the lead", then where a
  * member's approvals go, then the rest), what the team card says, who the lead asks, and the last run in a few words.
  * Pure, so the panel and the canvas tile share it and tests read it.

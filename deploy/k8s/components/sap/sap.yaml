@@ -24,8 +24,8 @@ spec:
           image: landflow/plugin-sap:dev
           imagePullPolicy: IfNotPresent
           ports:
-            - { name: http, containerPort: 7116 }
-            - { name: grpc, containerPort: 7216 }
+            - { name: http, containerPort: 7123 }
+            - { name: grpc, containerPort: 7223 }
           envFrom:
             - configMapRef: { name: landflow-transport, optional: true }
             - configMapRef: { name: landflow-transport-sap, optional: true }
@@ -71,5 +71,5 @@ metadata:
 spec:
   selector: { app.kubernetes.io/name: plugin-sap }
   ports:
-    - { name: grpc, port: 7216, targetPort: grpc, appProtocol: grpc }
-    - { name: http, port: 7116, targetPort: http }
+    - { name: grpc, port: 7223, targetPort: grpc, appProtocol: grpc }
+    - { name: http, port: 7123, targetPort: http }

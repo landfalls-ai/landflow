@@ -23,7 +23,7 @@ const { corePlugin } = await import('@/lib/server/nodes');
 const { store } = await import('@/lib/server/store');
 const { variables } = await import('@/lib/server/variables');
 const { instanceServer } = await import('@/lib/server/mcp/instance-tools');
-const { checkExpressionFields, referencesIn } = await import('@/lib/server/mcp/expression-fields');
+const { checkExpressionFields, outputSchemaOf, referencesIn } = await import('@/lib/server/mcp/expression-fields');
 const { defineNode, definePlugin } = await import('@landflow/sdk');
 
 afterAll(() => {
@@ -105,6 +105,23 @@ describe('expression field checks (pure)', () => {
     const wf = { nodes: [{ id: 'a', name: 'A', type: 't', parameters: {} }, { id: 'b', name: 'B', type: 't', parameters: { v: '{{ $json.nope }}' } }], connections: [{ source: 'a', target: 'b', type: 'main' }] };
     expect(checkExpressionFields(wf, () => undefined, () => undefined)).toEqual([]);
     expect(checkExpressionFields(wf, () => undefined, (n) => (n.id === 'a' ? { fields: ['x'], from: 'outputSchema' } : undefined))).toHaveLength(1);
+  });
+  it('reads the output schema of the operation shown for the chosen resource', () => {
+    const schema = (field: string) => ({ type: 'object', properties: { [field]: { type: 'string' } } });
+    const descriptor = {
+      name: 'multi', displayName: 'Multi', version: 1, kind: 'action', outputSchema: schema('node'),
+      properties: [
+        { name: 'resource', displayName: 'Resource', type: 'options', default: 'page', options: [{ name: 'Block', value: 'block' }, { name: 'Page', value: 'page' }] },
+        { name: 'operation', displayName: 'Operation', type: 'options', default: 'append', displayOptions: { show: { resource: ['block'] } },
+          options: [{ name: 'Append', value: 'append', outputSchema: schema('appended') }] },
+        { name: 'operation', displayName: 'Operation', type: 'options', default: 'get', displayOptions: { show: { resource: ['page'] } },
+          options: [{ name: 'Get', value: 'get' }, { name: 'Changed Since', value: 'changedSince', outputSchema: schema('sourceId') }] },
+      ],
+    } as unknown as Parameters<typeof outputSchemaOf>[0];
+    expect(outputSchemaOf(descriptor, { resource: 'page', operation: 'changedSince' })).toEqual(schema('sourceId'));
+    expect(outputSchemaOf(descriptor, { operation: 'changedSince' })).toEqual(schema('sourceId')); // the default resource
+    expect(outputSchemaOf(descriptor, { resource: 'block' })).toEqual(schema('appended'));
+    expect(outputSchemaOf(descriptor, { resource: 'page', operation: 'get' })).toEqual(schema('node'));
   });
 });
 

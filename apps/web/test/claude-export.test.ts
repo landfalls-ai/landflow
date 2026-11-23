@@ -17,7 +17,7 @@ const { agentFromClaude, skillFromClaude } = await import('@/lib/server/marketpl
 const { parseAgentData, parseAgentFile, parseSkillFile, parseTeamData } = await import('@/lib/server/marketplace/plugin');
 const { parseFrontmatter } = await import('@/lib/server/marketplace/frontmatter');
 const { unzipFiles } = await import('@/lib/server/zip');
-const { exportAgentPlugin, exportTeamPlugin } = await import('@/lib/server/marketplace/export');
+const { exportAgentPlugin, exportTeamPlugin, pluginFiles } = await import('@/lib/server/marketplace/export');
 const { marketplace } = await import('@/lib/server/marketplace/service');
 const { clearTreeCache } = await import('@/lib/server/marketplace/reader');
 
@@ -244,5 +244,26 @@ describe('installing an exported team', () => {
     await marketplace.uninstall(result.installed.id);
     expect(agentTeamStore.get(team.id)).toBeUndefined();
     expect(agentStore.get(agentIds.get('Boss')!)).toBeUndefined();
+  });
+
+  it('keeps a sub-agent link of a project export (by slug, no ids) across a reinstall', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'landflow-export-local-'));
+    const dev = agentStore.create({ name: 'Local Builder', instructions: 'Build' });
+    const lead = agentStore.create({ name: 'Local Boss', instructions: 'Lead', tools: [{ id: 'tl_a', type: 'agent', agentId: dev.id }] });
+    const exported = pluginFiles('local-plugin', 'd', [{ id: lead.id, config: configOf(agentStore.get(lead.id)!) }, { id: dev.id, config: configOf(agentStore.get(dev.id)!) }], undefined, { marketplace: true }, { localIds: true });
+    const text = exported.files.map((f) => f.content).join('\n');
+    expect(text).not.toContain(dev.id);
+    expect(text).not.toContain(lead.id);
+    for (const file of exported.files) {
+      mkdirSync(dirname(join(dir, file.path)), { recursive: true });
+      writeFileSync(join(dir, file.path), file.content);
+    }
+    const added = await marketplace.add(dir);
+    const result = (await marketplace.install(added.id, 'local-plugin')) as { installed: { id: string; agents: Array<{ id: string; name: string }> } };
+    const ids = new Map(result.installed.agents.map((a) => [a.name, a.id]));
+    expect(agentStore.get(ids.get('Local Boss')!)!.tools).toMatchObject([{ type: 'agent', agentId: ids.get('Local Builder') }]);
+    await marketplace.uninstall(result.installed.id);
+    await marketplace.remove(added.id);
+    for (const id of [lead.id, dev.id]) agentStore.delete(id);
   });
 });

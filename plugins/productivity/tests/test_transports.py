@@ -18,6 +18,7 @@ from landflow_sdk.transport.server import idempotency_from_manifest
 # Reads and lookups opt in; every create, update, upsert, delete, archive, transition and comment stays at most once.
 IDEMPOTENT = {
     ("notion", "page", "get"), ("notion", "page", "search"), ("notion", "databasePage", "getAll"),
+    ("notion", "page", "getContent"), ("notion", "page", "changedSince"), ("notion", "user", "getAll"),
     ("airtable", "record", "get"), ("airtable", "record", "search"),
     ("github", "file", "get"), ("github", "release", "getAll"), ("github", "repository", "get"), ("github", "issue", "get"), ("github", "issue", "getAll"),
     ("jira", "issue", "get"), ("jira", "issue", "getAll"),
@@ -61,7 +62,7 @@ class IdempotentTests(unittest.TestCase):
 
     def test_rss_read_and_triggers(self):
         self.assertIs(self.nodes["rssFeedRead"]["idempotent"], True)
-        for name in ("githubTrigger", "githubWebhookTrigger", "rssFeedReadTrigger"):  # hold poll state or webhooks: at most once
+        for name in ("githubTrigger", "githubWebhookTrigger", "rssFeedReadTrigger", "notionTrigger"):  # hold poll state or webhooks: at most once
             self.assertFalse(self.nodes[name].get("idempotent", False), name)
 
     def test_server_side_decision(self):

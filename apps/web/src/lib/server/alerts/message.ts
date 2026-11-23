@@ -6,6 +6,7 @@
 import type { AlertEvent } from '../../shared/alerts';
 import type { ExecutionRecord } from '../../shared/types';
 import { waitingSince } from './rules';
+import { publicUrl as configPublicUrl } from '../config';
 
 export interface AlertNotice {
   event: AlertEvent;
@@ -50,11 +51,11 @@ const MAX_ERROR = 1_000;
 
 /** Base of the links in alerts: LANDFLOW_PUBLIC_URL, else localhost (as the runner's resume and error-workflow links). */
 export function publicUrl(): string {
-  return (process.env.LANDFLOW_PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/+$/, '');
+  return configPublicUrl();
 }
 
-export const executionUrl = (workflowId: string, executionId: string) => `${publicUrl()}/workflows/${workflowId}/executions/${executionId}`;
-export const executionsUrl = (workflowId: string) => `${publicUrl()}/workflows/${workflowId}/executions`;
+export const executionUrl = (workflowId: string, executionId: string) => `${publicUrl()}/workflows/${workflowId}/runs/${executionId}`;
+export const executionsUrl = (workflowId: string) => `${publicUrl()}/workflows/${workflowId}/runs`;
 
 const clip = (text: string | undefined, max = MAX_ERROR) => (text && text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
@@ -158,7 +159,10 @@ const VERB: Record<AlertEvent, string> = {
   pluginOffline: 'Plugin offline',
   pluginOnline: 'Plugin back online',
   costThreshold: 'AI cost',
+  costForecast: 'AI cost forecast', // SP23:
+  spendAnomaly: 'Unusual AI spend', // SP23:
   evaluationScore: 'Evaluation score',
+  approval: 'Waits for your approval', // AP01:
 };
 
 /** One line: the subject of an email, the first line elsewhere. */

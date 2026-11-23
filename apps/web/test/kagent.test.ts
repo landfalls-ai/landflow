@@ -14,7 +14,11 @@ const { registry } = await import('@/lib/server/plugins/registry');
 const { corePlugin } = await import('@/lib/server/nodes');
 const { agentStore } = await import('@/lib/server/agents/store');
 const { credentials } = await import('@/lib/server/credentials/vault');
-const { personaPrompt } = await import('@/lib/shared/persona');
+const { personaPrompt: runtimePersona } = await import('@/lib/shared/persona');
+const { MEMORY_PERSONA_LINE } = await import('@/lib/server/kagent/manifests');
+// C09: the CONFIG has cross-session memory on, so what kagent gets is the persona and the line that says to recall first.
+const personaPrompt = (...args: Parameters<typeof runtimePersona>) => runtimePersona(...args);
+const kagentPrompt = (c: Parameters<typeof runtimePersona>[0]) => `${runtimePersona(c)}\n\n${MEMORY_PERSONA_LINE}`;
 const { kagentManifests, kagentName, toolBindings } = await import('@/lib/server/kagent/manifests');
 const kagentRoute = await import('@/app/api/agents/[id]/kagent/route');
 const publishRoute = await import('@/app/api/agents/[id]/publish/route');
@@ -175,7 +179,7 @@ describe('the persona kagent gets', () => {
     expect(template.spec).toEqual({
       description: CONFIG.description,
       modelConfig: { name: 'text-formatter' },
-      systemPrompt: personaPrompt(agent),
+      systemPrompt: kagentPrompt(agent),
       tools: toolBindings('text-formatter', [
         { name: 'Echo', requireApproval: false },
         { name: 'Shout', requireApproval: true },
@@ -210,7 +214,7 @@ describe('deploying to kagent', () => {
     const { status, data } = await call<{ status: KagentStatus; unavailable: string[] }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id });
     expect(status).toBe(200);
     expect(data.status).toMatchObject({ deployed: true, name: 'text-formatter', namespace: 'kagent', version: 1, inSync: true, drift: [], outdated: false, a2aUrl: 'http://kagent.test:8083/agents/kagent/text-formatter' });
-    expect(data.status.systemPrompt).toBe(personaPrompt(agent.published!.config));
+    expect(data.status.systemPrompt).toBe(kagentPrompt(agent.published!.config));
     expect(kube.requests.filter((r) => r.method === 'PATCH').map((r) => r.path.split('?')[0].split('/').slice(-2).join('/'))).toEqual([
       'secrets/text-formatter-landflow',
       'remotemcpservers/text-formatter',
@@ -218,17 +222,17 @@ describe('deploying to kagent', () => {
       'agenttemplates/text-formatter',
       'agents/text-formatter',
     ]);
-    // Memory needs the person the agent talks to, so kagent gets every tool but `remember`.
+    // C09: memory takes the signed key of the person, so kagent gets the three memory tools beside the others (kagent/memory-tools.ts).
     const tools = (held('agenttemplates', 'text-formatter')!.spec as { tools: Array<{ mcp: { tools: string[]; requireApproval?: boolean } }> }).tools;
     expect(tools.map((t) => [t.mcp.tools, Boolean(t.mcp.requireApproval)])).toEqual([
-      [['Echo', 'load_skill'], false],
+      [['Echo', 'load_skill', 'recall_memory', 'remember', 'forget_memory'], false],
       [['Shout'], true],
     ]);
     expect(held('agents', 'text-formatter')!.spec).toEqual({ template: { ref: { name: 'text-formatter' } }, harnessRef: { name: 'landflow-kagent' } });
     // The token is sealed in Landflow and in clear only in kagent's Secret.
     const saved = agentStore.get(agent.id)!;
     expect(saved.kagent).toMatchObject({ credential: { id: cluster.id }, name: 'text-formatter', version: 1 });
-    expect(saved.kagent!.token).toMatch(/^v1\./);
+    expect(saved.kagent!.token).toMatch(/^v[12]\./);
     const token = credentials.openSecret(saved.kagent!.token!);
     expect(held('secrets', 'text-formatter-landflow')!.stringData).toEqual({ authorization: `Bearer ${token}` });
     // Deploying again keeps the token.
@@ -291,7 +295,7 @@ describe('deploying to kagent', () => {
     const published = await call<{ agent: { published: { config: AgentConfig } }; kagent: KagentStatus }>(publishRoute.POST, agent.id, 'POST');
     expect(published.data.kagent).toMatchObject({ inSync: true, version: 2 });
     const systemPrompt = (held('agenttemplates', 'text-formatter')!.spec as { systemPrompt: string }).systemPrompt;
-    expect(systemPrompt).toBe(personaPrompt(published.data.agent.published.config));
+    expect(systemPrompt).toBe(kagentPrompt(published.data.agent.published.config));
     expect(systemPrompt.split('\n\n').slice(0, 4)).toEqual([
       '## Who you are\nRole: Formatter for the content team.',
       '## How you talk\nTone: Brief.',
@@ -310,10 +314,10 @@ describe('deploying to kagent', () => {
     const status = (await call<{ status: KagentStatus }>(kagentRoute.GET, agent.id)).data.status;
     expect(status.inSync).toBe(false);
     expect(status.drift.map((d) => d.field).sort()).toEqual(['ModelConfig', 'systemPrompt', 'tools']);
-    expect(status.drift.find((d) => d.field === 'systemPrompt')).toEqual({ field: 'systemPrompt', landflow: personaPrompt(agent.published!.config), kagent: 'You are a pirate.' });
+    expect(status.drift.find((d) => d.field === 'systemPrompt')).toEqual({ field: 'systemPrompt', landflow: kagentPrompt(agent.published!.config), kagent: 'You are a pirate.' });
     expect(status.systemPrompt).toBe('You are a pirate.');
     // kagent's own defaults aren't drift.
-    (held('agenttemplates', 'drifting')!.spec as Record<string, unknown>).systemPrompt = personaPrompt(agent.published!.config);
+    (held('agenttemplates', 'drifting')!.spec as Record<string, unknown>).systemPrompt = kagentPrompt(agent.published!.config);
     await call(kagentRoute.PUT, agent.id, 'PUT', {});
     (held('modelconfigs', 'drifting')!.spec as Record<string, unknown>).stream = true;
     expect((await call<{ status: KagentStatus }>(kagentRoute.GET, agent.id)).data.status).toMatchObject({ inSync: true, drift: [] });
@@ -396,15 +400,18 @@ describe('the agent’s MCP endpoint', () => {
     expect((await rpc(agent.id, 'tools/list', {}, 'lfk_wrong')).status).toBe(401);
 
     const listed = await rpc(agent.id, 'tools/list', {}, token);
-    expect(listed.body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill']);
+    expect(listed.body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill', 'recall_memory', 'remember', 'forget_memory', 'practices_for', 'practice_cite']);
     const skill = await rpc(agent.id, 'tools/call', { name: 'load_skill', arguments: { name: 'Headlines' } }, token);
     expect(skill.body.result?.content?.[0].text).toContain('Slugify the headline, then answer with it.');
     // kagent paused on Shout already (its binding has requireApproval), so the call runs.
     const shout = await rpc(agent.id, 'tools/call', { name: 'Shout', arguments: { text: 'hi' } }, token);
     expect(shout.body.result?.isError).toBeFalsy();
     expect(shout.body.result?.content?.[0].text).toContain('hi');
-    const unknown = await rpc(agent.id, 'tools/call', { name: 'remember', arguments: { text: 'x' } }, token);
+    const unknown = await rpc(agent.id, 'tools/call', { name: 'no_such_tool', arguments: { text: 'x' } }, token);
     expect(unknown.body.result?.isError).toBe(true);
+    // C09: `remember` is a tool now, and without the memory key of a person it refuses and writes nothing.
+    const remembered = await rpc(agent.id, 'tools/call', { name: 'remember', arguments: { fact: 'x' } }, token);
+    expect(remembered.body.result?.isError).toBe(true);
   });
 
   it('serves Claude Code’s two servers each their own tools, so none is called past kagent’s pause', async () => {
@@ -412,12 +419,31 @@ describe('the agent’s MCP endpoint', () => {
     await call(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, name: 'split', harness: 'landflow-claude' });
     const token = credentials.openSecret(agentStore.get(agent.id)!.kagent!.token!);
     const names = async (query: string) => (await rpc(agent.id, 'tools/list', {}, token, query)).body.result?.tools?.map((t) => t.name);
-    expect(await names('?tools=free')).toEqual(['Echo', 'load_skill']);
+    expect(await names('?tools=free')).toEqual(['Echo', 'load_skill', 'recall_memory', 'remember', 'forget_memory', 'practices_for', 'practice_cite']);
     expect(await names('?tools=approval')).toEqual(['Shout']);
     const past = await rpc(agent.id, 'tools/call', { name: 'Shout', arguments: { text: 'hi' } }, token, '?tools=free');
     expect(past.body.result).toMatchObject({ isError: true, content: [{ text: 'The agent “Text formatter” has no tool Shout' }] });
     const approved = await rpc(agent.id, 'tools/call', { name: 'Shout', arguments: { text: 'hi' } }, token, '?tools=approval');
     expect(approved.body.result?.isError).toBeFalsy();
+  });
+
+  it('refuses a call that is not a read on a tool set up as one: this path cannot pause for a person', async () => {
+    const agent = publishedAgent({ ...CONFIG, tools: [{ id: 'h1', type: 'node', name: 'Rates', description: 'Read rates', nodeType: 'core.httpRequest', parameters: { url: 'http://rates.test/x', method: 'GET' } } as never] });
+    await call(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, name: 'readonly-http' });
+    const token = credentials.openSecret(agentStore.get(agent.id)!.kagent!.token!);
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => { seen.push(`${init?.method ?? 'GET'} ${String(input)}`); return new Response('{"rate":1}', { status: 200, headers: { 'content-type': 'application/json' } }); }));
+    try {
+      const refused = await rpc(agent.id, 'tools/call', { name: 'Rates', arguments: { method: 'DELETE' } }, token);
+      expect(refused.body.result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('kagent cannot pause this call') }] });
+      expect(refused.body.result?.content?.[0].text).toContain('DELETE');
+      expect(seen).toEqual([]);
+      const ran = await rpc(agent.id, 'tools/call', { name: 'Rates', arguments: {} }, token);
+      expect(ran.body.result?.isError).toBeFalsy();
+      expect(seen.some((line) => line.startsWith('GET'))).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('serves the version kagent runs, not a newer one it didn’t get', async () => {
@@ -429,7 +455,7 @@ describe('the agent’s MCP endpoint', () => {
     agentStore.saveDraft(agent.id, { tools: [{ id: 't9', type: 'node', name: 'Whisper', description: 'Quietly', nodeType: 'core.noOp', parameters: {} }], skills: [] });
     await call(publishRoute.POST, agent.id, 'POST');
     credentials.update(cluster.id, { data: { server } });
-    expect((await rpc(agent.id, 'tools/list', {}, token)).body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill']);
+    expect((await rpc(agent.id, 'tools/list', {}, token)).body.result?.tools?.map((t) => t.name)).toEqual(['Echo', 'Shout', 'load_skill', 'recall_memory', 'remember', 'forget_memory', 'practices_for', 'practice_cite']);
   });
 });
 
@@ -625,7 +651,7 @@ describe('on Claude Code', () => {
   it('refuses a Harness it can’t write to, a model Claude Code can’t run, and a plugin it can’t resolve', async () => {
     const agent = publishedAgent();
     const codex = await call<{ error: string }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, harness: 'codex' });
-    expect(codex).toMatchObject({ status: 400, data: { error: expect.stringContaining('The Harness “codex” runs Codex, which Landflow doesn’t write agents for') } });
+    expect(codex).toMatchObject({ status: 400, data: { error: expect.stringContaining('The Harness “codex” runs Codex, which Landflow doesn’t write agents for: choose one that runs kagent (ADK) or Claude Code') } });
     const missing = await call<{ error: string }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, harness: 'nope' });
     expect(missing.data.error).toBe('kagent has no Harness “nope” in kagent');
 
@@ -634,7 +660,11 @@ describe('on Claude Code', () => {
     expect(refused.data.error).toMatch(/^Claude Code runs Anthropic models, or Ollama ones/);
 
     const unknown = publishedAgent({ ...CONFIG, plugins: ['ghost@nowhere'] });
+    // Resolving an unknown marketplace first reads the ones never fetched (the built-in Anthropic one): keep that offline,
+    // or the real catalog lands in the data directory other test files share.
+    const offline = vi.spyOn(marketplace, 'catalog').mockRejectedValue(new Error('offline in tests'));
     const unresolved = await call<{ error: string }>(kagentRoute.PUT, unknown.id, 'PUT', { credentialId: cluster.id, name: 'ghost', harness: 'landflow-claude' });
+    offline.mockRestore();
     expect(unresolved).toMatchObject({ status: 400, data: { error: 'The plugin ghost@nowhere is in no added marketplace: add “nowhere” on the Marketplace page' } });
     expect(written()).toEqual([]);
     // kagent's own runtime doesn't use plugins, so it doesn't resolve them.

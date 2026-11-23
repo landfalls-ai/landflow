@@ -10,6 +10,7 @@ import { connect as netConnect, type Socket } from 'node:net';
 import { connect as tlsConnect, type TLSSocket } from 'node:tls';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry';
+import { envFlag } from '../config';
 
 export interface MailMessage {
   to: string;
@@ -40,10 +41,10 @@ export function smtpConfig(): SmtpConfig | undefined {
   return {
     host,
     port,
-    secure: process.env.LANDFLOW_SMTP_SECURE ? process.env.LANDFLOW_SMTP_SECURE === 'true' : port === 465,
+    secure: envFlag('LANDFLOW_SMTP_SECURE', port === 465),
     ...(process.env.LANDFLOW_SMTP_USER && { user: process.env.LANDFLOW_SMTP_USER, pass: process.env.LANDFLOW_SMTP_PASS ?? '' }),
     from: process.env.LANDFLOW_SMTP_FROM?.trim() || `Landflow <landflow@${host === '127.0.0.1' || host === 'localhost' ? 'localhost' : host}>`,
-    ignoreTls: process.env.LANDFLOW_SMTP_IGNORE_TLS === 'true',
+    ignoreTls: envFlag('LANDFLOW_SMTP_IGNORE_TLS', false),
   };
 }
 
@@ -265,4 +266,15 @@ export function resetMessage(input: { to: string; link: string }): MailMessage {
     'The link works once and expires in an hour.',
   );
   return { to: input.to, subject: 'Reset your Landflow password', ...body };
+}
+
+/** C16: a recovery code was just used to sign in (so a person who didn't do it can tell). */
+export function recoveryUsedMessage(input: { to: string; left: number; link: string }): MailMessage {
+  const body = layout(
+    'A recovery code was used',
+    [`A recovery code was used to sign in to your Landflow account. You have ${input.left} left.`, 'If it was you, you can make a new set in Sign-in & security. If it wasn’t, change your password and ask an admin to reset your second factor.'],
+    { label: 'Open Sign-in & security', url: input.link },
+    'You get this email each time a recovery code is used.',
+  );
+  return { to: input.to, subject: 'A recovery code was used to sign in to Landflow', ...body };
 }

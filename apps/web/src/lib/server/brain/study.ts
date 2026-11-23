@@ -11,7 +11,8 @@
  * instance's own, so a vector store node or an agent's knowledge base can search them too.
  */
 import type { LanguageModel, Workflow } from '@landflow/engine';
-import type { BrainFact, BrainProfile, FactKind, FactSubject, ProfileStats, ProposalEvidence } from '../../shared/brain';
+import { ENTITY_LABELS, type BrainFact, type BrainProfile, type FactKind, type FactSubject, type ProfileStats, type ProposalEvidence } from '../../shared/brain';
+import { withCallPurpose } from '../ai-usage/call-context';
 import { agentStore } from '../agents/store';
 import { agentTeamStore } from '../agent-teams/store';
 import { workflowOutline } from '../assistant/research';
@@ -25,8 +26,10 @@ import { store } from '../store';
 import { logger } from '../telemetry/logger';
 import { percentile } from '../usage/query';
 import { EXECUTE_WORKFLOW } from './detectors';
+import { entityKey, entityProject, listEntities, MANUAL_FACT } from './entities';
 import { getProfile, listFacts, saveProfile, staleFactsBefore, upsertFact } from './facts';
 import { brainModel } from './writer';
+import { ollamaUrl } from '../config';
 
 const DAY_MS = 86_400_000;
 const PRODUCTION = "COALESCE(json_extract(attrs, '$.mode'), '') <> 'manual'";
@@ -115,11 +118,12 @@ async function purposeOf(workflow: Workflow, model: LanguageModel | undefined, b
   if (model && budget.left > 0) {
     budget.left--;
     try {
-      const turn = await model.generate({
+      // SP02: a workflow's one-sentence description is a summary call.
+      const turn = await withCallPurpose('summary', () => model.generate({
         system: 'You describe automation workflows in one plain sentence (at most 25 words) that says what it is for. No preamble.',
         messages: [{ role: 'user', content: workflowOutline(workflow) }],
         tools: [],
-      });
+      }));
       const sentence = (turn.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
       if (sentence) return sentence;
     } catch (error) {
@@ -167,7 +171,7 @@ function workflowFacts(db: Database, workflow: Workflow, profile: BrainProfile, 
   );
   if (failure && failure.n >= 2) {
     const node = workflow.nodes.find((n) => n.id === failure.node_id);
-    fact('failure', `Most common failure: “${failure.message ?? 'an error'}” on “${node?.name ?? failure.node_id}”, ${failure.n} times this week.`, 0.85, [{ label: 'Failures', value: failure.n, href: `${href}/executions` }]);
+    fact('failure', `Most common failure: “${failure.message ?? 'an error'}” on “${node?.name ?? failure.node_id}”, ${failure.n} times this week.`, 0.85, [{ label: 'Failures', value: failure.n, href: `${href}/runs` }]);
   }
   const slow = db.get<{ node_id: string; n: number }>(`SELECT node_id, COUNT(*) AS n FROM usage_events WHERE kind = 'node.slow' AND workflow_id = ? AND at >= ? GROUP BY node_id ORDER BY n DESC LIMIT 1`, workflow.id, since);
   if (slow && slow.n >= 2) {
@@ -322,6 +326,43 @@ function studyNodeTypesAndCredentials(db: Database, now: number) {
   return count;
 }
 
+/**
+ * A profile and facts for every entity (docs/second-brain.md#entities), written from what is on file: no model needed.
+ * The purpose is its description (or a sentence from its type, owner and attributes); a `usage` fact counts the statements
+ * people and flows added. Those statements themselves are kept as they are (entities.ts addEntityFact).
+ */
+function studyEntities(db: Database, now: number) {
+  let count = 0;
+  for (const entity of listEntities({}, db)) {
+    const ref = entityKey(entity);
+    const projectId = entityProject(entity);
+    const attrs = Object.entries(entity.attrs).map(([k, v]) => `${k}: ${v}`);
+    const label = ENTITY_LABELS[entity.type].toLowerCase();
+    const purpose = entity.description || `${ENTITY_LABELS[entity.type]} “${entity.name}”${entity.ownerName ? `, owned by ${entity.ownerName}` : ''}.`;
+    const noted = listFacts({ subjectType: 'entity', subjectId: ref, limit: 5_000 }, db).filter((f) => f.id.includes(`:${MANUAL_FACT}`));
+    saveProfile(
+      {
+        subjectType: 'entity',
+        subjectId: ref,
+        name: entity.name,
+        ...(projectId && { projectId }),
+        version: entity.updatedAt,
+        purpose,
+        stats: { runs: 0, failures: 0, failureRate: 0, manualRuns: 0, p95Ms: 0, tokens: 0, cost: 0 },
+        uses: [],
+        updatedAt: iso(now),
+      },
+      db,
+    );
+    const subject = { subjectType: 'entity' as const, subjectId: ref, subjectName: entity.name, ...(projectId && { projectId }) };
+    const about = [`${label} “${entity.name}”`, entity.ownerName && `owned by ${entity.ownerName}`, entity.description, attrs.length && `(${attrs.join('; ')})`].filter(Boolean).join(' ');
+    upsertFact({ ...subject, kind: 'purpose', statement: about.endsWith('.') ? about : `${about}.`, confidence: 0.9, evidence: [] }, db, iso(now));
+    if (noted.length) upsertFact({ ...subject, kind: 'usage', statement: `${noted.length} statement${noted.length === 1 ? '' : 's'} on file about this ${label}.`, confidence: 1, evidence: [] }, db, iso(now));
+    count++;
+  }
+  return count;
+}
+
 function studyInstance(db: Database, now: number) {
   const since = iso(now - 7 * DAY_MS);
   const runs = num(db, `SELECT COUNT(*) AS n FROM usage_events WHERE kind = 'run.finished' AND at >= ? AND ${PRODUCTION}`, since);
@@ -348,7 +389,7 @@ function studyInstance(db: Database, now: number) {
 export async function embedFacts(db: Database = database()): Promise<number> {
   const model = process.env.LANDFLOW_BRAIN_EMBEDDINGS?.trim();
   if (model?.toLowerCase() === 'off') return 0;
-  const embeddings = ollamaEmbeddings({ baseUrl: (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, ''), model: model || 'nomic-embed-text', documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' });
+  const embeddings = ollamaEmbeddings({ baseUrl: ollamaUrl(), model: model || 'nomic-embed-text', documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' });
   const facts = listFacts({ limit: 5_000 }, db);
   const groups = new Map<string, BrainFact[]>();
   for (const fact of facts) groups.set(collectionFor(fact.projectId), [...(groups.get(collectionFor(fact.projectId)) ?? []), fact]);
@@ -376,6 +417,11 @@ export async function embedFacts(db: Database = database()): Promise<number> {
 
 /** Fact ids from a vector search of the collections `projects` may read (undefined: all of them). */
 export async function vectorFactHits(query: string, projects: Set<string> | undefined, limit = 20): Promise<string[]> {
+  return (await vectorFactScores(query, projects, limit)).map((hit) => hit.factId);
+}
+
+/** The facts nearest to a query with their cosine similarity (0..1), best first; [] with embeddings off or on failure. */
+export async function vectorFactScores(query: string, projects: Set<string> | undefined, limit = 20): Promise<Array<{ factId: string; similarity: number }>> {
   const model = process.env.LANDFLOW_BRAIN_EMBEDDINGS?.trim();
   if (model?.toLowerCase() === 'off' || !query.trim()) return [];
   try {
@@ -383,13 +429,13 @@ export async function vectorFactHits(query: string, projects: Set<string> | unde
     const names = (await vectors.collections()).map((c) => c.name).filter((n) => n === BRAIN_COLLECTION || n.startsWith(`${BRAIN_COLLECTION}-`));
     const readable = names.filter((n) => !projects || (n !== BRAIN_COLLECTION && projects.has(n.slice(BRAIN_COLLECTION.length + 1))));
     if (!readable.length) return [];
-    const embeddings = ollamaEmbeddings({ baseUrl: (process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, ''), model: model || 'nomic-embed-text', documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' });
+    const embeddings = ollamaEmbeddings({ baseUrl: ollamaUrl(), model: model || 'nomic-embed-text', documentPrefix: 'search_document: ', queryPrefix: 'search_query: ' });
     const vector = await embeddings.embedQuery(query, AbortSignal.timeout(10_000));
     const hits = (await Promise.all(readable.map((n) => vectors.similaritySearch(n, vector, limit)))).flat();
     return hits
       .sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0))
-      .map((d) => String(d.metadata?.factId ?? ''))
-      .filter(Boolean)
+      .map((d) => ({ factId: String(d.metadata?.factId ?? ''), similarity: Number(d.score ?? 0) }))
+      .filter((hit) => hit.factId)
       .slice(0, limit);
   } catch {
     return [];
@@ -400,6 +446,7 @@ export interface StudyResult {
   workflows: number;
   agents: number;
   others: number;
+  entities: number;
   stale: number;
   embedded: number;
   durationMs: number;
@@ -414,8 +461,9 @@ export async function study(options: { model?: LanguageModel; db?: Database; now
   const workflows = await studyWorkflows(db, now, model);
   const agents = studyAgents(db, now);
   const others = studyNodeTypesAndCredentials(db, now);
+  const entities = studyEntities(db, now);
   studyInstance(db, now);
   const stale = staleFactsBefore(iso(now), db);
   const embedded = options.embed === false ? 0 : await embedFacts(db);
-  return { workflows, agents, others, stale, embedded, durationMs: Date.now() - started };
+  return { workflows, agents, others, entities, stale, embedded, durationMs: Date.now() - started };
 }
