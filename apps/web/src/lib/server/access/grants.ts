@@ -7,9 +7,9 @@
  * and grants nothing. Removal is a conditional claim (store.ts `claimGrant`) so two processes never both remove one grant.
  */
 import { nanoid } from 'nanoid';
-import { durationText, forDuration, type AccessDecision, type AccessGrantView } from '../../shared/access';
-import { recordAudit } from '../audit';
-import { findUserByEmail, getUser, normalizeEmail, type UserRecord } from '../auth/users';
+import { durationText, forDuration, type AccessDecision, type AccessGrantView, type OutsideGrantView } from '../../shared/access';
+import { recordAudit, type AuditActorInput } from '../audit';
+import { findUserByEmail, normalizeEmail, type UserRecord } from '../auth/users';
 import { database } from '../db';
 import { isInstanceAdmin, type Actor } from '../projects/access';
 import { liveExecution } from '../runner';
@@ -20,7 +20,9 @@ import { runAction } from './actions';
 import { recordedDecisions, type RecordedStep } from './decision';
 import { AccessActionError, AccessError } from './errors';
 import { mailApprovers, mailRequester, type Subject } from './notify';
-import { approversFor, auditActorOf, canMarkDone, canRetry, canRevoke, canSeeGrant, isActiveUser, type EntryData } from './rules';
+import { outsideGrantView } from './outside/views';
+import { auditActorOfRequester, displayName, requesterOf, type Requester } from './principal';
+import { approversFor, auditActorOf, canMarkDone, canRetry, canRevoke, canSeeGrant, isActiveUser, isRequesterUser, type EntryData } from './rules';
 import { liveGrantOnTarget } from './requests';
 import { accessSettings, claimGrant, claimRequest, grantRow, insertGrant, parseJson, patchRequest, requestRow, type GrantRow, type RequestRow } from './store';
 import { SYSTEMS, targetKeyOf } from './systems';
@@ -44,9 +46,13 @@ export interface AppliedDecision {
 
 export const EXAMPLE_REQUEST = 'areq_example';
 
+/** What the mails say (principal.ts: a Landflow user or an outside requester; an outside one is their verified address, marked). */
 const subjectOf = (row: RequestRow, entry: EntryData): Subject => ({
   requesterId: row.requester_id,
-  requesterName: getUser(row.requester_id)?.name || getUser(row.requester_id)?.email || row.requester_id,
+  requesterName: (() => {
+    const who = requesterOf(row.requester_id);
+    return who ? displayName(who) : row.requester_id;
+  })(),
   entryName: entry.name,
   targetLabel: entry.target.label,
   duration: durationText(row.duration_minutes === null ? null : Number(row.duration_minutes)),
@@ -121,7 +127,8 @@ export async function applyDecision(requestId: string, executionId: string, outc
     if (i > 0 && step.originalText === undefined) return fail(`Step ${i + 1} has no recorded question, so nothing was granted`);
     const decider = deciderOf(step.by);
     if (!decider) return fail('The approval was not by a person Landflow knows (Slack, a timeout and unknown answers never grant), so nothing was granted');
-    if (decider.id === row.requester_id) return fail('You can’t approve your own request, so nothing was granted');
+    // Not the requester: not by id, and not by email (an outside requester's address may belong to an approver: their approval grants nothing).
+    if (isRequesterUser(decider, row.requester_id)) return fail('You can’t approve your own request, so nothing was granted');
     // The people it was filed with (including the fallback admins of that day), still active: not whoever became one since.
     const allowed = i === 0 ? parseJson<string[]>(row.approvers, []).filter((id) => id !== row.requester_id && isActiveUser(id)) : approversFor(entry, row.requester_id, i);
     if (!allowed.includes(decider.id)) return fail(`${decider.name || decider.email} is not an approver of this request, so nothing was granted`);
@@ -171,6 +178,7 @@ async function createGrant(request: RequestRow, entry: EntryData, minutes: numbe
     request_id: request.id,
     entry_id: request.entry_id,
     holder_id: request.requester_id,
+    holder_kind: request.requester_kind ?? 'user',
     account: request.account,
     system: entry.system,
     target: JSON.stringify(entry.target),
@@ -322,7 +330,8 @@ export async function removeGrant(id: string, reason: EndReason, by: string | un
 async function finishRemoval(grant: GrantRow, reason: EndReason, by: string | undefined, note: string | undefined, subject: Subject | undefined, label: string, now = Date.now()): Promise<GrantRow | undefined> {
   const status = reason === 'expired' ? 'expired' : 'revoked';
   const done = await claimGrant(grant.id, 'removing', { status, ended_at: iso(now), ended_by: by ?? null, end_reason: reason, lease_until: null, last_error: note ?? null, attempts: 0, next_attempt_at: null });
-  recordAudit({ action: 'access.grant.revoke', actor: by ? { id: by } : undefined, target: { type: 'access_grant', id: grant.id }, project: null, summary: `Removed access (${reason})${note ? `: ${note}` : ''}`, details: { from: 'removing', to: status, reason, ...(note && { note }) } });
+  const who = by ? requesterOf(by) : undefined;
+  recordAudit({ action: 'access.grant.revoke', actor: by ? (who ? auditActorOfRequester(who) : { id: by }) : undefined, target: { type: 'access_grant', id: grant.id }, project: null, summary: `Removed access (${reason})${note ? `: ${note}` : ''}`, details: { from: 'removing', to: status, reason, holderKind: grant.holder_kind ?? 'user', ...(note && { note }) } });
   if (subject) void mailRequester.removed(subject, label);
   return done.row;
 }
@@ -341,37 +350,51 @@ export async function revokeNow(actor: Actor, id: string): Promise<AccessGrantVi
   const entry = entryData(grant.entry_id);
   if (!canRevoke(actor, { holderId: grant.holder_id }, entry)) throw new AccessError('Access grant not found', 404);
   const reason: EndReason = grant.holder_id === actor.id ? 'given_back' : 'revoked';
+  return grantView(actor, await revokeRow(grant, actor.id, auditActorOf(actor), reason));
+}
+
+/** An outside requester gives back a grant of their own; anyone else's is a 404. Audited as them. */
+export async function giveBack(requester: Requester, id: string): Promise<OutsideGrantView> {
+  const grant = grantRow(id);
+  if (!grant || grant.holder_id !== requester.id) throw new AccessError('Access grant not found', 404);
+  const after = await revokeRow(grant, requester.id, auditActorOfRequester(requester), 'given_back');
+  return outsideGrantView(after, entryData(after.entry_id)?.name);
+}
+
+/** The removal both people's actions share: `by` is who asked, `audit` how the log names them; the grant as it is after. */
+async function revokeRow(grant: GrantRow, by: string, audit: AuditActorInput, reason: EndReason): Promise<GrantRow> {
+  const id = grant.id;
   if (grant.status === 'pending') {
     if (grant.system === 'manual') {
       // A manual grant nobody has done yet: nothing to remove.
-      const { won } = await claimGrant(id, 'pending', { status: 'revoked', ended_at: iso(Date.now()), ended_by: actor.id, end_reason: 'revoked' });
+      const { won } = await claimGrant(id, 'pending', { status: 'revoked', ended_at: iso(Date.now()), ended_by: by, end_reason: 'revoked' });
       if (!won) throw new AccessError('This grant is already settled', 409);
-      recordAudit({ action: 'access.grant.revoke', actor: auditActorOf(actor), target: { type: 'access_grant', id }, project: null, summary: 'Cancelled a grant nobody had done yet', details: { from: 'pending', to: 'revoked', reason: 'revoked' } });
-      return grantView(actor, grantRow(id)!);
+      recordAudit({ action: 'access.grant.revoke', actor: audit, target: { type: 'access_grant', id }, project: null, summary: 'Cancelled a grant nobody had done yet', details: { from: 'pending', to: 'revoked', reason: 'revoked', holderKind: grant.holder_kind ?? 'user' } });
+      return grantRow(id)!;
     }
     // An automatic grant being put in place: it can't be taken back before it is there, so it is marked and the add that is in flight
     // removes it the moment it lands. If the add finished first, the claim fails and it is removed as an active grant below.
-    const marked = await claimGrant(id, 'pending', { status: 'pending', remove_reason: reason, remove_by: actor.id });
+    const marked = await claimGrant(id, 'pending', { status: 'pending', remove_reason: reason, remove_by: by });
     if (marked.won) {
-      recordAudit({ action: 'access.grant.revoke', actor: auditActorOf(actor), target: { type: 'access_grant', id }, project: null, summary: 'Asked to take a grant back as soon as it is in place', details: { from: 'pending', to: 'pending', reason } });
-      return grantView(actor, marked.row!);
+      recordAudit({ action: 'access.grant.revoke', actor: audit, target: { type: 'access_grant', id }, project: null, summary: 'Asked to take a grant back as soon as it is in place', details: { from: 'pending', to: 'pending', reason, holderKind: grant.holder_kind ?? 'user' } });
+      return marked.row!;
     }
-    return revokeNowSettled(actor, id, reason);
+    return revokeRowSettled(id, by, reason);
   }
   if (grant.status === 'failed') {
     // The add may have worked at the system before it failed: take it back (a person who had it before is left as they were).
-    const after = await removeGrant(id, reason, actor.id, Date.now(), ['failed']);
-    return grantView(actor, after ?? grantRow(id)!);
+    const after = await removeGrant(id, reason, by, Date.now(), ['failed']);
+    return after ?? grantRow(id)!;
   }
-  return revokeNowSettled(actor, id, reason);
+  return revokeRowSettled(id, by, reason);
 }
 
-async function revokeNowSettled(actor: Actor, id: string, reason: EndReason): Promise<AccessGrantView> {
+async function revokeRowSettled(id: string, by: string, reason: EndReason): Promise<GrantRow> {
   const grant = grantRow(id)!;
   if (!['active', 'revoke_failed', 'drift'].includes(grant.status)) throw new AccessError(`This grant is ${grant.status}, so there is nothing to take back`, 409);
-  const after = await removeGrant(id, reason, actor.id);
+  const after = await removeGrant(id, reason, by);
   if (!after || (after.status !== 'removing' && after.status !== 'revoked' && after.status !== 'expired' && after.status !== 'revoke_failed')) throw new AccessError('This grant changed while you asked: look again', 409);
-  return grantView(actor, after);
+  return after;
 }
 
 /** A manual grant: pending -> active from now (the approver did it by hand), removing -> ended (they removed it). */
@@ -437,4 +460,10 @@ export function listGrants(actor: Actor, options: { scope: GrantScope; status?: 
     if (out.length >= (options.limit ?? 200)) break;
   }
   return out;
+}
+
+/** An outside requester's own grants, newest first (their view: no approver, no error text). */
+export function listOwnGrants(requester: Requester, limit = 100): OutsideGrantView[] {
+  const rows = database().all<GrantRow>('SELECT * FROM access_grants WHERE holder_id = ? ORDER BY created_at DESC, id DESC LIMIT ?', requester.id, limit);
+  return rows.map((row) => outsideGrantView(row, entryData(row.entry_id)?.name));
 }

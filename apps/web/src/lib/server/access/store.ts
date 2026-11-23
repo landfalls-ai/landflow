@@ -24,6 +24,8 @@ export interface EntryRow {
   owners: string;
   eligible: string | null;
   enabled: number;
+  /** 1: open to outside requesters (migration 2937). */
+  outside?: number;
   version: number;
   created_by: string | null;
   created_at: string;
@@ -36,6 +38,8 @@ export interface RequestRow {
   entry_version: number;
   entry_snapshot: string;
   requester_id: string;
+  /** `user` or `outside` (migration 2937): which table names `requester_id`. */
+  requester_kind?: string;
   account: string | null;
   duration_minutes: number | null;
   reason: string;
@@ -58,6 +62,8 @@ export interface GrantRow {
   request_id: string | null;
   entry_id: string;
   holder_id: string;
+  /** `user` or `outside` (migration 2937). */
+  holder_kind?: string;
   account: string | null;
   system: string;
   target: string;

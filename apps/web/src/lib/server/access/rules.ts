@@ -7,7 +7,10 @@
  * - Requests: the requester sees their own; an entry's approvers and owners see that entry's; instance admins see all.
  * - Grants: the holder sees their own; owners, approvers and admins see the entry's. Give it back (revoke): the holder, the owners and
  *   approvers, admins. Done on a manual grant: the approvers, the owners and admins, never the holder.
- * - Nobody approves their own request: `approversFor` never lists the requester.
+ * - Nobody approves their own request: `approversFor` never lists the requester, nor anyone whose email is the requester's (an outside
+ *   requester may share an address with an approver: C36 D-7).
+ * - Outside requesters (people without an account) ask only for entries an instance admin opened to them (`canOutsiderAsk`); an entry's
+ *   `eligible` list names Landflow users, so it does not apply to them.
  *
  * Plain server module (no Next.js import).
  */
@@ -15,6 +18,7 @@ import type { AccessTarget, AccessSystem, ApprovalStep } from '../../shared/acce
 import type { AuditActorInput } from '../audit';
 import { getUser, listUsers } from '../auth/users';
 import { isInstanceAdmin, type Actor } from '../projects/access';
+import { emailKey, requesterOf } from './principal';
 
 /** An entry as the library works with it (the row, parsed). */
 export interface EntryData {
@@ -30,6 +34,8 @@ export interface EntryData {
   /** Empty: everyone signed in may ask. */
   eligible: string[];
   enabled: boolean;
+  /** Open to outside requesters (people without a Landflow account); only an instance admin sets it. */
+  outside: boolean;
   version: number;
   createdBy?: string;
   createdAt: string;
@@ -66,14 +72,27 @@ export function canAskFor(actor: Actor, entry: EntryData): boolean {
   return entry.enabled && (entry.eligible.length === 0 || entry.eligible.includes(actor.id) || canEditEntry(actor, entry));
 }
 
+/** Whether an outside requester may ask for the entry: it is on, and an admin opened it to them. */
+export const canOutsiderAsk = (entry: Pick<EntryData, 'enabled' | 'outside'>): boolean => entry.enabled && entry.outside;
+
+/** Whether `user` is the requester: the same id, or the same email (canonical form), so an outside requester can't be approved by their own address. */
+const isTheRequester = (user: { id: string; email?: string }, requesterId: string, requesterKey: string): boolean => user.id === requesterId || (Boolean(requesterKey) && emailKey(user.email) === requesterKey);
+
+/** Whether this Landflow user is the person who asked (the same id, or the same email as an outside requester's). */
+export const isRequesterUser = (user: { id: string; email?: string }, requesterId: string): boolean => isTheRequester(user, requesterId, emailKey(requesterOf(requesterId)?.email));
+
 /**
- * The people who may decide a request: the step's approvers other than the requester who are still active; when none is left,
- * the active instance admins other than the requester (Landbright's approver fallback). Empty: nobody can approve it.
+ * The people who may decide a request: the step's approvers other than the requester (by id or by email) who are still active; when none is
+ * left, the active instance admins other than the requester (Landbright's approver fallback). Empty: nobody can approve it.
  */
 export function approversFor(entry: Pick<EntryData, 'steps'>, requesterId: string, step = 0): string[] {
-  const named = stepApproverIds(entry, step).filter((id) => id !== requesterId && isActiveUser(id));
+  const key = emailKey(requesterOf(requesterId)?.email);
+  const named = stepApproverIds(entry, step).filter((id) => {
+    const user = getUser(id);
+    return Boolean(user && !user.disabledAt) && !isTheRequester(user!, requesterId, key);
+  });
   if (named.length) return [...new Set(named)];
-  return listUsers().filter((user) => user.id !== requesterId && !user.disabledAt && (user.role === 'owner' || user.role === 'admin')).map((user) => user.id);
+  return listUsers().filter((user) => !isTheRequester(user, requesterId, key) && !user.disabledAt && (user.role === 'owner' || user.role === 'admin')).map((user) => user.id);
 }
 
 /** Whether `userId` decides step `step` of a request by `requesterId` now (active, not the requester, named or a fallback admin). */
