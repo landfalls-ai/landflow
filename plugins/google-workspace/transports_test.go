@@ -43,7 +43,7 @@ func names(m map[string]bool, want bool) string {
 	return strings.Join(out, ",")
 }
 
-const googleReads = "gmail_message_get,gmail_message_getAll,googleCalendar_event_changedSince,googleCalendar_event_get,googleCalendar_event_getAll,googleDirectory_user_get,googleDirectory_user_getAll,googleDocs_document_export,googleDocs_document_get," +
+const googleReads = "gmail_message_get,gmail_message_getAll,googleCalendar_event_changedSince,googleCalendar_event_get,googleCalendar_event_getAll,googleDirectory_group_get,googleDirectory_group_getAll,googleDirectory_member_getAll,googleDirectory_member_hasMember,googleDirectory_user_get,googleDirectory_user_getAll,googleDocs_document_export,googleDocs_document_get," +
 	"googleDrive_fileFolder_search,googleDrive_file_changesSince,googleDrive_file_download,googleDrive_file_export,googleDrive_file_getItem,googleSheets_sheet_read,googleSheets_spreadsheet_export"
 
 // Reads and lookups are idempotent; every write, send and delete stays at most once.
@@ -65,7 +65,8 @@ func TestOnlyReadOperationsAreIdempotent(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	want := "googleCalendar.changedSince,googleDirectory.get,googleDirectory.getAll,googleDrive.changesSince,googleDrive.getItem,googleCalendar.get,googleCalendar.getAll,googleDocs.export,googleDocs.get,googleDrive.download,googleDrive.export,googleDrive.search,gmail.get,gmail.getAll,googleSheets.export,googleSheets.read"
+	// googleDirectory: get (user, group), getAll (user, group, member), hasMember.
+	want := "googleCalendar.changedSince,googleDirectory.get,googleDirectory.get,googleDirectory.getAll,googleDirectory.getAll,googleDirectory.getAll,googleDirectory.hasMember,googleDrive.changesSince,googleDrive.getItem,googleCalendar.get,googleCalendar.getAll,googleDocs.export,googleDocs.get,googleDrive.download,googleDrive.export,googleDrive.search,gmail.get,gmail.getAll,googleSheets.export,googleSheets.read"
 	wantSorted := strings.Split(want, ",")
 	sort.Strings(wantSorted)
 	if strings.Join(got, ",") != strings.Join(wantSorted, ",") {

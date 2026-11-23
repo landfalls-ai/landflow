@@ -35,7 +35,7 @@ full URL instead.
 | **Google Drive Trigger** (`google.googleDriveTrigger`) | poll trigger, files changed, default every 300 s | Shared drives on or off, Options as for Get Many Changed Since. Outputs [activity items](#activity-items) |
 | **Google Calendar** (`google.googleCalendar`) | Event → Create, Delete, Get, Get Many, Get Many Changed Since, Update | Calendar picker (`calendarList`). Start/End as ISO 8601: with an offset as given, without one in the event's Time Zone or the calendar's. All Day uses dates (a same-day end becomes the next day, as the API's end date is exclusive). Additional/Update Fields: summary, description, location, attendees, time zone, send updates. Get Many: After/Before, order by start time or updated, search, single events, show deleted |
 | **Google Calendar Trigger** (`google.googleCalendarTrigger`) | poll trigger, events created, changed or cancelled, default every 300 s | Calendar picker, Options: Include Cancelled Events, Internal Domains, Include Description. Outputs [activity items](#activity-items) |
-| **Google Directory** (`google.googleDirectory`) | User → Get, Get Many | Read-only. Simplified: `email`, `name`, `orgUnitPath`, `title`, `department`, `managerEmail`, `suspended`, `isAdmin`… Filters: Domain, Org Unit, Include Suspended, Query. [Needs an admin](#google-directory) |
+| **Google Directory** (`google.googleDirectory`) | User → Get, Get Many · Group → Get, Get Many · Group Member → Add, Remove, Get Many, Has Member, Update Role | Users and groups are read-only; Group Member changes who is in a group (not offered as agent tools). Simplified: `email`, `name`, `orgUnitPath`, `title`, `department`, `managerEmail`, `suspended`, `isAdmin`… Filters: Domain, Org Unit, Include Suspended, Query. [Needs an admin](#google-directory) |
 | **Google Docs** (`google.googleDocs`) | Document → Create, Get, Update, Export | Create in a folder (moved there through Drive). Get returns `{documentId, title, content}` with the text of paragraphs, tables and the table of contents (Simplify off: the raw document). Update applies Actions in one `batchUpdate`: Insert (at the end) and Replace All (match case optional) and returns `occurrencesChanged`. Export returns the document as a binary file (docx, pdf, odt, rtf, txt, html zip, epub, md) |
 
 ### Google Sheets
@@ -137,6 +137,47 @@ Google allows this API only to admins. A service account must impersonate one: s
 (or the credential's Impersonate a User), and add `https://www.googleapis.com/auth/admin.directory.user.readonly` to
 the service account's client ID under domain-wide delegation. The node asks for that scope alone, so the scopes already
 delegated for the other nodes don't change. With OAuth2, the signed-in user must be an admin and grant that scope.
+
+#### Groups and group members
+
+Used for access requests: add someone to a Google group, take them out again, see who is in one.
+
+| Resource → operation | Parameters | Endpoint |
+|---|---|---|
+| **Group → Get** | Group (email, alias or id), Simplify | `GET groups/{groupKey}` |
+| **Group → Get Many** | Return All / Limit, Simplify, Filters: Domain (default customer `my_customer`), Query (`email:eng*`) | `GET groups` (200 a page) |
+| **Group Member → Add** | Group, Member (email, alias or id), Role (`MEMBER` default, `MANAGER`, `OWNER`) | `POST groups/{groupKey}/members` |
+| **Group Member → Remove** | Group, Member | `GET`, then `DELETE groups/{groupKey}/members/{memberKey}` |
+| **Group Member → Get Many** | Group, Return All / Limit, Filters: Roles | `GET groups/{groupKey}/members` (200 a page) |
+| **Group Member → Has Member** | Group, Member | `GET groups/{groupKey}/hasMember/{memberKey}` |
+| **Group Member → Update Role** | Group, Member, Role | `GET`, then `PATCH groups/{groupKey}/members/{memberKey}` when the role differs |
+
+Group Member operations output `{group, member, role, status, changed}` (emails lowercased; Has Member adds `isMember`,
+Get Many adds `type` and `id`, one item per member). `changed` says whether Google's state changed:
+
+| Operation | `status` / `changed` |
+|---|---|
+| Add | `added` / true; the person is already in the group: `already_member` / false with their current role (Google's 409 "Member already exists" is not an error, and the role is not changed: use Update Role) |
+| Remove | `removed` / true (with the role they had); not in the group: `not_member` / false |
+| Update Role | `updated` / true; already that role: `unchanged` / false (nothing is sent); not a member: an error |
+| Has Member | `member` or `not_member`, always false |
+
+Errors say what is missing: a 404 becomes `No group <key>` or `No user <email>` (a member in the group's own domain must be a
+Workspace user; outside addresses are accepted when the group allows them), and a 403 says that only an admin can
+manage groups and names the scope to delegate. The writes (Add, Remove, Update Role) are left out of the plugin's MCP
+tools so an agent cannot grant access by itself; the reads are tools.
+
+**Scopes.** The node asks for the scope of the resource it uses, and for nothing else, so list only what you use in the
+service account's domain-wide delegation (Admin console → Security → API controls → Domain-wide delegation):
+
+| Resource | Scope |
+|---|---|
+| User | `https://www.googleapis.com/auth/admin.directory.user.readonly` |
+| Group → Get, Get Many | `https://www.googleapis.com/auth/admin.directory.group` |
+| Group Member (all operations) | `https://www.googleapis.com/auth/admin.directory.group.member` |
+
+A service account must impersonate a Workspace admin who may manage groups (**Admin to Impersonate**, or the credential's
+Impersonate a User). With OAuth2 the signed-in admin grants the scopes at Connect.
 
 ## Credentials
 

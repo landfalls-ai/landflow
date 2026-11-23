@@ -211,6 +211,7 @@ func matchesUserQuery(u DirectoryUser, query string) bool {
 //	POST /_fake/drive/docs            {"id","title","text","parents":[…],"driveId","editor","owner"}: create or edit a Doc
 //	POST /_fake/calendar/{id}/events  a raw Events resource: create or replace an event
 //	POST /_fake/directory/users       a raw Directory user
+//	POST /_fake/directory/groups      a raw group ({id?, email, name}); with "members": [{email, role}] in the body
 //
 // It reports whether it handled the request.
 func (s *Server) activityAdmin(w http.ResponseWriter, r *http.Request, segs []string, body []byte) bool {
@@ -271,6 +272,24 @@ func (s *Server) activityAdmin(w http.ResponseWriter, r *http.Request, segs []st
 		}
 		s.Users = append(s.Users, u)
 		writeJSON(w, http.StatusOK, u)
+	case hasPrefix(segs, "directory", "groups") && len(segs) == 2:
+		var raw DirectoryGroup
+		if err := json.Unmarshal(body, &raw); err != nil || raw["email"] == nil {
+			writeError(w, http.StatusBadRequest, "want a group with an email")
+			return true
+		}
+		members, _ := raw["members"].([]any)
+		delete(raw, "members")
+		if raw["id"] == nil {
+			raw["id"] = "g-" + asString(raw["email"])
+		}
+		s.Groups = append(s.Groups, raw)
+		for _, m := range members {
+			if mm, ok := m.(map[string]any); ok {
+				s.putMember(raw, mm)
+			}
+		}
+		writeJSON(w, http.StatusOK, raw)
 	default:
 		return false
 	}

@@ -4401,7 +4401,7 @@
   {
    "name": "googleDirectory",
    "displayName": "Google Directory",
-   "description": "List and look up the people in your Google Workspace: email, org unit, title, department and manager",
+   "description": "List and look up the people and groups in your Google Workspace, and add, remove or list the members of a group",
    "version": 1,
    "kind": "action",
    "categories": [
@@ -4447,6 +4447,14 @@
      "default": "user",
      "noDataExpression": true,
      "options": [
+      {
+       "name": "Group",
+       "value": "group"
+      },
+      {
+       "name": "Group Member",
+       "value": "member"
+      },
       {
        "name": "User",
        "value": "user"
@@ -4613,10 +4621,352 @@
        ]
       }
      }
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "get",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Get",
+       "value": "get",
+       "description": "Get a group by email or id",
+       "action": "Get a group",
+       "idempotent": true
+      },
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "description": "List the groups of the domain",
+       "action": "Get many groups",
+       "idempotent": true
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "group"
+       ]
+      }
+     }
+    },
+    {
+     "name": "operation",
+     "displayName": "Operation",
+     "type": "options",
+     "default": "getAll",
+     "noDataExpression": true,
+     "options": [
+      {
+       "name": "Add",
+       "value": "add",
+       "description": "Add a member to a group (a member already in it is returned unchanged)",
+       "action": "Add a member to a group",
+       "mcp": false
+      },
+      {
+       "name": "Get Many",
+       "value": "getAll",
+       "description": "List the members of a group",
+       "action": "Get many group members",
+       "idempotent": true
+      },
+      {
+       "name": "Has Member",
+       "value": "hasMember",
+       "description": "Whether a person is a member of a group",
+       "action": "Check a group member",
+       "idempotent": true
+      },
+      {
+       "name": "Remove",
+       "value": "remove",
+       "description": "Remove a member from a group (a person not in it is returned unchanged)",
+       "action": "Remove a member from a group",
+       "mcp": false
+      },
+      {
+       "name": "Update Role",
+       "value": "updateRole",
+       "description": "Change a member's role in a group",
+       "action": "Update a member's role",
+       "mcp": false
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "member"
+       ]
+      }
+     }
+    },
+    {
+     "name": "groupKey",
+     "displayName": "Group",
+     "type": "string",
+     "default": "",
+     "description": "The group's email, alias or id",
+     "placeholder": "team@example.com",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "get"
+       ],
+       "resource": [
+        "group"
+       ]
+      }
+     }
+    },
+    {
+     "name": "groupKey",
+     "displayName": "Group",
+     "type": "string",
+     "default": "",
+     "description": "The group's email, alias or id",
+     "placeholder": "team@example.com",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "member"
+       ]
+      }
+     }
+    },
+    {
+     "name": "memberKey",
+     "displayName": "Member",
+     "type": "string",
+     "default": "",
+     "description": "The member's email, alias or id",
+     "placeholder": "dana@example.com",
+     "required": true,
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "add",
+        "remove",
+        "hasMember",
+        "updateRole"
+       ],
+       "resource": [
+        "member"
+       ]
+      }
+     }
+    },
+    {
+     "name": "role",
+     "displayName": "Role",
+     "type": "options",
+     "default": "MEMBER",
+     "description": "The member's role in the group",
+     "options": [
+      {
+       "name": "Member",
+       "value": "MEMBER"
+      },
+      {
+       "name": "Manager",
+       "value": "MANAGER"
+      },
+      {
+       "name": "Owner",
+       "value": "OWNER"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "add",
+        "updateRole"
+       ],
+       "resource": [
+        "member"
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "group"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 100,
+     "description": "Max number of results to return",
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 200,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "group"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "returnAll",
+     "displayName": "Return All",
+     "type": "boolean",
+     "default": false,
+     "description": "Whether to return all results or only up to a given limit",
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "member"
+       ]
+      }
+     }
+    },
+    {
+     "name": "limit",
+     "displayName": "Limit",
+     "type": "number",
+     "default": 100,
+     "description": "Max number of results to return",
+     "typeOptions": {
+      "minValue": 1,
+      "maxValue": 200,
+      "numberPrecision": 0
+     },
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "member"
+       ],
+       "returnAll": [
+        false
+       ]
+      }
+     }
+    },
+    {
+     "name": "filters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Filter",
+     "values": [
+      {
+       "name": "domain",
+       "displayName": "Domain",
+       "type": "string",
+       "default": "",
+       "description": "Only this domain of the account (default: all domains, customer my_customer)"
+      },
+      {
+       "name": "query",
+       "displayName": "Query",
+       "type": "string",
+       "default": "",
+       "description": "A Directory group search (https://developers.google.com/workspace/admin/directory/v1/guides/search-groups)",
+       "placeholder": "email:eng*"
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "group"
+       ]
+      }
+     }
+    },
+    {
+     "name": "filters",
+     "displayName": "Filters",
+     "type": "collection",
+     "default": {},
+     "placeholder": "Add Filter",
+     "values": [
+      {
+       "name": "roles",
+       "displayName": "Roles",
+       "type": "multiOptions",
+       "default": [],
+       "description": "Only members with these roles (default: all)",
+       "options": [
+        {
+         "name": "Member",
+         "value": "MEMBER"
+        },
+        {
+         "name": "Manager",
+         "value": "MANAGER"
+        },
+        {
+         "name": "Owner",
+         "value": "OWNER"
+        }
+       ]
+      }
+     ],
+     "displayOptions": {
+      "show": {
+       "operation": [
+        "getAll"
+       ],
+       "resource": [
+        "member"
+       ]
+      }
+     }
+    },
+    {
+     "name": "simple",
+     "displayName": "Simplify",
+     "type": "boolean",
+     "default": true,
+     "description": "Whether to return a simplified version of the response instead of the raw data",
+     "displayOptions": {
+      "show": {
+       "resource": [
+        "group"
+       ]
+      }
+     }
     }
    ],
    "usableAsTool": true,
-   "toolDescription": "Read the Google Workspace directory. resource=user: getAll lists people (filters.orgUnitPath, filters.query, filters.domain) with email, name, orgUnitPath, title, department and managerEmail; get returns one by userKey (email or id).",
+   "toolDescription": "Read the Google Workspace directory. resource=user: getAll lists people (filters.orgUnitPath, filters.query, filters.domain) with email, name, orgUnitPath, title, department and managerEmail; get returns one by userKey (email or id). resource=group: get returns a group by groupKey (email or id), getAll lists groups (filters.domain, filters.query). resource=member: getAll lists a group's members with role, hasMember says whether memberKey is in groupKey. Adding, removing and changing members is not offered as a tool.",
    "documentationUrl": "https://developers.google.com/workspace/admin/directory/reference/rest/v1/users/list",
    "keywords": [
     "directory",
@@ -4625,7 +4975,11 @@
     "employees",
     "org chart",
     "manager",
-    "admin"
+    "admin",
+    "groups",
+    "group members",
+    "access",
+    "grant"
    ],
    "credentials": [
     {
@@ -4797,11 +5151,5 @@
     "oAuth2Api"
    ]
   }
- ],
- "transports": [
-  "http",
-  "grpc",
-  "mcp"
- ],
- "maxConcurrency": 10
+ ]
 }
