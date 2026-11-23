@@ -5,7 +5,7 @@
  *
  * - minute: `active` and `until <= now` -> removed (`expired`); `revoke_failed` whose `next_attempt_at` passed -> tried again
  *   (1 min, then doubling, up to 1 h); a manual grant at its end becomes `removing` and its approvers are asked to remove it by hand.
- * - hour: `removing` whose lease ran out (a process stopped) -> taken again; each live automatic grant is checked with the system:
+ * - hour: outside sign-in links and sessions that ended are deleted (`pruneOutside`); `removing` whose lease ran out (a process stopped) -> taken again; each live automatic grant is checked with the system:
  *   gone outside Landflow -> `drift` (audited, never re-added); still there 24 h after its end -> `revoke_overdue` once.
  */
 import { recordAudit } from '../audit';
@@ -14,6 +14,7 @@ import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { runAction } from './actions';
 import { removeGrant, resumeGrant, OVERDUE_MS, REMOVE_LEASE_MS, type EndReason } from './grants';
+import { pruneOutside } from './outside/sessions';
 import { claimGrant, grantRow, parseJson, type GrantRow } from './store';
 import { SYSTEMS } from './systems';
 
@@ -54,6 +55,8 @@ export interface ReconcileResult {
 /** The hourly pass. */
 export async function reconcileGrants(now = Date.now()): Promise<ReconcileResult> {
   const result: ReconcileResult = { retaken: 0, activated: 0, drift: 0, overdue: 0 };
+  // C36: used and expired sign-in links and ended sessions of people without an account (their requester rows stay).
+  pruneOutside(now);
   // A process that stopped mid-removal left `removing` with a lease that ran out.
   const stale = database().all<GrantRow>(`SELECT * FROM access_grants WHERE status = 'removing' AND system <> 'manual' AND lease_until IS NOT NULL AND lease_until <= ? LIMIT ?`, iso(now), PASS_LIMIT);
   for (const grant of stale) {

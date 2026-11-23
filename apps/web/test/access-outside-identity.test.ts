@@ -575,6 +575,16 @@ describe('settings and Block (instance admins)', () => {
     expect((await put({ enabled: false })).body).toMatchObject({ enabled: false, domains: ['partner.test', 'sub.example.org'] });
   });
 
+  it('an admin can open an entry to outsiders when creating it (the route keeps outsideMayAsk), an owner cannot', async () => {
+    const entriesRoute = await import('@/app/api/access/entries/route');
+    const body = (name: string, extra: object = {}) => ({ method: 'POST', body: { name, system: 'manual', target: { instructions: 'By hand' }, durations: [60], approverIds: [admin.id], owners: [admin.id], ...extra } });
+    const opened = await call(admin, entriesRoute.POST as Handler, '/api/access/entries', body('Open one', { outsideMayAsk: true }));
+    expect(opened.status).toBe(201);
+    expect(opened.body.outsideMayAsk).toBe(true);
+    expect((await call(admin, entriesRoute.POST as Handler, '/api/access/entries', body('Closed one'))).body.outsideMayAsk).toBe(false);
+    expect((await call(member, entriesRoute.POST as Handler, '/api/access/entries', body('Not yours', { outsideMayAsk: true }))).status).toBe(403);
+  });
+
   it('lists requesters for admins, and Block ends sessions, cancels open requests, stops links, and Unblock lets them back', async () => {
     const { cookie } = await signIn('erin@partner.test');
     const requester = store.requesterRowByKey('erin@partner.test')!;
@@ -590,7 +600,8 @@ describe('settings and Block (instance admins)', () => {
     expect(blocked.body).toMatchObject({ blocked: true, openRequests: 0 });
     expect(database().get<{ status: string }>('SELECT status FROM access_requests WHERE id = ?', 'areq_erin')?.status).toBe('cancelled');
     expect(audited('access.outside.block')[0]).toMatchObject({ actor: expect.objectContaining({ id: admin.id }), target: expect.objectContaining({ id: requester.id }) });
-    expect(audited('access.request.cancel').some((e) => e.target?.id === 'areq_erin')).toBe(true);
+    // One path: Block cancels through the library's cancelOpenRequestsOf, which says why in the audit event.
+    expect(audited('access.request.cancel').find((e) => e.target?.id === 'areq_erin')?.details).toMatchObject({ reason: 'blocked', to: 'cancelled' });
     auth.disableTestAuth();
     expect((await send(sessionRoute.GET as Handler, '/request-access/api/session', { method: 'GET', cookie })).status).toBe(401);
     expect(database().all('SELECT id FROM access_outside_sessions')).toHaveLength(0);
@@ -643,3 +654,54 @@ async function unblockRequesterByEmail(email: string) {
   unblockRequester(owner, store.requesterRowByKey(email)!.id);
 }
 void partnerUser;
+
+describe('seams with the request library (C36 integration)', () => {
+  it('the session `chat` flag is true only when the access chat is set up and the outside cap is above 0', async () => {
+    const { saveAccessSettings, accessSettings } = await import('@/lib/server/access/store');
+    const { store: workflows } = await import('@/lib/server/store');
+    const { cookie } = await signIn('erin@partner.test');
+    const chatFlag = async () => (await jsonOf(await send(sessionRoute.GET as Handler, '/request-access/api/session', { method: 'GET', cookie }))).chat;
+    expect(await chatFlag()).toBe(false); // nothing installed
+    workflows.saveWorkflow({ id: 'wf_seam_chat', name: 'Access chat', nodes: [{ id: 'chat', name: 'Chat', type: 'core.chatTrigger', typeVersion: 1, position: [0, 0], parameters: {} }], connections: [] } as never);
+    saveAccessSettings({ ...accessSettings(), chatWorkflowId: 'wf_seam_chat' });
+    expect(await chatFlag()).toBe(true);
+    process.env.LANDFLOW_ACCESS_OUTSIDE_CHAT_PER_HOUR = '0';
+    try {
+      expect(await chatFlag()).toBe(false);
+    } finally {
+      delete process.env.LANDFLOW_ACCESS_OUTSIDE_CHAT_PER_HOUR;
+    }
+    saveAccessSettings({ ...accessSettings(), chatWorkflowId: undefined });
+    workflows.deleteWorkflow('wf_seam_chat');
+  });
+
+  it('answers a thrown AccessError with its status and message, and any other error with a generic 500', async () => {
+    const { outsideRoute, outsidePublic } = await import('@/lib/server/access/outside/http');
+    const { AccessError } = await import('@/lib/server/access/errors');
+    const { cookie } = await signIn('erin@partner.test');
+    const refused = outsideRoute(async () => { throw new AccessError('Not for you', 403, { why: 'test' }); });
+    const answered = await send(refused as Handler, '/request-access/api/x', { method: 'GET', cookie });
+    expect(answered.status).toBe(403);
+    expect(await jsonOf(answered)).toMatchObject({ error: 'Not for you' });
+    expect(answered.headers.get('cache-control')).toBe('no-store');
+    const broken = outsidePublic(async () => { throw new Error('secret internal detail'); });
+    const failed = await send(broken as Handler, '/request-access/api/y', { method: 'GET' });
+    expect(failed.status).toBe(500);
+    expect(JSON.stringify(await jsonOf(failed))).not.toContain('secret internal detail');
+    // B's real route: the chat, not set up, is B's AccessError 409 as JSON.
+    const chatRoute = await import('@/app/request-access/api/chat/route');
+    const chat = await send(chatRoute.POST as Handler, '/request-access/api/chat', { body: { message: 'hi', sessionId: 's1' }, cookie });
+    expect(chat.status).toBe(409);
+    expect(await jsonOf(chat)).toMatchObject({ error: expect.stringContaining('not set up') });
+  });
+
+  it('the hourly access reconcile prunes outside links and sessions', async () => {
+    const { reconcileGrants } = await import('@/lib/server/access/sweeper');
+    await askLink('erin@partner.test'); // a live link row, then an ended one
+    const old = new Date(Date.now() - 3_600_000).toISOString();
+    for (const link of database().all<Record<string, string>>('SELECT * FROM access_outside_links')) database().upsert('access_outside_links', { ...link, expires_at: old });
+    expect(database().all('SELECT id FROM access_outside_links').length).toBeGreaterThan(0);
+    await reconcileGrants();
+    expect(database().all('SELECT id FROM access_outside_links')).toHaveLength(0);
+  });
+});

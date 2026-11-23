@@ -13,6 +13,7 @@ import {
   type AccessSetup,
   type AccessState,
   type AccessSystem,
+  type VerifiedBy,
   ACCESS_LIMITS,
 } from '@/lib/shared/access';
 import type { CredentialSummary } from '@/lib/shared/types';
@@ -306,10 +307,10 @@ export function AccessClientProvider({ client, children }: { client: AccessClien
 }
 
 /** A person on a request or grant: a Landflow user, or (C36) an outside requester with the address and how it was verified. */
-export function requesterInfo(person: { id: string; name: string } | undefined): { outside: boolean; email?: string; verifiedBy?: 'email' | 'google'; verifiedText?: string } {
-  const p = person as ({ kind?: string; email?: string; verifiedBy?: 'email' | 'google' } & { id: string; name: string }) | undefined;
+export function requesterInfo(person: { id: string; name: string; kind?: string; email?: string; verifiedBy?: VerifiedBy } | undefined): { outside: boolean; email?: string; verifiedBy?: VerifiedBy; verifiedText?: string } {
+  const p = person;
   if (p?.kind !== 'outside') return { outside: false };
-  const verifiedText = p.verifiedBy === 'google' ? 'verified by Google sign-in' : p.verifiedBy === 'email' ? 'verified by email link' : undefined;
+  const verifiedText = p.verifiedBy === 'google' ? 'verified by Google sign-in' : p.verifiedBy === 'link' ? 'verified by email link' : undefined;
   return { outside: true, ...(p.email && { email: p.email }), ...(p.verifiedBy && { verifiedBy: p.verifiedBy }), ...(verifiedText && { verifiedText }) };
 }
 
@@ -317,14 +318,20 @@ export function requesterInfo(person: { id: string; name: string } | undefined):
 export interface OutsideSettingsView {
   enabled: boolean;
   domains: string[];
-  google: { enabled: boolean; credentialId?: string };
-  /** The page's address; the browser builds it from its own origin when the server doesn't say. */
+  google: { enabled: boolean; credentialId?: string; credentialName?: string };
+  /** The page's address: the server's `pageUrl` (from the public URL), else the browser builds it from its own origin. */
   link?: string;
+  pageUrl?: string;
+  /** The address to register with Google as the redirect URI. */
+  redirectUrl?: string;
+  /** The host can send the sign-in link. */
+  mail?: boolean;
 }
 export interface OutsideRequesterRow {
   id: string;
   email: string;
-  verifiedBy: 'email' | 'google';
+  name?: string | null;
+  verifiedBy: VerifiedBy;
   createdAt: string;
   lastSeenAt?: string | null;
   openRequests: number;
@@ -348,10 +355,16 @@ export function canSwitchOutsideOn(draft: Pick<OutsideSettingsView, 'domains' | 
 /** The credentials the Google picker offers: OpenID Connect clients only. */
 export const oidcCredentials = (credentials: CredentialSummary[]): CredentialSummary[] => credentials.filter((c) => c.type === 'oidcClient' || c.type.endsWith('.oidcClient'));
 
+/** The server names the page's address `pageUrl`; the form calls it `link`. */
+const withLink = (settings: OutsideSettingsView): OutsideSettingsView => ({ ...settings, link: settings.pageUrl ?? settings.link });
+
 export const outsideAdminApi = {
-  settings: () => api<OutsideSettingsView>('/api/access/outside', { background: true }),
-  saveSettings: (settings: OutsideSettingsView) => api<OutsideSettingsView>('/api/access/outside', { method: 'PUT', json: { enabled: settings.enabled, domains: settings.domains, google: settings.google } }),
-  requesters: () => api<{ items: OutsideRequesterRow[] }>('/api/access/outside/requesters', { background: true }),
+  settings: async () => withLink(await api<OutsideSettingsView>('/api/access/outside', { background: true })),
+  // Only the fields the server takes: its google object is strict, so the credential's name is never sent back.
+  saveSettings: async (settings: OutsideSettingsView) =>
+    withLink(await api<OutsideSettingsView>('/api/access/outside', { method: 'PUT', json: { enabled: settings.enabled, domains: settings.domains, google: { enabled: settings.google.enabled, credentialId: settings.google.credentialId ?? null } } })),
+  /** The server answers `{ requesters }`. */
+  requesters: async (): Promise<{ items: OutsideRequesterRow[] }> => ({ items: (await api<{ requesters: OutsideRequesterRow[] }>('/api/access/outside/requesters', { background: true })).requesters }),
   block: (id: string) => api<unknown>(`/api/access/outside/requesters/${id}/block`, { method: 'POST' }),
   unblock: (id: string) => api<unknown>(`/api/access/outside/requesters/${id}/unblock`, { method: 'POST' }),
 };

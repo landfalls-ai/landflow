@@ -47,24 +47,33 @@ function sealed(response: Response): Response {
   return response;
 }
 
+/** Seal what `handler()` answers too: an error it turns into JSON (an AccessError, a 500) must not be cached either. */
+function sealing<A extends unknown[]>(inner: (...args: A) => Promise<Response>) {
+  return async (...args: A): Promise<Response> => sealed(await inner(...args));
+}
+
 /** A route that needs no session (the link request, sign-in, the settings the page needs). */
 export function outsidePublic(fn: (ctx: { req: Request; params: RouteParams }) => Promise<Response>, options: OutsideRouteOptions = {}) {
-  return handler(async (req: Request, ctx?: Ctx): Promise<Response> => {
-    const refused = gate(req, options);
-    if (refused) return sealed(refused);
-    return sealed(await fn({ req, params: (await ctx?.params) ?? {} }));
-  });
+  return sealing(
+    handler(async (req: Request, ctx?: Ctx): Promise<Response> => {
+      const refused = gate(req, options);
+      if (refused) return refused;
+      return fn({ req, params: (await ctx?.params) ?? {} });
+    }),
+  );
 }
 
 /** A route for a signed-in requester: the handler gets who they are, never a Landflow user. */
 export function outsideRoute(fn: (ctx: { req: Request; requester: OutsideRequester; params: RouteParams }) => Promise<Response>, options: OutsideRouteOptions = {}) {
-  return handler(async (req: Request, ctx?: Ctx): Promise<Response> => {
-    const refused = gate(req, options);
-    if (refused) return sealed(refused);
-    const requester = await requesterFromRequest(req);
-    if (!requester) return sealed(NextResponse.json({ error: 'signed_out', code: 'signed_out', signIn: true }, { status: 401 }));
-    return sealed(await fn({ req, requester, params: (await ctx?.params) ?? {} }));
-  });
+  return sealing(
+    handler(async (req: Request, ctx?: Ctx): Promise<Response> => {
+      const refused = gate(req, options);
+      if (refused) return refused;
+      const requester = await requesterFromRequest(req);
+      if (!requester) return NextResponse.json({ error: 'signed_out', code: 'signed_out', signIn: true }, { status: 401 });
+      return fn({ req, requester, params: (await ctx?.params) ?? {} });
+    }),
+  );
 }
 
 /** Set the session cookie: HttpOnly, SameSite=Strict, only under `/request-access`, Secure behind https, ending with the session. */

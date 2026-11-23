@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AccessEntryView, AccessGrantView, AccessRequestView, AccessSetup } from '../src/lib/shared/access';
 import type { CredentialSummary } from '../src/lib/shared/types';
-import { accessApi, accessTabs, AccessClientProvider, canSwitchOutsideOn, normalizeDomain, oidcCredentials, requesterInfo } from '../src/lib/client/access';
+import { accessApi, accessTabs, AccessClientProvider, canSwitchOutsideOn, outsideAdminApi, normalizeDomain, oidcCredentials, requesterInfo } from '../src/lib/client/access';
 import { OUTSIDE_SESSION_ENDED, outsideApi } from '../src/lib/client/access-outside';
 import { AskForm, AskProblem } from '../src/components/access/ask-form';
 import { RequestRows } from '../src/components/access/my-requests';
@@ -132,7 +132,9 @@ describe('the client seam (U-1)', () => {
       'PUT /request-access/api/account',
       'POST /request-access/api/sign-out',
     ]);
-    expect(JSON.parse(String(calls[4].init?.body))).toEqual({ entryId: 'e1', durationMinutes: 60, reason: 'On call', account: 'erin-p', channel: 'form' });
+    expect(JSON.parse(String(calls[4].init?.body))).toEqual({ entryId: 'e1', durationMinutes: 60, reason: 'On call', account: 'erin-p' });
+    // The server refuses a write that is not JSON (415): even a write with nothing to say declares it.
+    expect(calls.filter((c) => c.init?.method === 'POST').every((c) => (c.init?.headers as Record<string, string>)['content-type'] === 'application/json')).toBe(true);
     expect(outsideApi.hrefFor('mine', 'r1')).toBe('/request-access?tab=mine&request=r1');
   });
   it('outsideApi sends no Landflow header and never redirects to /login; a 401 announces the end of the session', async () => {
@@ -144,7 +146,7 @@ describe('the client seam (U-1)', () => {
     expect(Object.keys((calls[0].init?.headers ?? {}) as object)).not.toContain('x-landflow-background');
   });
   it('an outsider’s entries become askable entries; the GitHub need decides the form', async () => {
-    mockFetch(() => ({ body: { items: [{ id: 'e1', name: 'Platform team', description: 'Repos', durations: [60, null], target: { label: 'acme/platform' }, needsGithub: true }, { id: 'e2', name: 'Eng group', durations: [60], targetLabel: 'eng@partner.test', needsGithub: false, system: 'google-group' }] } }));
+    mockFetch(() => ({ body: { items: [{ id: 'e1', name: 'Platform team', description: 'Repos', durations: [60, null], targetLabel: 'acme/platform', needsGithub: true, system: 'github-team' }, { id: 'e2', name: 'Eng group', durations: [60], targetLabel: 'eng@partner.test', needsGithub: false, system: 'google-group' }] } }));
     const { items } = await outsideApi.entries();
     expect(items.map((e) => [e.id, e.system, e.target.label, e.durations])).toEqual([['e1', 'github-team', 'acme/platform', [60, null]], ['e2', 'google-group', 'eng@partner.test', [60]]]);
     expect(items.every((e) => e.approverNames === undefined)).toBe(true);
@@ -181,6 +183,27 @@ describe('the client seam (U-1)', () => {
   });
   it('the chat reads its client and is the same panel', () => {
     expect(html(asOutside(createElement(AccessChat, { available: true })))).toContain('It can only file a request; an approver decides');
+  });
+});
+
+describe('the client against the servers as built (C36 integration)', () => {
+  it('maps B’s outsider views (state, canGiveBack, no approvers) onto the shared request and grant views', async () => {
+    const grant = { id: 'g1', entryId: 'e1', entryName: 'Platform team', account: 'erin-p', system: 'github-team', targetLabel: 'acme/platform', status: 'active', until: '2026-11-23T11:05:00Z', canGiveBack: true };
+    mockFetch((url) => ({ body: { items: url.endsWith('/grants') ? [grant] : [{ id: 'r1', entryId: 'e1', entryName: 'Platform team', system: 'github-team', targetLabel: 'acme/platform', state: 'granted', status: 'approved', durationMinutes: 60, approvedMinutes: 1, reason: 'On call', channel: 'form', canCancel: false, grant, createdAt: '2026-11-23T10:00:00Z', updatedAt: '2026-11-23T10:01:00Z' }] } }));
+    const requests = (await outsideApi.requests('mine')).items;
+    expect(requests[0]).toMatchObject({ id: 'r1', status: 'approved', approvedMinutes: 1, approverNames: [], decisions: [], canDecide: false, grant: { id: 'g1', canRevoke: true, canMarkDone: false, holder: { kind: 'outside' } } });
+    expect((await outsideApi.grants('mine')).items[0]).toMatchObject({ id: 'g1', canRevoke: true, alreadyHad: false });
+  });
+  it('reads the admin routes: pageUrl is the link, requesters come as { requesters }, and the credential name is never sent back', async () => {
+    mockFetch((url, init) => {
+      if (url.endsWith('/requesters')) return { body: { requesters: [{ id: 'ext_1', email: 'erin@partner.test', name: null, verifiedBy: 'link', createdAt: 'x', lastSeenAt: null, blocked: false, blockedAt: null, openRequests: 0, liveGrants: 0 }] } };
+      return { body: { enabled: true, domains: ['partner.test'], google: { enabled: true, credentialId: 'c1', credentialName: 'Google' }, pageUrl: 'https://lf.test/request-access', redirectUrl: 'https://lf.test/request-access/api/sign-in/google/callback', mail: true, ...(init?.method === 'PUT' && {}) } };
+    });
+    const settings = await outsideAdminApi.settings();
+    expect(settings.link).toBe('https://lf.test/request-access');
+    await outsideAdminApi.saveSettings(settings);
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ enabled: true, domains: ['partner.test'], google: { enabled: true, credentialId: 'c1' } });
+    expect((await outsideAdminApi.requesters()).items).toHaveLength(1);
   });
 });
 
@@ -236,7 +259,7 @@ describe('the public page (U-2)', () => {
     expect(view({ notice: 'Your session ended. Sign in again.' })).toContain('Your session ended. Sign in again.');
   });
   it('signed in: the email, Sign out, and the tabs Ask, My requests, Grants (chat only when the session has it)', () => {
-    const session = { requester: { email: 'erin@partner.test', name: 'Erin', verifiedBy: 'email' as const }, chat: true };
+    const session = { requester: { email: 'erin@partner.test', name: 'Erin', verifiedBy: 'link' as const }, chat: true };
     const out = view({ step: 'signed-in', session, tab: 'ask', mode: 'form', onSignOut: () => {} });
     expect(out).toContain('erin@partner.test');
     expect(out).toContain('Sign out');
@@ -349,7 +372,7 @@ describe('Settings, the flag and the badges for admins (U-3)', () => {
     const out = form({
       settings: { enabled: true, domains: ['partner.test'], google: { enabled: true, credentialId: 'c1' }, link: 'x' },
       requesters: [
-        { id: 'ext_1', email: 'erin@partner.test', verifiedBy: 'email', createdAt: '2026-11-23T10:00:00Z', lastSeenAt: '2026-11-23T11:00:00Z', openRequests: 1, liveGrants: 2, blocked: false },
+        { id: 'ext_1', email: 'erin@partner.test', verifiedBy: 'link', createdAt: '2026-11-23T10:00:00Z', lastSeenAt: '2026-11-23T11:00:00Z', openRequests: 1, liveGrants: 2, blocked: false },
         { id: 'ext_2', email: 'mal@partner.test', verifiedBy: 'google', createdAt: '2026-11-23T10:00:00Z', openRequests: 0, liveGrants: 0, blocked: true },
       ],
     });
@@ -379,7 +402,7 @@ describe('Settings, the flag and the badges for admins (U-3)', () => {
     expect(out.match(/Open outside/g)).toHaveLength(1);
     expect(html(createElement(CatalogGrid, { entries: [open], isAdmin: true, phone: true, onOpen: () => {}, onNew: () => {} }))).toContain('Open outside');
   });
-  const outsider = { id: 'ext_1', name: 'Erin', kind: 'outside', email: 'erin@partner.test', verifiedBy: 'email' };
+  const outsider = { id: 'ext_1', name: 'Erin', kind: 'outside', email: 'erin@partner.test', verifiedBy: 'link' };
   it('To decide shows an outsider’s email with Outside and how it was verified', () => {
     const r = request({ canDecide: true, requester: outsider as AccessRequestView['requester'], question: { title: 'Give erin@partner.test (outside) Platform team for 1 h?', text: 'Who: outside requester erin@partner.test (email verified by link)' } });
     const out = html(createElement(DecideList, { requests: [r], onDecided: () => {} }));
@@ -399,6 +422,6 @@ describe('Settings, the flag and the badges for admins (U-3)', () => {
   });
   it('requesterInfo reads kind, email and verifiedBy, defaulting to a user', () => {
     expect(requesterInfo({ id: 'u2', name: 'Mia' })).toEqual({ outside: false });
-    expect(requesterInfo(outsider)).toEqual({ outside: true, email: 'erin@partner.test', verifiedBy: 'email', verifiedText: 'verified by email link' });
+    expect(requesterInfo(outsider)).toEqual({ outside: true, email: 'erin@partner.test', verifiedBy: 'link', verifiedText: 'verified by email link' });
   });
 });

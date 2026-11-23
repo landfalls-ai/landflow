@@ -131,6 +131,12 @@ const callerOf = (id: string): { requester: Requester; actor?: Actor } | undefin
 /** The chat for outside requesters is on while the instance-wide hourly cap is above 0 (LANDFLOW_ACCESS_OUTSIDE_CHAT_PER_HOUR). */
 export const outsideChatPerHour = (): number => envInt('LANDFLOW_ACCESS_OUTSIDE_CHAT_PER_HOUR', { fallback: OUTSIDE_LIMITS.chatPerHourAll, min: 0 });
 
+/** Outsiders may chat: the installed chat flow exists (the owner's setup) and the hourly cap is above 0. The session route's `chat` flag. */
+export const outsideChatAvailable = (): boolean => {
+  const flowId = accessSettings().chatWorkflowId;
+  return outsideChatPerHour() > 0 && Boolean(flowId && store.getWorkflow(flowId));
+};
+
 /** The File Access Request tool. Never grants and never approves. */
 export async function fileAccessFromChat(call: ChatCall): Promise<ChatAnswer> {
   const caller = call.userId ? callerOf(call.userId) : undefined;

@@ -5,7 +5,7 @@
  * Ask, My requests, Grants and Chat components of the Access page serve this page too. Nothing here touches `/api/*`, the Landflow
  * session or the login redirect of `api()`: an outsider whose session ended is told so on this page, never sent to /login.
  */
-import type { AccessGrantView, AccessRequestView, AccessSystem } from '@/lib/shared/access';
+import type { AccessGrantView, AccessPerson, AccessRequestView, AccessSystem, OutsideEntryView, OutsideGrantView, OutsideRequestView, VerifiedBy } from '@/lib/shared/access';
 import { ApiError } from './api';
 import type { AccessAccounts, AccessClient, AccessTabId, AskEntry } from './access';
 
@@ -23,15 +23,16 @@ export interface OutsideConfig {
 }
 /** What `GET session` says. */
 export interface OutsideSession {
-  requester: { email: string; name?: string; verifiedBy?: 'email' | 'google' };
+  requester: { email: string; name?: string | null; verifiedBy?: VerifiedBy };
   chat: boolean;
 }
 
 async function call<T>(path: string, init: { method?: string; json?: unknown } = {}): Promise<T> {
   const response = await fetch(`${OUTSIDE_BASE}/${path}`, {
     method: init.method ?? 'GET',
-    headers: init.json !== undefined ? { 'content-type': 'application/json' } : undefined,
-    body: init.json !== undefined ? JSON.stringify(init.json) : undefined,
+    // The server refuses a write that is not JSON (415), so every write says so, with an empty object when it has nothing to send.
+    headers: init.json !== undefined || init.method ? { 'content-type': 'application/json' } : undefined,
+    body: init.json !== undefined ? JSON.stringify(init.json) : init.method && init.method !== 'GET' ? '{}' : undefined,
     cache: 'no-store',
     credentials: 'same-origin',
   });
@@ -53,24 +54,59 @@ async function call<T>(path: string, init: { method?: string; json?: unknown } =
 /** The server's list answers `{ items }`; a bare array is accepted too. */
 const itemsOf = <T>(body: unknown): T[] => (Array.isArray(body) ? (body as T[]) : ((body as { items?: T[] } | undefined)?.items ?? []));
 
-interface OpenEntry {
-  id: string;
-  name: string;
-  description?: string;
-  durations: Array<number | null>;
-  system?: AccessSystem;
-  target?: { label?: string };
-  targetLabel?: string;
-  needsGithub?: boolean;
-  githubRequired?: boolean;
+/** What the server calls the signed-in person, for the rows that need a requester (the views of an outsider never name one). */
+const SELF: AccessPerson = { id: 'self', name: 'You', kind: 'outside' };
+
+/** An open entry (B's `OutsideEntryView`) as the Ask form reads it: no approvers, no owners. */
+function askEntry(entry: OutsideEntryView): AskEntry {
+  return { id: entry.id, name: entry.name, ...(entry.description && { description: entry.description }), system: entry.system, durations: entry.durations, target: { key: entry.id, type: entry.system, label: entry.targetLabel, config: {} } };
 }
 
-/** An open entry as the Ask form reads it: the system follows the GitHub need unless the server names it; no approvers. */
-function askEntry(entry: OpenEntry): AskEntry {
-  const needsGithub = entry.needsGithub ?? entry.githubRequired ?? false;
-  const system: AccessSystem = entry.system ?? (needsGithub ? 'github-team' : 'manual');
-  const label = entry.target?.label ?? entry.targetLabel ?? entry.name;
-  return { id: entry.id, name: entry.name, ...(entry.description && { description: entry.description }), system, durations: entry.durations, target: { key: entry.id, type: system, label, config: {} } };
+/** The outsider's own grant (`OutsideGrantView`) as the shared grant components read it. */
+function grantView(grant: OutsideGrantView): AccessGrantView {
+  return {
+    id: grant.id,
+    ...(grant.requestId && { requestId: grant.requestId }),
+    entryId: grant.entryId,
+    entryName: grant.entryName,
+    holder: SELF,
+    ...(grant.account && { account: grant.account }),
+    system: grant.system,
+    targetLabel: grant.targetLabel,
+    status: grant.status,
+    ...(grant.since && { since: grant.since }),
+    ...(grant.until !== undefined && { until: grant.until }),
+    ...(grant.endedAt && { endedAt: grant.endedAt }),
+    ...(grant.endReason && { endReason: grant.endReason }),
+    alreadyHad: false,
+    canRevoke: grant.canGiveBack,
+    canMarkDone: false,
+    canRetry: false,
+  };
+}
+
+/** The outsider's own request (`OutsideRequestView`) as the shared request components read it: nobody else is named. */
+function requestView(request: OutsideRequestView): AccessRequestView {
+  return {
+    id: request.id,
+    entryId: request.entryId,
+    entryName: request.entryName,
+    system: request.system,
+    requester: SELF,
+    ...(request.account && { account: request.account }),
+    durationMinutes: request.durationMinutes,
+    reason: request.reason,
+    channel: request.channel,
+    status: request.status,
+    decisions: [],
+    ...(request.approvedMinutes !== undefined && { approvedMinutes: request.approvedMinutes }),
+    ...(request.note && { note: request.note }),
+    ...(request.grant && { grant: grantView(request.grant) }),
+    approverNames: [],
+    canDecide: false,
+    canCancel: request.canCancel,
+    createdAt: request.createdAt,
+  };
 }
 
 export const outsideHref = (tab: AccessTabId, requestId?: string) => `${OUTSIDE_PATH}?tab=${tab}${requestId ? `&request=${requestId}` : ''}`;
@@ -83,11 +119,11 @@ export const outsideApi = {
   signInEmail: (email: string) => call<unknown>('sign-in/email', { method: 'POST', json: { email } }),
   verify: (token: string) => call<unknown>('sign-in/verify', { method: 'POST', json: { token } }),
   signOut: () => call<unknown>('sign-out', { method: 'POST' }),
-  entries: async (): Promise<{ items: AskEntry[] }> => ({ items: itemsOf<OpenEntry>(await call('entries')).map(askEntry) }),
-  requests: async (_scope: 'mine' = 'mine'): Promise<{ items: AccessRequestView[] }> => ({ items: itemsOf<AccessRequestView>(await call('requests')) }),
-  ask: (input: { entryId: string; durationMinutes: number | null; reason: string; account?: string }) => call<AccessRequestView>('requests', { method: 'POST', json: { ...input, channel: 'form' } }),
+  entries: async (): Promise<{ items: AskEntry[] }> => ({ items: itemsOf<OutsideEntryView>(await call('entries')).map(askEntry) }),
+  requests: async (_scope: 'mine' = 'mine'): Promise<{ items: AccessRequestView[] }> => ({ items: itemsOf<OutsideRequestView>(await call('requests')).map(requestView) }),
+  ask: async (input: { entryId: string; durationMinutes: number | null; reason: string; account?: string }): Promise<AccessRequestView> => requestView(await call<OutsideRequestView>('requests', { method: 'POST', json: input })),
   cancel: (id: string) => call<unknown>(`requests/${id}/cancel`, { method: 'POST' }),
-  grants: async (_scope: 'mine' | 'all' = 'mine'): Promise<{ items: AccessGrantView[] }> => ({ items: itemsOf<AccessGrantView>(await call('grants')) }),
+  grants: async (_scope: 'mine' | 'all' = 'mine'): Promise<{ items: AccessGrantView[] }> => ({ items: itemsOf<OutsideGrantView>(await call('grants')).map(grantView) }),
   // An outsider has Give it back only: the Access page's "revoke" is the same button.
   grantAction: (id: string, action: 'revoke' | 'done' | 'retry') => {
     if (action !== 'revoke') return Promise.reject(new ApiError('Only giving access back is possible here.', 400));

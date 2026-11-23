@@ -7,7 +7,7 @@
 import { database } from '../../db';
 import { auditedTransaction, recordAudit } from '../../audit';
 import { isInstanceAdmin, type Actor } from '../../projects/access';
-import { cancelRequest } from '../requests';
+import { cancelOpenRequestsOf } from '../requests';
 import { AccessError } from '../errors';
 import { auditActorOf } from '../rules';
 import { endSessionsFor } from './sessions';
@@ -70,18 +70,14 @@ export async function blockRequester(actor: Actor, id: string): Promise<OutsideR
   adminOnly(actor);
   const row = requesterRow(id);
   if (!row) throw new AccessError('Requester not found', 404);
-  const open = database().all<{ id: string }>(`SELECT id FROM access_requests WHERE requester_id = ? AND status = 'pending'`, id);
+  const by = auditActorOf(actor);
   auditedTransaction(() => {
     saveRequester({ ...row, blocked_at: row.blocked_at ?? new Date().toISOString(), blocked_by: row.blocked_by ?? actor.id });
     const sessions = endSessionsFor(id);
-    audit(actor, 'access.outside.block', row, { sessions, openRequests: open.length });
+    audit(actor, 'access.outside.block', row, { sessions });
   });
-  for (const request of open) {
-    // Decided meanwhile (409) is fine: the point is that nothing of theirs stays waiting.
-    await cancelRequest(actor, request.id).catch((error: unknown) => {
-      if (!(error instanceof AccessError && error.status === 409)) throw error;
-    });
-  }
+  // Waiting requests are cancelled by the library (audited with reason `blocked`); one settled meanwhile is simply skipped there.
+  await cancelOpenRequestsOf(id, by);
   return view(requesterRow(id)!);
 }
 
