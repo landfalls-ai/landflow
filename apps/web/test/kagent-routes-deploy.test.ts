@@ -327,6 +327,60 @@ describe('the Run Trace connections', () => {
   });
 });
 
+describe('review fixes', () => {
+  it('refuses a listed EgressPolicy that Landflow wrote for an agent (another agent’s routes policy)', async () => {
+    await deploy(published('Owner A').id, { routes: [linear()] });
+    const b = published('Taker B');
+    const answer = await deploy(b.id, { egressPolicies: ['owner-a-routes'] });
+    expect(answer.status).toBe(400);
+    expect(answer.data.error).toContain('owner-a-routes');
+    expect(held('agents', 'taker-b')).toBeUndefined();
+  });
+
+  it('refuses a route host that a listed policy already authenticates (landflow-github)', async () => {
+    kube.objects.set('egresspolicies/kagent/landflow-github', { apiVersion: 'api.kagent.dev/v1alpha3', kind: 'EgressPolicy', metadata: { name: 'landflow-github', namespace: 'kagent' }, spec: { destinations: [{ origin: 'https://api.github.com', authentication: { header: 'Authorization', secretKeyRef: { name: 'github-git', key: 'token' } } }, { origin: 'https://codeload.github.com' }] } });
+    const agent = published('Hosty');
+    const clash = await deploy(agent.id, { egressPolicies: ['landflow-github'], routes: [{ credential: { id: bearer.id, name: bearer.name }, hosts: ['https://api.github.com'] }] });
+    expect(clash.status).toBe(400);
+    expect(clash.data.error).toMatch(/Route 1: .*api\.github\.com.*landflow-github/);
+    // A host the policy lists without a credential is fine.
+    const ok = await deploy(agent.id, { egressPolicies: ['landflow-github'], routes: [{ credential: { id: bearer.id, name: bearer.name }, hosts: ['https://codeload.github.com'] }] });
+    expect(ok.status).toBe(200);
+  });
+
+  it('keeps the routes on the record when taking them away fails, so the next deploy retries', async () => {
+    const agent = published('Sticky');
+    await deploy(agent.id, { routes: [linear()] });
+    kube.readOnly.add('egresspolicies');
+    const answer = await deploy(agent.id, { routes: [] });
+    expect(answer.status).toBeGreaterThanOrEqual(400);
+    expect(agentStore.get(agent.id)!.kagent!.routes).toHaveLength(1);
+    kube.readOnly.clear();
+    expect((await deploy(agent.id, { routes: [] })).status).toBe(200);
+    expect(held('egresspolicies', 'sticky-routes')).toBeUndefined();
+    expect(held('secrets', 'sticky-routes')).toBeUndefined();
+  });
+
+  it('audits the removal when the agent is taken off kagent', async () => {
+    const agent = published('Leaving');
+    await deploy(agent.id, { routes: [linear()] });
+    await call(kagentRoute.DELETE, agent.id, 'DELETE');
+    expect(queryEvents({ targetId: agent.id, action: ['kagent.route.removed'] }).events).toHaveLength(1);
+  });
+
+  it('audits two routes of one credential separately: adding a third is one added event', async () => {
+    const agent = published('Twice');
+    const cred = { id: bearer.id, name: bearer.name };
+    await deploy(agent.id, { routes: [{ credential: cred, hosts: ['https://a.example.test'] }, { credential: cred, hosts: ['https://b.example.test'] }] });
+    const before = queryEvents({ targetId: agent.id, action: ['kagent.route.added'] }).events.length;
+    expect(before).toBe(2);
+    await deploy(agent.id, { routes: [{ credential: cred, hosts: ['https://a.example.test'] }, { credential: cred, hosts: ['https://b.example.test'] }, { credential: cred, hosts: ['https://c.example.test'] }] });
+    const all = queryEvents({ targetId: agent.id, action: ['kagent.route.added', 'kagent.route.changed', 'kagent.route.removed'] }).events;
+    expect(all.filter((e) => e.action === 'kagent.route.added')).toHaveLength(3);
+    expect(all).toHaveLength(3);
+  });
+});
+
 describe('the route’s answers', () => {
   it('is a 400 with the route’s message for a bad route', async () => {
     const answer = await deploy(published('Bad').id, { routes: [{ credential: { id: bearer.id, name: bearer.name }, hosts: ['http://10.0.0.5'] }] });

@@ -122,6 +122,7 @@ export function CredentialDialog({
   onSaved,
   projectId,
   initialName,
+  note,
   overSheet,
 }: {
   /** Draw above a bottom sheet (z-[60]), as the Spotlight card does; the default stays z-50 so the expression menu (z-[60]) shows over it. */
@@ -132,6 +133,8 @@ export function CredentialDialog({
   projectId?: string;
   /** The name a new credential starts with (the combobox's "Create “Billing API”"). */
   initialName?: string;
+  /** A line under the header: where the credential will live, when that matters to the caller. */
+  note?: string;
   /** Restrict the type picker (a node's requirement); one type skips the picker. */
   allowedTypes?: string[];
   onClose: () => void;
@@ -308,6 +311,7 @@ export function CredentialDialog({
             <X className="size-4" />
           </Button>
         </header>
+        {note && <p className="border-b border-hair bg-wl px-5 py-2 text-[12px] text-t2">{note}</p>}
 
         {picking ? (
           <TypePicker types={pickable} onPick={setType} />

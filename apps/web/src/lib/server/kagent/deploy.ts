@@ -29,7 +29,7 @@ import { a2aUrlOf, clusterFrom, KAGENT_API, KAGENT_CREDENTIAL, type KagentCluste
 import { applyObject, deleteObject, getObject, listObjects, type KubeObject } from './kube';
 import { BUILTIN_URL, builtinPin, imageRef, packPlugin } from './oci';
 import { AGENT_ID_LABEL, approvalServerName, kagentManifests, kagentName, landflowEgressName, ROUTES_HMAC_ANNOTATION, routeObjects, routesName, secretName, validKagentName, type ExposedTool, type ModelSettings, type ResolvedRoute } from './manifests';
-import { recordedRoute, resolveRoutes, routesHashMatches, routesHmac } from './routes';
+import { recordedRoute, resolveRoutes, routeHmacs, routesHashMatches, routesHmac } from './routes';
 import { recordAudit } from '../audit';
 import { KagentError } from './errors';
 import { homeProjectId } from '../projects/store';
@@ -84,8 +84,24 @@ export async function kagentEgressPolicies(credential: CredentialRef): Promise<A
 
 /** An EgressPolicy that isn't there would leave the agent without the access it asks for: say so before writing. */
 async function checkEgressPolicies(cluster: KagentCluster, names: string[]) {
+  const found: KubeObject[] = [];
   for (const name of names) {
-    if (!(await getObject(cluster.connection, KAGENT_API, 'EgressPolicy', cluster.namespace, name))) throw new KagentError(`kagent has no EgressPolicy “${name}” in ${cluster.namespace}`);
+    const object = await getObject(cluster.connection, KAGENT_API, 'EgressPolicy', cluster.namespace, name);
+    if (!object) throw new KagentError(`kagent has no EgressPolicy “${name}” in ${cluster.namespace}`);
+    // One Landflow wrote for an agent (its <name>-landflow or <name>-routes) is that agent's: another agent naming it would borrow its credentials.
+    if (object.metadata.labels?.[AGENT_ID_LABEL]) throw new KagentError(`The EgressPolicy “${name}” was written by Landflow for an agent: list only policies made by hand`);
+    found.push(object);
+  }
+  return found;
+}
+
+/** A host a listed policy already sends a credential to can't also be a route: two credentials for one host is ambiguous (and a route must not override a hand-made one). */
+function checkRouteHosts(policies: KubeObject[], routes: ResolvedRoute[]) {
+  for (const [index, route] of routes.entries()) {
+    for (const host of route.hosts) {
+      const clash = policies.find((policy) => ((specOf(policy).destinations as Array<{ origin?: string; authentication?: unknown }> | undefined) ?? []).some((d) => d.origin === host && d.authentication));
+      if (clash) throw new KagentError(`Route ${index + 1}: ${host} already gets a credential from the EgressPolicy “${clash.metadata.name}”: remove it from the route or the policy`);
+    }
   }
 }
 
@@ -288,10 +304,13 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   const plugins = harness.runtime === 'claude' ? await pinPlugins(agent.published.config, cluster, guard) : [];
   // The agent's own list (an empty one: none), else the one deployed last on this cluster, else the cluster's.
   const egressPolicies = input.egressPolicies ?? (sameCluster ? previous?.egressPolicies : undefined) ?? cluster.egressPolicies ?? [];
-  await checkEgressPolicies(cluster, egressPolicies);
+  const listed = await checkEgressPolicies(cluster, egressPolicies);
   const { resolved: routes, droppedRoutes } = await routesFor(agent.id, harness, input.routes, sameCluster ? previous?.routes : undefined);
   const routesHash = routes.length ? routesHmac(routes) : undefined;
-  if (routes.length) await checkRouteObjects(cluster, name, agent.id);
+  if (routes.length) {
+    checkRouteHosts(listed, routes);
+    await checkRouteObjects(cluster, name, agent.id);
+  }
   if (previous && (previous.name !== name || !sameCluster)) {
     await removeResources(previous, agent.id).catch((error) => logger.warn('kagent: the old resources could not be removed', { agentId, error: (error as Error).message }));
   }
@@ -316,7 +335,7 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
     ...(a2aUrlOf(cluster, name) && { a2aUrl: a2aUrlOf(cluster, name) }),
     ...(plugins.length && { plugins }),
     ...(input.egressPolicies !== undefined || egressPolicies.length ? { egressPolicies } : {}),
-    ...(routesHash && { routes: routes.map(recordedRoute), routesHash, routesPolicyHash: routesHash }),
+    ...(routesHash && { routes: routes.map(recordedRoute), routesHash, routesHashes: routeHmacs(routes), routesPolicyHash: routesHash }),
     ...(guard !== 'enforce' && plugins.some((pin) => pin.url === BUILTIN_URL) && { guard }),
     ...(plugins.some((pin) => pin.url === BUILTIN_URL) && { trace: { url: `${cluster.landflowUrl}/api/agent-trace`, ...(a2aUrlOf(cluster, name) && { a2aUrl: a2aUrlOf(cluster, name) }) } }),
   };
@@ -345,6 +364,12 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
         }
       }
     }
+    // Routes taken away: both objects go (the Agent stopped naming the policy above). Inside the try: when one can't be
+    // deleted the record goes back to the one with routes, so nothing is left behind unrecorded and the next deploy retries.
+    if (!routes.length && previous?.routes?.length) {
+      await deleteOurs(cluster, 'EgressPolicy', routesName(name), agent.id);
+      await deleteOurs(cluster, 'Secret', routesName(name), agent.id);
+    }
   } catch (error) {
     // Not written: the deployment stays the one before.
     agentStore.setKagent(agent.id, previous);
@@ -357,11 +382,6 @@ export async function deployToKagent(agentId: string, input: { credential?: Cred
   if (!objects.some((o) => o.metadata.name === approval)) await deleteOurs(cluster, 'RemoteMCPServer', approval, agent.id);
   // So does Landflow's EgressPolicy once the agent has no mod to report (another runtime, or no registry).
   if (!objects.some((o) => o.kind === 'EgressPolicy')) await deleteOurs(cluster, 'EgressPolicy', landflowEgressName(name), agent.id).catch(() => undefined);
-  // Routes taken away: both objects go (the Agent stopped naming the policy above).
-  if (!routes.length && previous?.routes?.length) {
-    await deleteOurs(cluster, 'EgressPolicy', routesName(name), agent.id);
-    await deleteOurs(cluster, 'Secret', routesName(name), agent.id);
-  }
   auditRoutes(agent, previous?.routes ?? [], routes.map(recordedRoute));
   // The cluster answers: what deleted agents left on it while it couldn't goes now.
   await removeLeftovers(credential.id).catch(() => undefined);
@@ -394,9 +414,25 @@ async function checkRouteObjects(cluster: KagentCluster, name: string, agentId: 
 /** One audit event per route added, changed or removed: the agent, the credential's name, the hosts and the header, never a value. */
 function auditRoutes(agent: Agent, before: KagentSecretRoute[], after: KagentSecretRoute[]) {
   const id = (r: KagentSecretRoute) => `${r.credential.id}|${r.header ?? ''}`;
-  const sig = (r: KagentSecretRoute) => JSON.stringify([r.prefix ?? '', [...r.hosts].sort()]);
-  const was = new Map(before.map((r) => [id(r), r]));
-  const is = new Map(after.map((r) => [id(r), r]));
+  const sig = (r: KagentSecretRoute) => JSON.stringify([id(r), r.prefix ?? '', [...r.hosts].sort()]);
+  // Routes unchanged cancel out; of the rest, one with the same credential and header is a change, the others added or removed
+  // (a credential on two routes is matched in order, not collapsed).
+  const same = new Map<string, number>();
+  for (const r of before) same.set(sig(r), (same.get(sig(r)) ?? 0) + 1);
+  const added: KagentSecretRoute[] = [];
+  for (const r of after) {
+    const left = same.get(sig(r)) ?? 0;
+    if (left > 0) same.set(sig(r), left - 1);
+    else added.push(r);
+  }
+  const removed: KagentSecretRoute[] = [];
+  for (const r of before) {
+    const left = same.get(sig(r)) ?? 0;
+    if (left > 0) {
+      same.set(sig(r), left - 1);
+      removed.push(r);
+    }
+  }
   const record = (action: string, verb: string, route: KagentSecretRoute) =>
     recordAudit({
       action: `kagent.route.${action}`,
@@ -404,12 +440,14 @@ function auditRoutes(agent: Agent, before: KagentSecretRoute[], after: KagentSec
       summary: `${verb} a secret route of ${agent.name} to kagent: ${route.credential.name} for ${route.hosts.join(', ')}`,
       details: { agent: agent.name, credential: route.credential.name, credentialId: route.credential.id, hosts: route.hosts, header: route.header ?? '' },
     });
-  for (const [key, route] of is) {
-    const old = was.get(key);
-    if (!old) record('added', 'Added', route);
-    else if (sig(old) !== sig(route)) record('changed', 'Changed', route);
+  for (const route of added) {
+    const index = removed.findIndex((old) => id(old) === id(route));
+    if (index >= 0) {
+      removed.splice(index, 1);
+      record('changed', 'Changed', route);
+    } else record('added', 'Added', route);
   }
-  for (const [key, route] of was) if (!is.has(key)) record('removed', 'Removed', route);
+  for (const route of removed) record('removed', 'Removed', route);
 }
 
 /** Publishing a deployed agent writes the new version to kagent too; a failure is reported, not thrown. */
@@ -491,6 +529,7 @@ export async function removeFromKagent(agentId: string): Promise<Agent> {
   // Before the cluster is asked: the keys stop even when kagent can't be reached.
   await blockRuntimeKeys(agent.id).catch(() => undefined);
   await removeResources(agent.kagent, agent.id);
+  auditRoutes(agent, agent.kagent.routes ?? [], []);
   logger.info('kagent: agent removed', { agentId, name: agent.kagent.name });
   return agentStore.setKagent(agent.id, undefined) ?? agent;
 }
@@ -636,12 +675,20 @@ export async function refreshRouteSecret(agent: Agent): Promise<{ changed: strin
   const { routes: resolved, broken } = await resolveRoutes(agent.id, deployment.routes, { lenient: true });
   if (routesHashMatches(resolved, deployment.routesHash)) return undefined;
   const hash = routesHmac(resolved);
+  const hashes = routeHmacs(resolved);
   const cluster = await clusterOf(deployment.credential);
   const secret = routeObjects({ agentId: agent.id, version: deployment.version ?? 0, cluster }, deployment.name, resolved, hash).find((o) => o.kind === 'Secret')!;
+  // A deploy that landed since this read writes the routes itself: leave it the Secret.
+  if (agentStore.get(agent.id)?.kagent?.deployedAt !== deployment.deployedAt) return undefined;
   await applyObject(cluster.connection, secret);
-  // Another deploy may have written meanwhile (it wrote the same values): record only on top of the deployment this read.
-  const current = agentStore.get(agent.id);
-  if (current?.kagent && current.kagent.deployedAt === deployment.deployedAt) agentStore.setKagent(agent.id, { ...current.kagent, routesHash: hash, routesRefreshedAt: new Date().toISOString() });
-  const changed = deployment.routes.flatMap((route, i) => (resolved[i].value && !broken.some((b) => b.index === i) ? [route.credential.name] : []));
+  // And one that landed while this was writing: its record is not ours to complete.
+  const now = agentStore.get(agent.id)?.kagent;
+  if (now && now.deployedAt === deployment.deployedAt) agentStore.setKagent(agent.id, { ...now, routesHash: hash, routesHashes: hashes, routesRefreshedAt: new Date().toISOString() });
+  else if (now?.routes?.length && now.name === deployment.name && now.credential.id === deployment.credential.id) {
+    // Same Secret, a newer deploy: forget the hash, so the next tick compares with the vault again and writes what is right.
+    const { routesHash: _hash, routesHashes: _hashes, ...rest } = now;
+    agentStore.setKagent(agent.id, rest);
+  } else await deleteOurs(cluster, 'Secret', routesName(deployment.name), agent.id);
+  const changed = deployment.routes.flatMap((route, i) => (!broken.some((b) => b.index === i) && !routesHashMatches([resolved[i]], deployment.routesHashes?.[i]) ? [route.credential.name] : []));
   return { changed: [...new Set(changed)], broken: broken.map((b) => b.credentialName) };
 }

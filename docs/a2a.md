@@ -525,7 +525,9 @@ Secret is not yet rewritten.
   home project may use; in the production profile internal hosts (`localhost`, single-label names, `.local`,
   `.internal`, `.svc`, `.cluster.local`) are refused. A bad route fails the deploy naming it ("Route 2: https://\*.example.com:
   no wildcards").
-- **Removing.** Emptying the list and redeploying, or removing the agent from kagent, deletes both objects. Each route
+- **Refused at deploy.** A listed EgressPolicy that Landflow wrote for an agent (`<name>-routes`, `<name>-landflow`), and a route host that a listed hand-made policy already gives a credential (`api.github.com` with `landflow-github`).
+- **Rotation details.** The refresh keeps a hash per route, so the audit names only the credentials that changed; it drops its write if a deploy landed meanwhile (clearing the hash, or deleting the Secret when that deploy has no routes). A route that no longer passes the rules is marked broken and its key emptied.
+- **Removing.** Emptying the list and redeploying (if a delete fails the deploy fails and the record keeps the routes, so the next deploy retries), or removing the agent from kagent, deletes both objects. Each route
   added, changed or removed is audited (`kagent.route.added`, `.changed`, `.removed`) with the credential's name and hosts.
 - **Unchanged.** Hand-made policies such as `landflow-github` and their Secrets keep working and are never written by
   Landflow; an object named `<name>-routes` that Landflow did not write for this agent stops the deploy.

@@ -18,16 +18,23 @@ const TYPES = `${ROUTE_TYPE_LABELS['core.httpBearerAuth']} and ${ROUTE_TYPE_LABE
 /** Names a sandbox could reach only inside a cluster or a LAN: a route to one in production would hand the credential to an internal service. */
 const INTERNAL_HOST = /^(localhost|[^.]+|.*\.(local|localhost|internal|intranet|lan|home|home\.arpa|corp|svc|cluster\.local|svc\.cluster\.local))$/i;
 
-/** A route's own problems plus the one production adds: a single-label or internal host. */
-export function serverRoutesProblem(routes: KagentSecretRoute[], production = isProduction()): string | undefined {
-  const problem = routesProblem(routes);
+/** One route's own problems plus the one production adds: a single-label or internal host. */
+export function serverRouteProblem(route: KagentSecretRoute, index: number, production = isProduction()): string | undefined {
+  const problem = routeProblem(route, index);
   if (problem || !production) return problem;
-  for (const [index, route] of routes.entries()) {
-    for (const host of route.hosts) {
-      if (INTERNAL_HOST.test(new URL(host).hostname)) return `Route ${index + 1}: ${host}: internal hosts can’t get a credential in production`;
-    }
+  for (const host of route.hosts) {
+    if (INTERNAL_HOST.test(new URL(host).hostname)) return `Route ${index + 1}: ${host}: internal hosts can’t get a credential in production`;
   }
   return undefined;
+}
+
+/** The whole list's problems: each route's, then the list's (size, a host in two routes). */
+export function serverRoutesProblem(routes: KagentSecretRoute[], production = isProduction()): string | undefined {
+  for (const [index, route] of routes.entries()) {
+    const problem = serverRouteProblem(route, index, production);
+    if (problem) return problem;
+  }
+  return routesProblem(routes);
 }
 
 /** What a credential sends by default, and its value: Bearer Auth `token`, Header Auth `name` and `value`. */
@@ -48,7 +55,8 @@ const HAS_CONTROL = /[\u0000-\u001f\u007f]/;
 export async function resolveRoutes(agentId: string, routes: KagentSecretRoute[], options: { lenient: true }): Promise<{ routes: ResolvedRoute[]; broken: Array<{ index: number; credentialName: string; reason: string }> }>;
 export async function resolveRoutes(agentId: string, routes: KagentSecretRoute[]): Promise<ResolvedRoute[]>;
 export async function resolveRoutes(agentId: string, routes: KagentSecretRoute[], options?: { lenient: true }): Promise<ResolvedRoute[] | { routes: ResolvedRoute[]; broken: Array<{ index: number; credentialName: string; reason: string }> }> {
-  const problem = serverRoutesProblem(routes);
+  // Strict: the first problem fails the deploy. Lenient (the refresh): a route that no longer passes is marked broken below.
+  const problem = options ? undefined : serverRoutesProblem(routes);
   if (problem) throw new KagentError(problem);
   const project = homeProjectId('agent', agentId);
   const out: ResolvedRoute[] = [];
@@ -62,6 +70,11 @@ export async function resolveRoutes(agentId: string, routes: KagentSecretRoute[]
       broken.push({ index, credentialName: name, reason });
       out.push({ key: `r${index}`, header: route.header ?? routeDefaults('core.httpBearerAuth').header!, prefix: route.prefix ?? '', hosts: route.hosts, value: '', credentialId: route.credential.id, credentialName: name });
     };
+    const rule = options ? serverRouteProblem(route, index) : undefined;
+    if (rule) {
+      fail(rule.replace(/^Route \d+: /, ''));
+      continue;
+    }
     if (!stored) {
       fail(`the credential “${name}” was deleted: choose another`);
       continue;
@@ -111,6 +124,9 @@ const hmac = (key: Buffer, routes: ResolvedRoute[]) => createHmac('sha256', key)
 
 /** HMAC-SHA-256 (hex) of the routes with a key derived from the vault's, so a hash can't be turned back into a value or tried against guesses without it. */
 export const routesHmac = (routes: ResolvedRoute[]): string => hmac(credentials.deriveKey(HASH_LABEL), routes);
+
+/** The hash of each route alone, in order (the refresh compares them one by one). */
+export const routeHmacs = (routes: ResolvedRoute[]): string[] => routes.map((route) => routesHmac([route]));
 
 /** Whether `stored` is these routes' hash under any key of the ring: a key rotation since the deploy changes nothing. */
 export const routesHashMatches = (routes: ResolvedRoute[], stored: string | undefined): boolean => Boolean(stored) && credentials.deriveKeys(HASH_LABEL).some((key) => hmac(key, routes) === stored);

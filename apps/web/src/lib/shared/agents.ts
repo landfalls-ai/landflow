@@ -513,6 +513,8 @@ export interface KagentDeployment {
   routes?: KagentSecretRoute[];
   /** HMAC of the route values now in the Secret (keyed, can't be reversed); the refresh compares it with the vault's. */
   routesHash?: string;
+  /** The same per route (HMAC of that route alone), so the refresh knows which credentials changed. */
+  routesHashes?: string[];
   /** The same hash as the policy's annotation was written with (the refresh rewrites only the Secret, so this one stays). */
   routesPolicyHash?: string;
   routesRefreshedAt?: string;

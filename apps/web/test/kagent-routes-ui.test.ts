@@ -83,6 +83,12 @@ describe('a route', () => {
   });
 });
 
+describe('review fixes', () => {
+  it('shows the prefix’s trailing space and what is sent', () => {
+    expect(editor([linear()]).textContent).toContain('Authorization: Bearer␠<Linear>');
+  });
+});
+
 describe('the guidance and the preview', () => {
   it('has the placeholder hint with a copy button for the example (FR-8)', () => {
     const dom = editor([linear()]);

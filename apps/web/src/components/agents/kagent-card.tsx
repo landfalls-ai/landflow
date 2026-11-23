@@ -19,6 +19,7 @@ import { CopyButton } from '../ui/copy-button';
 import { Input, Select } from '../ui/inputs';
 import { Field, Section } from './dialog';
 import { KagentRoutes } from './kagent-routes';
+import { resourceCan, type ResourceOwnership } from '@/lib/shared/projects';
 import { draftsProblem, ROUTE_CREDENTIAL_TYPES, routeDefaults, type KagentRouteDraft } from '@/lib/shared/kagent-routes';
 
 const KAGENT = 'core.kagentApi';
@@ -157,7 +158,7 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
   const [guard, setGuard] = useState<KagentGuard>();
   // Undefined until changed here: the deploy keeps the agent's routes. The credential dialog is for a route's Bearer or Header Auth credential.
   const [routes, setRoutes] = useState<KagentRouteDraft[]>();
-  const [routeCredential, setRouteCredential] = useState<string>();
+  const [routeCredential, setRouteCredential] = useState<{ index: number; name: string; projectId?: string; note: string }>();
 
   const published = agent.published;
   const deployedAt = agent.kagent?.deployedAt;
@@ -250,11 +251,27 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
     }
   };
 
+  /** A credential made for a route lives in the agent's home project when the person may create there, so the agent may use it. */
+  const openRouteCredential = async (typed: string, index: number) => {
+    let found: { projectId?: string; note: string } = { note: 'It is created in your personal project: share it with the agent’s project so the agent can use it.' };
+    try {
+      const { ownership } = await api<{ ownership?: ResourceOwnership }>(`/api/agents/${agent.id}`);
+      if (ownership) {
+        found = resourceCan(ownership.access, 'update')
+          ? { projectId: ownership.projectId, note: `It is created in “${ownership.projectName}”, the agent’s project, so the agent can use it.` }
+          : { note: `You can’t create things in “${ownership.projectName}”: it is created in your personal project, so share it with “${ownership.projectName}” for the agent to use it.` };
+      }
+    } catch {
+      // The default note stands.
+    }
+    setRouteCredential({ index, name: typed, ...found });
+  };
+
   const deployed = status?.deployed;
   /** The Secret routes: credentials the gateway sends to hosts, for a Claude Code sandbox. */
   const routeEditor = (id: string) => (
     <Field id={id} label="Secret routes" hint={routes ? 'Redeploying writes this list. The sandbox never holds the values.' : 'Credentials kagent’s gateway adds for the hosts you name. Change them, then deploy.'}>
-      <KagentRoutes name={routeName} routes={shownRoutes} onChange={setRoutes} credentials={credentials ?? []} onCreate={() => setRouteCredential('')} broken={status?.routes?.map((r) => r.broken)} />
+      <KagentRoutes name={routeName} routes={shownRoutes} onChange={setRoutes} credentials={credentials ?? []} onCreate={(typed, index) => void openRouteCredential(typed, index)} broken={status?.routes?.map((r) => r.broken)} />
     </Field>
   );
   return (
@@ -450,11 +467,19 @@ export function KagentCard({ agent, onAgent }: { agent: Agent; onAgent: (agent: 
         </div>
       )}
       {creating && <CredentialDialog allowedTypes={[KAGENT]} onClose={() => setCreating(false)} onSaved={(c) => setCredentialId(c.id)} />}
-      {routeCredential !== undefined && (
+      {routeCredential && (
         <CredentialDialog
           allowedTypes={[...ROUTE_CREDENTIAL_TYPES]}
+          initialName={routeCredential.name}
+          projectId={routeCredential.projectId}
+          note={routeCredential.note}
           onClose={() => setRouteCredential(undefined)}
-          onSaved={(c) => setRoutes([...shownRoutes, { credential: { id: c.id, name: c.name }, hosts: [], header: routeDefaults(c.type).header, prefix: routeDefaults(c.type).prefix || undefined }])}
+          onSaved={(c) => {
+            // The route that asked gets it (hosts kept); a route that is gone meanwhile gets a new one.
+            const filled = { credential: { id: c.id, name: c.name }, header: routeDefaults(c.type).header, prefix: routeDefaults(c.type).prefix || undefined };
+            const at = routeCredential.index;
+            setRoutes(at < shownRoutes.length ? shownRoutes.map((r, i) => (i === at ? { ...r, ...filled } : r)) : [...shownRoutes, { hosts: [], ...filled }]);
+          }}
         />
       )}
     </Section>

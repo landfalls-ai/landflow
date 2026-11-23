@@ -31,6 +31,9 @@ export function routePreview(name: string, routes: KagentRouteDraft[]): string[]
   ];
 }
 
+/** A prefix's spaces made visible (the trailing one in `Bearer ` is what separates it from the value). */
+const visibleSpaces = (text: string) => text.replace(/ /g, '␠');
+
 function HostChips({ index, hosts, onChange }: { index: number; hosts: string[]; onChange: (hosts: string[]) => void }) {
   const [text, setText] = useState('');
   const add = () => {
@@ -87,8 +90,8 @@ export function KagentRoutes({
   routes: KagentRouteDraft[];
   onChange: (routes: KagentRouteDraft[]) => void;
   credentials: CredentialSummary[];
-  /** Opens the credential dialog for a Bearer Auth or Header Auth credential, with the typed name. */
-  onCreate: (name: string) => void;
+  /** Opens the credential dialog for a Bearer Auth or Header Auth credential, with the typed name and the route it is for. */
+  onCreate: (name: string, index: number) => void;
   disabled?: boolean;
   /** Why a deployed route can't be sent now, by route index (the status's). */
   broken?: Array<string | undefined>;
@@ -120,7 +123,7 @@ export function KagentRoutes({
                   value={route.credential?.id}
                   disabled={disabled}
                   groupBy={(c) => ROUTE_TYPE_LABELS[c.type]}
-                  onCreate={onCreate}
+                  onCreate={(typed) => onCreate(typed, index)}
                   onPick={(picked) => {
                     const defaults = routeDefaults(picked.type);
                     set(index, { credential: { id: picked.id, name: picked.name }, header: defaults.header, prefix: defaults.prefix || undefined });
@@ -136,6 +139,11 @@ export function KagentRoutes({
               <Input aria-label={`Header for route ${index + 1}`} value={route.header ?? ''} placeholder="Header (the credential’s own, for Header Auth)" disabled={disabled} onChange={(e) => set(index, { header: e.target.value || undefined })} />
               <Input aria-label={`Prefix for route ${index + 1}`} value={route.prefix ?? ''} placeholder="Prefix, e.g. “Bearer ”" disabled={disabled} onChange={(e) => set(index, { prefix: e.target.value || undefined })} />
             </div>
+            {route.credential && route.header && (
+              <p className="break-all font-mono text-[11px] text-t3" title="A trailing space in the prefix is shown as ␠">
+                Sent as {route.header}: {visibleSpaces(route.prefix ?? '')}&lt;{route.credential.name}&gt;
+              </p>
+            )}
             {problem && route.credential && (
               <p role="alert" className="text-[12px] text-rd">
                 {problem}

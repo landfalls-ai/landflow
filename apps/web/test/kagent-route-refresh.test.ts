@@ -198,5 +198,58 @@ describe('the refresh tick', () => {
     const rest = (await kagentRouteRefresh.tick()) + (await kagentRouteRefresh.tick());
     expect(first + rest).toBe(count);
     expect(ids.map((id) => agentStore.get(id)!.kagent!.routesRefreshedAt).every(Boolean)).toBe(true);
+    // Not left in the window of the tests that follow.
+    for (const id of ids) agentStore.setKagent(id, undefined);
+  });
+});
+
+describe('review fixes', () => {
+  it('names only the credentials whose value changed', async () => {
+    const second = credentials.create({ name: 'Steady', type: 'core.httpBearerAuth', data: { token: 'steady-value' } });
+    const agent = agentStore.publish(agentStore.create({ ...CONFIG, name: 'Two Routes' }).id)!;
+    const answer = await call<{ status: KagentStatus }>(kagentRoute.PUT, agent.id, 'PUT', { credentialId: cluster.id, harness: 'landflow-claude', routes: [{ credential: { id: token.id, name: token.name }, hosts: ['https://a.example.test'] }, { credential: { id: second.id, name: second.name }, hosts: ['https://b.example.test'] }] });
+    expect(answer.status).toBe(200);
+    credentials.update(token.id, { data: { token: SECOND } });
+    await kagentRouteRefresh.tick();
+    const event = queryEvents({ targetId: agent.id, action: ['kagent.route.refreshed'] }).events[0];
+    expect(event.details).toMatchObject({ credentialNames: [token.name] });
+    expect(JSON.stringify(event.details)).not.toContain('Steady');
+  });
+
+  it('marks a route that fails the rules broken and empties its key, without throwing', async () => {
+    const agent = agentStore.create({ ...CONFIG, name: 'Tightened' });
+    agentStore.setKagent(agent.id, { credential: cluster, name: 'tightened', harness: 'landflow-claude', version: 1, deployedAt: '2026-11-22T00:00:00Z', routes: [{ credential: { id: token.id, name: token.name }, hosts: ['http://10.0.0.5'], header: 'Authorization', prefix: 'Bearer ' }], routesHash: 'stale', routesPolicyHash: 'stale' });
+    await expect(kagentRouteRefresh.tick()).resolves.toBeGreaterThanOrEqual(1);
+    expect(value('tightened')).toBe('');
+    expect((await kagentStatus(agentStore.get(agent.id)!)).routes?.[0].broken).toMatch(/10\.0\.0\.5/);
+  });
+
+  it('forgets its hash when a deploy landed while it was writing, so the next tick writes again', async () => {
+    const agent = await deployed('Race One');
+    credentials.update(token.id, { data: { token: SECOND } });
+    kube.onApply = (plural, object) => {
+      if (plural !== 'secrets' || object.metadata.name !== 'race-one-routes') return;
+      const current = agentStore.get(agent.id)!;
+      agentStore.setKagent(agent.id, { ...current.kagent!, deployedAt: '2030-01-01T00:00:00Z' });
+    };
+    await kagentRouteRefresh.tick();
+    kube.onApply = undefined;
+    expect(agentStore.get(agent.id)!.kagent!.routesHash).toBeUndefined();
+    expect(await kagentRouteRefresh.tick()).toBe(1);
+    expect(agentStore.get(agent.id)!.kagent!.routesHash).toBeDefined();
+  });
+
+  it('deletes the Secret it wrote when the deploy that landed has no routes', async () => {
+    const agent = await deployed('Race Two');
+    credentials.update(token.id, { data: { token: SECOND } });
+    kube.onApply = (plural, object) => {
+      if (plural !== 'secrets' || object.metadata.name !== 'race-two-routes') return;
+      const current = agentStore.get(agent.id)!;
+      const { routes: _routes, routesHash: _hash, routesPolicyHash: _policy, ...rest } = current.kagent!;
+      agentStore.setKagent(agent.id, { ...rest, deployedAt: '2030-01-01T00:00:00Z' });
+    };
+    await kagentRouteRefresh.tick();
+    kube.onApply = undefined;
+    expect(kube.objects.get('secrets/kagent/race-two-routes')).toBeUndefined();
   });
 });
