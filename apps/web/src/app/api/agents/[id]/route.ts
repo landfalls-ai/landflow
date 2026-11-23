@@ -1,6 +1,8 @@
 import { agentConfigSchema, asConfig } from '@/lib/server/agents/http';
 import { removeAgent } from '@/lib/server/agents/remove'; // SB18:
 import { agentStore } from '@/lib/server/agents/store';
+import { refusedCollections } from '@/lib/server/agents/collection-scope'; // C21:
+import { CollectionAccessError } from '@/lib/server/rag/collection-access'; // C21:
 import { error, handler, json, parseBody } from '@/lib/server/http';
 import { ownershipOf } from '@/lib/server/projects';
 import { REFUSED_CREDENTIAL_MESSAGE, refusedCredentials } from '@/lib/server/agents/credential-scope';
@@ -22,6 +24,9 @@ export const PUT = handler(async (request: Request, { params }: Ctx) => {
   // A NEW credential the agent's project may not use cannot be attached (a personal credential on a shared agent); ones the draft already holds stay.
   const refused = refusedCredentials(id, body.data);
   if (refused.length) return error(REFUSED_CREDENTIAL_MESSAGE, 403, { credentialIds: refused });
+  // C21: a NEW knowledge base on a collection another project owns (and didn't share) is refused, with the one message.
+  const [collection] = refusedCollections(id, body.data);
+  if (collection) return error(new CollectionAccessError(collection, 'agent').message, 403);
   const agent = agentStore.saveDraft(id, asConfig(body.data));
   return agent ? json({ agent }) : error('Agent not found', 404);
 });

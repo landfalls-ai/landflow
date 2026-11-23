@@ -2,7 +2,7 @@
  * Re-seal everything the vault encrypted with the primary key of the ring (LANDFLOW_ENCRYPTION_KEYS). Credentials are
  * the vault's own; every other sealed value (`sealSecret` strings: alert channels, SIEM destinations, audit signing
  * and MCP signing keys, external secrets providers, transport connections, agent kagent tokens, SAML keys, audit
- * anchoring) is found by shape in the stores listed here, so a new store that seals with `sealSecret` is covered when
+ * anchoring, TOTP secrets) is found by shape in the stores listed here, so a new store that seals with `sealSecret` is covered when
  * its table is added to TABLES below. Each value is written on its own and a value already on the primary key is
  * skipped, so a run that stops can simply be run again; one that can't be opened is reported and left as it is.
  * Never remove an old key from the ring before a run reports no failures.
@@ -28,7 +28,7 @@ export interface RotationResult {
 }
 
 /** Tables with sealed values: the key columns (as the database's upsert knows them) and the column to scan (a sealed string or JSON holding some). */
-const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'audit_destinations' | 'audit_signing_keys' | 'external_secret_providers' | 'transport_connections'; key: string; column: string }> = [
+const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'audit_destinations' | 'audit_signing_keys' | 'external_secret_providers' | 'transport_connections' | 'user_mfa_factors' | 'event_subscriptions'; key: string; column: string }> = [
   { table: 'settings', key: 'key', column: 'value' },
   { table: 'config_files', key: 'name', column: 'data' },
   { table: 'alert_channels', key: 'id', column: 'data' },
@@ -36,6 +36,9 @@ const TABLES: Array<{ table: 'settings' | 'config_files' | 'alert_channels' | 'a
   { table: 'audit_signing_keys', key: 'key_id', column: 'private_key' },
   { table: 'external_secret_providers', key: 'name', column: 'secrets' },
   { table: 'transport_connections', key: 'id', column: 'secrets' },
+  { table: 'user_mfa_factors', key: 'id', column: 'secret' }, // C16: TOTP secrets
+  // C19: the signing secret of an event subscription.
+  { table: 'event_subscriptions', key: 'id', column: 'secret' },
 ];
 
 /** A sealed string's shape: v1 is `v1.iv.tag.value`, v2 is `v2.kid.iv.tag.value`; the iv is 12 bytes (16 base64 characters) and the tag 16 bytes (24), so a version such as `v1.2.3.4` is not one. */

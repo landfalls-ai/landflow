@@ -48,7 +48,9 @@ const signatureRefused = (id: string, request: Request, record: ExecutionRecord,
   // Signed-in people reach the page from the editor and the Run Trace, which don't hold the signature: they skip it
   // for a workflow they may read (the page) or run (the submit). Anyone else needs the signed link.
   const resolved = resolvePrincipal(request);
-  if (resolved.ok && resolved.principal && canResource(resolved.principal.user, 'workflow', record.workflowId, action)) return false;
+  // Only a signed-in session skips it: an API key (or any token) is not a person at a browser, so it needs the signed link like anyone else.
+  // An enrol-only session (a covered account with no second factor yet) is no one here either.
+  if (resolved.ok && resolved.principal?.via === 'session' && !resolved.principal.enrolOnly && canResource(resolved.principal.user, 'workflow', record.workflowId, action)) return false;
   const result = checkResume(id, new URL(request.url).searchParams.get('sig'), record.wait);
   if (result.ok && result.legacy) logger.info('form resume accepted without a signature: the wait was saved before resume URLs were signed', { 'landflow.execution.id': id });
   return !result.ok;

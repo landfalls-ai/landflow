@@ -107,6 +107,7 @@ marketplace.
 | Project AI budget: a monthly budget per project as one more cap, the warning, the optional hard stop, incidents, Needs you items, Resume, Raise and Ask for more | [projects-and-goals.md](projects-and-goals.md#ai-budget) | [llm-gateway.md](llm-gateway.md#asking-for-a-higher-cap), [run-trace.md](run-trace.md#needs-you-for-a-project-budget) |
 | Project workspace for harness runs: the repositories screen, a default branch and setup commands per repository, worktree per run or shared, the branch template | [projects-and-goals.md](projects-and-goals.md#workspace) | [connect-your-harness.md](connect-your-harness.md), [harnesses.md](harnesses.md) |
 | Audit log and governance: SIEM streaming, signed heads, approvals, four-eyes, MCP policy hooks | [features/audit-and-governance.md](features/audit-and-governance.md) | |
+| Run events to a URL (event subscriptions: signed webhooks per project, at least once, in order, retried for 72 hours) | [features/event-subscriptions.md](features/event-subscriptions.md) | |
 | External secrets and environments | [features/secrets-and-environments.md](features/secrets-and-environments.md) | |
 | Git sync | [features/git-sync.md](features/git-sync.md) | |
 | Observability: traces, metrics, logs | [features/observability.md](features/observability.md) | [observability.md](observability.md) |

@@ -4,18 +4,19 @@
  * copy without SMTP), changing roles, password reset links and removing users. The role rules are `canManageUser`.
  */
 import { useEffect, useState } from 'react';
-import { KeyRound, Mail, Send, Trash2, TriangleAlert, UserPlus, X } from 'lucide-react';
+import { KeyRound, Mail, Send, ShieldOff, Trash2, TriangleAlert, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/client/api';
 import { timeAgo } from '@/lib/client/format';
-import { ASSIGNABLE_ROLES, can, canManageUser, ROLE_LABELS, type AssignableRole, type InviteView, type LinkResponse, type UserView } from '@/lib/shared/auth';
+import { ASSIGNABLE_ROLES, can, canManageUser, canResetMfa, ROLE_LABELS, type AssignableRole, type InviteView, type LinkResponse, type UserView } from '@/lib/shared/auth';
 import { initials, useViewer } from '@/components/auth/viewer';
 import { Card } from '@/components/shell/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
 import { Input, SectionLabel, Select } from '@/components/ui/inputs';
+import { confirmAction } from '@/components/ui/confirm';
 import { RemoveUserDialog } from '@/components/projects/remove-user-dialog';
 
 /** A link that was just made: emailed, or to copy. */
@@ -40,9 +41,10 @@ function LinkNotice({ title, result, onClose }: { title: string; result: LinkRes
   );
 }
 
-export function UsersSettings() {
+/** `initial` is what the first render shows before the list loads (tests render it on the server). */
+export function UsersSettings({ initial }: { initial?: UserView[] } = {}) {
   const viewer = useViewer();
-  const [users, setUsers] = useState<UserView[]>();
+  const [users, setUsers] = useState<UserView[] | undefined>(initial);
   const [invites, setInvites] = useState<InviteView[]>([]);
   const [error, setError] = useState<string>();
   const [email, setEmail] = useState('');
@@ -86,6 +88,10 @@ export function UsersSettings() {
     } catch (e) {
       toast.error((e as Error).message);
     }
+  };
+  const resetSecondFactor = async (user: UserView) => {
+    if (!(await confirmAction(`Reset the second factor of ${user.name}? Their authenticator app and recovery codes stop working and they are signed out everywhere.`, { action: 'Reset', danger: true }))) return;
+    await act(() => api(`/api/users/${user.id}/mfa`, { method: 'DELETE' }), `Reset the second factor of ${user.name}`);
   };
   const resetLink = async (user: UserView) => {
     try {
@@ -134,7 +140,7 @@ export function UsersSettings() {
           <span>User</span>
           <span>Role</span>
           <span>Last sign-in</span>
-          <span className="w-[100px]" />
+          <span className="w-[132px]" />
         </div>
         {users.map((user) => {
           const you = user.id === viewer?.id;
@@ -148,6 +154,7 @@ export function UsersSettings() {
                     {user.name}
                     {you && <Badge tone="muted">you</Badge>}
                     {user.sso && <Badge tone="accent">SSO</Badge>}
+                    {Boolean(user.mfaFactors) && <Badge tone="success" title="Has a second factor">2-step</Badge>}
                     {user.provisionedBy && <Badge tone="muted" title="Created and kept in sync by your identity provider">{user.provisionedBy.toUpperCase()}</Badge>}
                     {user.disabled && <Badge tone="warning">deactivated</Badge>}
                   </div>
@@ -175,7 +182,12 @@ export function UsersSettings() {
               <span className="truncate text-[12px] text-t3" title={user.lastLoginAt}>
                 {user.lastLoginAt ? timeAgo(user.lastLoginAt) : 'never'}
               </span>
-              <div className="flex w-[100px] items-center justify-end gap-1">
+              <div className="flex w-[132px] items-center justify-end gap-1">
+                {manage && Boolean(user.mfaFactors) && canResetMfa(viewer, user) && (
+                  <Button size="icon-sm" variant="ghost" onClick={() => void resetSecondFactor(user)} aria-label={`Reset second factor of ${user.name}`} title="Reset second factor">
+                    <ShieldOff className="size-3.5" />
+                  </Button>
+                )}
                 {canManageUser(viewer, user, { kind: 'reset-password' }) && !you && (
                   <Button size="icon-sm" variant="ghost" onClick={() => void resetLink(user)} aria-label={`Password reset link for ${user.name}`} title="Password reset link">
                     <KeyRound className="size-3.5" />

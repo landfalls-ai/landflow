@@ -95,6 +95,54 @@ export function canManageUser(actor: { id: string; role: Role } | null | undefin
   return true;
 }
 
+/**
+ * Whether `actor` may reset `target`'s second factors (C16-D4): owners reset anyone's but their own; admins reset
+ * members' and other admins', never an owner's; nobody uses this path on themselves (they use Sign-in & security).
+ */
+export function canResetMfa(actor: { id: string; role: Role } | null | undefined, target: { id: string; role: Role }): boolean {
+  if (!actor || !can(actor, 'users:manage') || actor.id === target.id) return false;
+  return actor.role === 'owner' || target.role !== 'owner';
+}
+
+/** Second factors (C16). */
+export type MfaMethod = 'webauthn' | 'totp' | 'recovery';
+
+/** A factor as its owner sees it: never the secret. */
+export interface MfaFactorView {
+  id: string;
+  kind: 'totp' | 'webauthn';
+  name: string;
+  /** Counts only once confirmed with a valid code. */
+  confirmed: boolean;
+  createdAt: string;
+  lastUsedAt?: string;
+  flagged?: boolean;
+}
+
+/** The 202 answer of POST /api/auth/login (and a reset) for a user with a second factor: no session yet. */
+export interface MfaChallengeResponse {
+  mfaRequired: true;
+  methods: MfaMethod[];
+  /** A single-use token, valid five minutes, good only for POST /api/auth/mfa/verify. */
+  challenge: string;
+}
+
+/** GET /api/me/mfa: Sign-in & security. */
+export interface MfaStateView {
+  factors: MfaFactorView[];
+  recoveryCodesLeft: number;
+  /** LANDFLOW_MFA_REQUIRED. */
+  mode: 'off' | 'admins' | 'all';
+  /** The mode covers you. */
+  covered: boolean;
+  /** Covered, a local session and no factor yet: only this page works. */
+  enrolmentRequired: boolean;
+  /** The session passed a second-factor check in the last five minutes. */
+  recentlyVerified: boolean;
+  /** You have a password (single sign-on accounts use their provider's factor). */
+  canEnrol: boolean;
+}
+
 /** The signed-in user as pages and the client see them. */
 export interface Viewer {
   id: string;
@@ -113,6 +161,8 @@ export interface Viewer {
 
 /** A user in Settings → Users (GET /api/users). */
 export interface UserView extends Viewer {
+  /** Confirmed second factors (count). */
+  mfaFactors?: number;
   createdAt: string;
   lastLoginAt?: string;
 }
@@ -145,6 +195,16 @@ export interface ApiKeyView {
   createdAt: string;
   expiresAt?: string;
   lastUsedAt?: string;
+  /** The address of the last use (written with `lastUsedAt`, so up to a minute behind): personal data, for the key's owner. */
+  lastUsedIp?: string;
+  /** Fixed at creation: the key only works from these addresses and ranges. */
+  allowedIps?: string[];
+  /** Fixed at creation: the key stops after this many uses. */
+  maxUses?: number;
+  /** Uses so far (only with `maxUses`). */
+  uses?: number;
+  /** `uses` reached `maxUses`: kept and listed until deleted. */
+  usedUp?: boolean;
 }
 
 /** GET /api/auth/status: what the sign-in pages need (public). */
@@ -178,6 +238,8 @@ export interface SecurityView {
   saml?: SamlSecurityView;
   /** SCIM 2.0 provisioning (lib/server/scim). */
   scim?: ScimSecurityView;
+  /** LANDFLOW_MFA_REQUIRED (docs/features/authentication.md#second-factor). */
+  mfa?: { mode: 'off' | 'admins' | 'all' };
   sessionHours: number;
   registrySecret: boolean;
   metricsPublic: boolean;
@@ -257,6 +319,8 @@ export interface ScimSecurityView {
   baseUrl: string;
   /** SCIM tokens (API keys with the `scim` scope) of every admin. */
   tokens: Array<ApiKeyView & { userName: string }>;
+  /** No reverse proxy count is set (LANDFLOW_TRUSTED_PROXIES): a token's address list can be got around, so the form warns. */
+  addressUnverified: boolean;
   /** Group → project membership or instance role (LANDFLOW_SCIM_GROUP_MAP). */
   groupMap: Record<string, string>;
   groups: number;

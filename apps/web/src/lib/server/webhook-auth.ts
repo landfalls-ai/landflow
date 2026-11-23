@@ -2,7 +2,8 @@
  * Who may call a Webhook trigger or submit a Form Trigger (n8n's names): `authentication` is `none`, `basicAuth`
  * (a Basic Auth credential: user and password), `headerAuth` (a Header Auth credential: header name and value) or
  * `jwtAuth` (a JWT Auth credential: an HS256/384/512 secret, a PEM public key or a JWKS URL, with optional issuer and
- * audience and Bound Claims, refused for GitHub Actions and GitLab tokens unless they pin a repository: jwt-claims.ts); `options.ipWhitelist` limits callers to a list of addresses and CIDR ranges.
+ * audience and Bound Claims, refused for GitHub Actions and GitLab tokens unless they pin a repository: jwt-claims.ts; with Single Use on a token
+ * works once: token-replay.ts); `options.ipWhitelist` limits callers to a list of addresses and CIDR ranges.
  *
  * The client address comes from `clientAddress()` (net/client-address.ts): `X-Forwarded-For` trusted up to
  * LANDFLOW_TRUSTED_PROXIES hops; a request with no address counts as 127.0.0.1. Secrets are compared in constant time.
@@ -12,7 +13,6 @@
  * runs, lib/server/projects/credentials.ts): otherwise every call gets 403 before any secret is compared, the response
  * doesn't say which credential, and the host logs a warning with the workflow, node and credential id.
  */
-import { isIP } from 'node:net';
 import { createRemoteJWKSet, customFetch, importSPKI, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import type { JsonObject } from '@landflow/protocol';
 import type { WorkflowNode } from '@landflow/engine';
@@ -26,8 +26,9 @@ import { checkBoundClaims, checkCredentialClaims, type ClaimsCheck } from './jwt
 import { OutboundBlockedError, safeFetch } from './net/safe-fetch';
 import { registry } from './plugins/registry';
 import { triggerAuthCredential, triggerAuthUsable } from './projects/credentials';
+import { useTokenOnce } from './token-replay';
 import { singleton } from './singleton';
-import { clientAddress } from './net/client-address';
+import { callerIp, ipMatches, parseIpList } from './net/ip-allow';
 import { logger } from './telemetry/logger';
 import type { WebhookAuthentication } from './nodes/webhook-auth';
 
@@ -37,58 +38,8 @@ export type WebhookAuthResult =
 
 const HMAC = ['HS256', 'HS384', 'HS512'];
 
-// ---------------------------------------------------------------------------
-// IP allow-list
-// ---------------------------------------------------------------------------
-
-/** The caller's address, from the trusted-proxy rules in net/client-address.ts; 127.0.0.1 when no header names one. */
-export function callerIp(request: Request): string {
-  const ip = clientAddress(request);
-  return ip === 'local' ? '127.0.0.1' : ip;
-}
-
-function ipv4Bits(ip: string): bigint {
-  return ip.split('.').reduce((acc, part) => (acc << 8n) | BigInt(Number(part) & 255), 0n);
-}
-
-function ipv6Bits(ip: string): bigint | undefined {
-  let address = ip.toLowerCase();
-  const v4 = /(\d+\.\d+\.\d+\.\d+)$/.exec(address);
-  if (v4) {
-    const bits = ipv4Bits(v4[1]);
-    address = `${address.slice(0, -v4[1].length)}${(bits >> 16n).toString(16)}:${(bits & 0xffffn).toString(16)}`;
-  }
-  const [head, tail] = address.split('::');
-  const left = head ? head.split(':') : [];
-  const right = tail !== undefined ? (tail ? tail.split(':') : []) : [];
-  const groups = tail !== undefined ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right] : left;
-  if (groups.length !== 8) return undefined;
-  return groups.reduce((acc, group) => (acc << 16n) | BigInt(parseInt(group || '0', 16) & 0xffff), 0n);
-}
-
-/** Whether `ip` matches one entry: an address, or a CIDR range (`10.0.0.0/8`, `2001:db8::/32`). */
-export function ipMatches(ip: string, entry: string): boolean {
-  const [range, prefixText] = entry.trim().split('/');
-  const family = isIP(range);
-  if (!family || isIP(ip) !== family) return entry.trim().toLowerCase() === 'localhost' && (ip === '127.0.0.1' || ip === '::1');
-  const width = family === 4 ? 32 : 128;
-  const prefix = prefixText === undefined ? width : Number(prefixText);
-  if (!Number.isInteger(prefix) || prefix < 0 || prefix > width) return false;
-  const bits = (value: string) => (family === 4 ? ipv4Bits(value) : (ipv6Bits(value) ?? -1n));
-  const a = bits(ip);
-  const b = bits(range);
-  if (a < 0n || b < 0n) return false;
-  const shift = BigInt(width - prefix);
-  return a >> shift === b >> shift;
-}
-
-/** The allow-list entries (comma, space or newline separated); empty: everyone. */
-export function parseIpList(value: unknown): string[] {
-  return String(value ?? '')
-    .split(/[\s,]+/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
+// The IP allow-list helpers moved to ./net/ip-allow (API keys use them too); these names stay importable from here.
+export { callerIp, ipMatches, parseIpList };
 
 // ---------------------------------------------------------------------------
 // JWT
@@ -169,9 +120,10 @@ export function triggerAuthRefusal(workflowId: string, node: TriggerNode, label:
 
 /**
  * Check a call to a Webhook or Form Trigger node of `workflowId` against its authentication and IP allow-list. `label`
- * names the trigger in messages; `realm` is the Basic Auth realm (browsers show a sign-in prompt for forms).
+ * names the trigger in messages; `realm` is the Basic Auth realm (browsers show a sign-in prompt for forms). `spend: false`
+ * verifies a single-use token without using it up: a Form Trigger's page view (GET), so the submission can use it.
  */
-export async function checkWebhookAuth(request: Request, workflowId: string, node: TriggerNode, label = 'Webhook', realm = 'Webhook'): Promise<WebhookAuthResult> {
+export async function checkWebhookAuth(request: Request, workflowId: string, node: TriggerNode, label = 'Webhook', realm = 'Webhook', { spend = true }: { spend?: boolean } = {}): Promise<WebhookAuthResult> {
   const options = (node.parameters.options ?? {}) as { ipWhitelist?: string };
   const allowed = parseIpList(options.ipWhitelist);
   if (allowed.length) {
@@ -223,6 +175,21 @@ export async function checkWebhookAuth(request: Request, workflowId: string, nod
     const payload = await verifyJwt(match[1], jwtAuth);
     const claims = checkBoundClaims(jwtAuth, payload);
     if (!claims.ok) return { ok: false, response: claimsRefusal(claims, workflowId, label, jwtAuth, typeof payload.iss === 'string' ? payload.iss : undefined) };
+    // After the claims (a token that fails them is not spent) and before the route reads the body or starts a run.
+    if (spend && (jwtAuth.singleUse === true || jwtAuth.singleUse === 'true')) {
+      const iss = typeof payload.iss === 'string' ? payload.iss : String(jwtAuth.issuer ?? '');
+      let use: Awaited<ReturnType<typeof useTokenOnce>>;
+      try {
+        use = await useTokenOnce(payload, match[1], { credentialId: triggerAuthCredential(node)?.id });
+      } catch {
+        // Not a token problem: say so, and log only which workflow (the error text can hold anything).
+        logger.error('trigger call refused: the single-use token store failed', { 'landflow.workflow.id': workflowId });
+        return { ok: false, response: error(`The ${label} could not check whether this token was used; try again`, 503) };
+      }
+      if (!use.ok && use.reason === 'no_expiry') return { ok: false, response: unauthorized('Single use needs tokens with an expiry', 'Bearer error="invalid_token"') };
+      if (!use.ok && use.reason === 'exp_too_far') return { ok: false, response: unauthorized('Single use needs tokens that expire within 24 hours', 'Bearer error="invalid_token"') };
+      if (!use.ok) return { ok: false, response: replayRefusal(workflowId, label, iss) };
+    }
     return { ok: true, jwtPayload: payload as JsonObject, secretHeaders: [] };
   } catch (caught) {
     if (caught instanceof OutboundBlockedError) {
@@ -267,4 +234,29 @@ function claimsRefusal(check: Exclude<ClaimsCheck, { ok: true }>, workflowId: st
   }
   if (reason === 'claims_required') return error(`Forbidden: the ${label}’s JWT Auth credential is unsafe. ${check.message}`, 403);
   return error(`Forbidden: the token does not match the “${claim}” claim this ${label} is bound to`, 403);
+}
+
+/** Replayed single-use tokens, counted always (the audit row below is throttled). */
+const tokensReplayed = () => metrics.getMeter('landflow-webhook').createCounter('landflow.webhook.jwt_replayed', { description: 'Single-use JWTs presented again' });
+
+/**
+ * The answer for a single-use token used again: 409 before the body is read, no run. Counted always; the audit row and the
+ * log line go through the same once-a-minute throttle as `claimsRefusal`, and hold the issuer and the reason, never the
+ * token or any claim.
+ */
+function replayRefusal(workflowId: string, label: string, iss: string): Response {
+  tokensReplayed().add(1);
+  if (deniedReadDue(`webhook:${workflowId}`, `${label}:token_replayed`)) {
+    recordAudit({
+      action: 'api.denied',
+      outcome: 'denied',
+      status: 409,
+      actor: 'anonymous',
+      target: { type: 'workflow', id: workflowId },
+      summary: 'JWT token replayed',
+      details: { reason: 'token_replayed', iss },
+    });
+    logger.warn('trigger call refused: a single-use JWT was presented again', { 'landflow.workflow.id': workflowId, 'landflow.reason': 'token_replayed' });
+  }
+  return error(`Conflict: this token was already used. Single use is on for the ${label}’s JWT Auth credential, so each call needs a fresh token`, 409, { code: 'token_replayed' });
 }

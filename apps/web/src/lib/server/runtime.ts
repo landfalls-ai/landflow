@@ -40,6 +40,7 @@ import './brain/notion/links';
 import './brain/store';
 // NB04: the Notion brain's push service (its outbox listener registers when it loads).
 import { notionBrain } from './brain/notion/service';
+import { eventOutbox } from './outbox/dispatcher';
 // NB05: registers the Notion pull (setPullStep), the region conflict and the problem actions (docs/features/notion-brain.md#what-comes-back-from-notion).
 import './brain/notion/pull';
 // NB06: registers the knowledge walk (the company's Notion pages as knowledge) with the Notion sync (docs/features/notion-brain.md).
@@ -196,6 +197,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'cap-raise trigger', roles: MAIN, start: startCapRaiseTrigger },
   // Projects: credentials and agents (files) and anything else without a project go to the owner's personal project.
   { name: 'project adoption', roles: MAIN, leader: true, start: adoptUnassignedResources },
+  // C21: the vector collections that existed before owners did are adopted once per database (the marker is claimed in Postgres, so two mains starting together adopt once); after the project adoption above, which gives every resource a home.
+  { name: 'collection owners', roles: MAIN, leader: true, start: async () => void (await (await import('./rag/collection-access')).ensureAdoptedAsync()) },
   // Scheduled publishes (lib/server/publish-schedule.ts): one main publishes what is due; a restart re-reads the table.
   { name: 'scheduled publishes', roles: MAIN, leader: true, start: () => publishSchedules.start(), stop: () => publishSchedules.stop() },
   { name: 'scheduler', roles: MAIN, leader: true, start: () => scheduler.start(), stop: () => scheduler.stop() },
@@ -225,6 +228,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'second brain', roles: MAIN, leader: true, start: () => brain.start(), stop: () => brain.stop() },
   // NB04: the Notion brain's copy and push (docs/features/notion-brain.md#how-it-is-built): a tick every 5 seconds on the leader.
   { name: 'notion brain', roles: MAIN, leader: true, start: () => notionBrain.start(), stop: () => notionBrain.stop() },
+  // C19: delivers the run events written in each save's transaction to project event subscriptions (lib/server/outbox/dispatcher.ts); one main delivers, so each subscription's order holds.
+  { name: 'event outbox', roles: MAIN, leader: true, start: () => eventOutbox.start(), stop: () => eventOutbox.stop() },
   {
     name: 'registry gRPC server',
     roles: MAIN,

@@ -2057,6 +2057,56 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS approval_tickets_state ON approval_tickets (state, next_at)`,
     ],
   },
+  // C16: a second factor for local accounts (docs/features/authentication.md#second-factor): the factors (a TOTP secret sealed with the key ring; the passkey columns are for the step that follows), the one-use recovery codes (keyed hashes), the sign-in challenges (the token's SHA-256 is the id) and when a session last passed a second-factor check
+  {
+    version: 2923,
+    name: 'mfa',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS user_mfa_factors (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, secret TEXT, credential_id TEXT, public_key TEXT, counter BIGINT, transports TEXT, last_step BIGINT, confirmed_at TEXT, flagged_at TEXT, created_at TEXT NOT NULL, last_used_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS user_mfa_factors_user ON user_mfa_factors (user_id)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS user_mfa_factors_credential ON user_mfa_factors (credential_id)`,
+      `CREATE TABLE IF NOT EXISTS user_recovery_codes (user_id TEXT NOT NULL, code_hash TEXT NOT NULL, created_at TEXT NOT NULL, used_at TEXT, PRIMARY KEY (user_id, code_hash))`,
+      `CREATE TABLE IF NOT EXISTS mfa_challenges (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, purpose TEXT NOT NULL, first_method TEXT NOT NULL, session_id TEXT, webauthn_challenge TEXT, wrong BIGINT NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT)`,
+      `CREATE INDEX IF NOT EXISTS mfa_challenges_expires ON mfa_challenges (expires_at)`,
+    ],
+    addColumns: [{ table: 'sessions', column: 'mfa_verified_at', definition: 'TEXT' }],
+  },
+  // C19: webhook subscriptions to a project's run events and the durable outbox their deliveries wait in (docs/features/event-subscriptions.md); `secret` is sealed, `events`, `workflow_ids` and `node_names` are JSON arrays, `event_subscription_state.last_delivery` is JSON
+  {
+    version: 2924,
+    name: 'event_subscriptions_outbox',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS event_subscriptions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL, workflow_ids TEXT, node_names TEXT, include_output BIGINT NOT NULL DEFAULT 0, ordered BIGINT NOT NULL DEFAULT 1, secret TEXT NOT NULL, enabled BIGINT NOT NULL DEFAULT 1, disabled_reason TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      // The leader's note of each attempt lives apart from the subscription, so noting a delivery never rewrites what an admin changed.
+      `CREATE TABLE IF NOT EXISTS event_subscription_state (subscription_id TEXT PRIMARY KEY, last_delivery TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS event_subscriptions_project ON event_subscriptions (project_id)`,
+      `CREATE TABLE IF NOT EXISTS event_outbox (topic TEXT NOT NULL, target_id TEXT NOT NULL, event_id TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL, attempts BIGINT NOT NULL DEFAULT 0, next_at TEXT NOT NULL, lease_until TEXT, last_error TEXT, dead_at TEXT, PRIMARY KEY (topic, target_id, event_id))`,
+      `CREATE INDEX IF NOT EXISTS event_outbox_due ON event_outbox (topic, target_id, next_at)`,
+      `CREATE INDEX IF NOT EXISTS event_outbox_order ON event_outbox (topic, target_id, created_at, event_id)`,
+      `CREATE INDEX IF NOT EXISTS event_outbox_dead ON event_outbox (topic, target_id, dead_at)`,
+    ],
+  },
+  // C17: an API key's allow-list, use cap and last address; the uses are counted in a table of their own so the last-used touch (which rewrites the whole key row) can never overwrite a count (docs/features/authentication.md#api-keys)
+  {
+    version: 2925,
+    name: 'api_key_limits',
+    statements: [`CREATE TABLE IF NOT EXISTS api_key_uses (key_id TEXT PRIMARY KEY, uses BIGINT NOT NULL, updated_at TEXT NOT NULL)`],
+    addColumns: [
+      { table: 'api_keys', column: 'allowed_ips', definition: 'TEXT' },
+      { table: 'api_keys', column: 'max_uses', definition: 'BIGINT' },
+      { table: 'api_keys', column: 'last_used_ip', definition: 'TEXT' },
+    ],
+  },
+  // C21: an owner project per vector collection and the grants other projects hold (docs/agents.md#knowledge-bases); a grant row of level 'lost' records what the upgrade took away and gives no access
+  {
+    version: 2926,
+    name: 'vector_collection_access',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS vector_collections (store_key TEXT PRIMARY KEY, store TEXT NOT NULL, name TEXT NOT NULL, owner_project_id TEXT NOT NULL, claimed_by TEXT, claimed_at TEXT NOT NULL, source TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS vector_collections_owner ON vector_collections (owner_project_id)`,
+      `CREATE TABLE IF NOT EXISTS vector_collection_grants (store_key TEXT NOT NULL, project_id TEXT NOT NULL, level TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, PRIMARY KEY (store_key, project_id))`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2082,6 +2132,7 @@ export const TABLES = {
   users: ['id'],
   sessions: ['id'],
   api_keys: ['id'],
+  api_key_uses: ['key_id'],
   auth_tokens: ['id'],
   debug_tokens: ['id'],
   workflow_publications: ['workflow_id'],
@@ -2146,6 +2197,11 @@ export const TABLES = {
   approval_email_used: ['group_id'],
   approval_inbox: ['id'], // AP01:
   approval_tickets: ['request_id', 'channel_id'], // C12:
+  event_subscriptions: ['id'], // C19:
+  event_subscription_state: ['subscription_id'], // C19:
+  event_outbox: ['topic', 'target_id', 'event_id'], // C19:
+  vector_collections: ['store_key'], // C21:
+  vector_collection_grants: ['store_key', 'project_id'], // C21:
   harness_sessions: ['id'], // C04:
   harness_events: ['id'], // C04:
   notion_brain_links: ['id'], // NB03:
@@ -2202,6 +2258,9 @@ export const TABLES = {
   project_workspaces: ['project_id'],
   // PC19:
   project_tasks: ['id'],
+  user_mfa_factors: ['id'], // C16:
+  user_recovery_codes: ['user_id', 'code_hash'], // C16:
+  mfa_challenges: ['id'], // C16:
   task_runs: ['id'],
 } as const satisfies Record<string, readonly string[]>;
 

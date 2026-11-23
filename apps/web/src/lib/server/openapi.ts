@@ -47,6 +47,8 @@ interface Operation {
   description?: string;
   /** A trigger URL: no API key or session (lib/shared/auth-paths.ts), the trigger checks its callers itself. */
   public?: boolean;
+  /** What replaces the trigger sentence on a public route that is not a trigger (sign-in steps). */
+  publicNote?: string;
   /** Descriptions of path parameters. */
   pathParams?: Record<string, string>;
   query?: Array<{ name: string; description: string; schema: Json; required?: boolean }>;
@@ -74,7 +76,7 @@ function operation(method: Method, path: string, spec: Operation): Json {
       operationId: spec.id,
       tags: [spec.tag],
       summary: spec.summary,
-      description: [spec.description, PUBLIC_TEXT].filter(Boolean).join('\n\n'),
+      description: [spec.description, spec.publicNote ?? PUBLIC_TEXT].filter(Boolean).join('\n\n'),
       security: [],
       'x-landflow-public': true,
       ...(parameters.length && { parameters }),
@@ -365,6 +367,11 @@ const schemas: Record<string, Json> = {
       createdAt: { type: 'string' },
       expiresAt: { type: 'string' },
       lastUsedAt: { type: 'string' },
+      lastUsedIp: { type: 'string', description: 'The address of the last use (up to a minute behind): personal data, shown to the key’s owner only' },
+      allowedIps: { ...array({ type: 'string' }), description: 'Fixed at creation: the key only works from these addresses and CIDR ranges' },
+      maxUses: { type: 'integer', description: 'Fixed at creation: the key stops after this many uses' },
+      uses: { type: 'integer', description: 'Uses so far (with `maxUses`)' },
+      usedUp: { type: 'boolean', description: '`uses` reached `maxUses`; the key stays listed until deleted' },
     },
     ['id', 'label', 'hint', 'scopes', 'createdAt'],
   ),
@@ -2033,15 +2040,127 @@ function paths(): Record<string, Record<string, Json>> {
     body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 120 }, currentPassword: { type: 'string' }, newPassword: { type: 'string', minLength: 8, maxLength: 256 } })),
     responses: { 200: reply('You', object({ user: ref('Viewer') }, ['user'])), 400: invalid },
   });
+  // ---- C16: a second factor for local accounts (docs/features/authentication.md#second-factor) ----
+  const mfaMethod = { type: 'string', enum: ['webauthn', 'totp', 'recovery'] };
+  /** The browser's JSON for a passkey answer (`@simplewebauthn/browser`); the server verifies it. */
+  const passkeyResponse = { type: 'object', additionalProperties: true, description: 'The authenticator’s answer as @simplewebauthn/browser gives it (`id`, `rawId`, `type`, `response`, `clientExtensionResults`).' };
+  const passkeyOptions = { type: 'object', additionalProperties: true, description: 'Options for `navigator.credentials.create()` or `.get()` (JSON form, for @simplewebauthn/browser).' };
+  const mfaFactor = object({ id: { type: 'string' }, kind: { type: 'string', enum: ['totp', 'webauthn'] }, name: { type: 'string' }, confirmed: { type: 'boolean' }, createdAt: { type: 'string' }, lastUsedAt: { type: 'string' }, flagged: { type: 'boolean' } }, ['id', 'kind', 'name', 'confirmed', 'createdAt']);
+  add('post', '/api/auth/login', {
+    tag: 'Account',
+    id: 'signIn',
+    summary: 'Sign in with a password',
+    description: 'Sets the session cookie. A user with a second factor gets 202 instead: a single-use `challenge` (5 minutes, good only for `POST /api/auth/mfa/verify`) and no cookie. Failed attempts are limited per email and per IP (429 with `retryAfter`).',
+    public: true,
+    publicNote: 'Public: no API key or session; the password is the credential.',
+    body: jsonBody(object({ email: { type: 'string' }, password: { type: 'string' } }, ['email', 'password'])),
+    responses: {
+      200: reply('Signed in', object({ user: ref('Viewer') }, ['user'])),
+      202: reply('The password was right and a second factor is next', object({ mfaRequired: { type: 'boolean', enum: [true] }, methods: array(mfaMethod), challenge: { type: 'string' } }, ['mfaRequired', 'methods', 'challenge'])),
+      401: errorRef('Wrong email or password'),
+      429: errorRef('Too many failed sign-ins (`retryAfter` seconds)'),
+    },
+  });
+  add('post', '/api/auth/mfa/verify', {
+    tag: 'Account',
+    id: 'verifySecondFactor',
+    summary: 'Finish a sign-in with a second factor',
+    description: 'Takes the challenge from sign-in (or a password reset) and an answer: `totp` (the authenticator app, one step either side, a code works once), `recovery` (a recovery code, once) or `webauthn` (a passkey, with the `response` to the options from `POST /api/auth/mfa/options`). Sets the session cookie (method `password+totp`, `password+recovery` or `password+webauthn`). A recovery code also answers `recoveryCodesLeft`. 401 for a wrong code, or an expired, used or burnt challenge (five wrong codes burn it); wrong codes count against the sign-in limits (429).',
+    public: true,
+    publicNote: 'Public: no API key or session; the single-use challenge and the code are the credential.',
+    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 }, method: mfaMethod, code: { type: 'string', maxLength: 32, description: 'For `totp` and `recovery`.' }, response: { ...passkeyResponse, description: 'For `webauthn`: the passkey’s answer.' } }, ['challenge', 'method'])),
+    responses: { 200: reply('Signed in', object({ user: ref('Viewer'), recoveryCodesLeft: { type: 'integer' } }, ['user'])), 401: errorRef('Wrong code, or sign in again'), 429: errorRef('Too many failed sign-ins') },
+  });
+  add('post', '/api/auth/mfa/options', {
+    tag: 'Account',
+    id: 'secondFactorPasskeyOptions',
+    summary: 'Options for answering the second step with a passkey',
+    description: 'Takes the sign-in challenge and answers the options for `navigator.credentials.get()`; the browser’s answer goes to `POST /api/auth/mfa/verify` with `method: webauthn`. Asking again replaces the earlier options; each options value works for one answer. 401 for an expired or used challenge, 409 when the account has no usable (unflagged) passkey.',
+    public: true,
+    publicNote: 'Public: no API key or session; the single-use sign-in challenge is the credential.',
+    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 } }, ['challenge'])),
+    responses: { 200: reply('Options', object({ options: passkeyOptions }, ['options'])), 401: errorRef('Sign in again'), 409: errorRef('No passkey'), 429: errorRef('Too many failed sign-ins') },
+  });
+  add('get', '/api/me/mfa', {
+    tag: 'Account',
+    id: 'getMyMfa',
+    summary: 'Your second factors',
+    description: 'The factors (never a secret), recovery codes left, what `LANDFLOW_MFA_REQUIRED` asks of you and whether this session passed a second-factor check in the last five minutes.',
+    responses: { 200: reply('Your state', object({ factors: array(mfaFactor), recoveryCodesLeft: { type: 'integer' }, mode: { type: 'string', enum: ['off', 'admins', 'all'] }, covered: { type: 'boolean' }, enrolmentRequired: { type: 'boolean' }, recentlyVerified: { type: 'boolean' }, canEnrol: { type: 'boolean' } }, ['factors', 'recoveryCodesLeft', 'mode', 'covered', 'enrolmentRequired', 'recentlyVerified', 'canEnrol'])) },
+  });
+  add('post', '/api/me/mfa/totp', {
+    tag: 'Account',
+    id: 'startTotp',
+    summary: 'Start adding an authenticator app',
+    description: 'Answers the `secret`, the `otpauthUrl` and a `qr` SVG data URL, once. The factor counts after the confirm call. 409 when you already have an app or sign in with single sign-on.',
+    responses: { 201: reply('Started', object({ factorId: { type: 'string' }, secret: { type: 'string' }, otpauthUrl: { type: 'string' }, qr: { type: 'string' } }, ['factorId', 'secret', 'otpauthUrl', 'qr'])), 409: errorRef('Not possible for this account') },
+  });
+  add('post', '/api/me/mfa/totp/{id}/confirm', {
+    tag: 'Account',
+    id: 'confirmTotp',
+    summary: 'Confirm an authenticator app with a current code',
+    description: 'The first confirmed factor also makes ten recovery codes, answered once as `recoveryCodes`. A code works once. Wrong codes count against the sign-in limits.',
+    body: jsonBody(object({ code: { type: 'string', maxLength: 32 } }, ['code'])),
+    responses: { 200: reply('Confirmed', object({ factor: mfaFactor, recoveryCodes: array({ type: 'string' }) }, ['factor'])), 400: errorRef('The code did not work'), 404: notFound, 429: errorRef('Too many failed attempts') },
+  });
+  add('post', '/api/me/mfa/passkeys/options', {
+    tag: 'Account',
+    id: 'passkeyOptions',
+    summary: 'Options for adding a passkey, or for a passkey step-up',
+    description: 'With `purpose: register` and your current password (403 when wrong; wrong tries count against the sign-in limits): options for `navigator.credentials.create()`. With `purpose: step-up`: options for `navigator.credentials.get()`. Answers the options and a single-use `challenge` token (5 minutes, you and that purpose only) that goes back with the browser’s answer. The relying party is the host of `LANDFLOW_PUBLIC_URL`. 409 at ten passkeys, for single sign-on accounts, or with no passkey to check.',
+    body: jsonBody(object({ purpose: { type: 'string', enum: ['register', 'step-up'] }, password: { type: 'string', maxLength: 1024 } }, ['purpose'])),
+    responses: { 200: reply('Options', object({ challenge: { type: 'string' }, options: passkeyOptions }, ['challenge', 'options'])), 400: errorRef('Password missing'), 403: errorRef('Wrong password'), 409: errorRef('Not possible for this account'), 429: errorRef('Too many failed attempts') },
+  });
+  add('post', '/api/me/mfa/passkeys', {
+    tag: 'Account',
+    id: 'addPasskey',
+    summary: 'Finish adding a passkey',
+    description: 'Takes the challenge from `POST /api/me/mfa/passkeys/options`, a name and the browser’s answer; verifies origin and relying party against `LANDFLOW_PUBLIC_URL` (attestation `none`). The first second factor of any kind also answers ten `recoveryCodes`, once. 400 when it does not verify or the request expired; 409 for a passkey that is already registered or at ten.',
+    body: jsonBody(object({ challenge: { type: 'string', maxLength: 100 }, name: { type: 'string', minLength: 1, maxLength: 60 }, response: passkeyResponse }, ['challenge', 'name', 'response'])),
+    responses: { 201: reply('Added', object({ factor: mfaFactor, recoveryCodes: array({ type: 'string' }) }, ['factor'])), 400: errorRef('The passkey did not verify'), 409: errorRef('Already registered, or too many') },
+  });
+  add('post', '/api/me/mfa/step-up', {
+    tag: 'Account',
+    id: 'mfaStepUp',
+    summary: 'Check your second factor for this session',
+    description: 'A fresh check (an app code, a recovery code or a passkey) that removing a factor and making new recovery codes need within five minutes. For `webauthn` send the `challenge` and `response` from `POST /api/me/mfa/passkeys/options` with `purpose: step-up`.',
+    body: jsonBody(object({ method: mfaMethod, code: { type: 'string', maxLength: 32 }, challenge: { type: 'string', maxLength: 100 }, response: passkeyResponse }, ['method'])),
+    responses: { 200: reply('Checked', object({ ok: { type: 'boolean' }, recoveryCodesLeft: { type: 'integer' } }, ['ok'])), 401: errorRef('The code did not work'), 409: errorRef('No second factor'), 429: errorRef('Too many failed attempts') },
+  });
+  add('post', '/api/me/mfa/recovery-codes', {
+    tag: 'Account',
+    id: 'newRecoveryCodes',
+    summary: 'Make a new set of recovery codes',
+    description: 'Ten codes, answered once; the old set stops working. Needs a second-factor check from the last five minutes (403 `mfa_step_up_required`).',
+    responses: { 200: reply('The new codes', object({ recoveryCodes: array({ type: 'string' }) }, ['recoveryCodes'])), 403: errorRef('Check your second factor first'), 409: errorRef('No second factor') },
+  });
+  add('delete', '/api/me/mfa/{id}', {
+    tag: 'Account',
+    id: 'removeMfaFactor',
+    summary: 'Remove one of your second factors',
+    description: 'Needs a second-factor check from the last five minutes (403 `mfa_step_up_required`). Your last factor is refused (409 `mfa_required_by_policy`) while `LANDFLOW_MFA_REQUIRED` covers you; removing the last one otherwise deletes the recovery codes.',
+    responses: { 200: reply('Removed', ok), 403: errorRef('Check your second factor first'), 404: notFound, 409: errorRef('Your role must keep a second factor') },
+  });
+  add('delete', '/api/users/{id}/mfa', {
+    tag: 'Account',
+    id: 'resetUserMfa',
+    summary: 'Reset a person’s second factors',
+    description: 'For someone locked out. The owner resets anyone’s but their own; an admin resets members’ and other admins’, never the owner’s; nobody their own. Ends the person’s sessions and records `auth.mfa_reset` in the same transaction (503 and no change when audit is fail-closed and down).',
+    responses: { 200: reply('Reset', object({ ok: { type: 'boolean' }, removed: { type: 'integer' } }, ['ok', 'removed'])), 400: errorRef('Use Sign-in & security for yourself'), 403: errorRef('Not allowed for that role'), 404: notFound, 503: errorRef('The audit log is unavailable') },
+  });
   add('get', '/api/api-keys', { tag: 'Account', id: 'listApiKeys', summary: 'List your API keys', responses: { 200: reply('Your keys (never the keys themselves)', object({ keys: array(ref('ApiKey')) }, ['keys'])) } });
   add('post', '/api/api-keys', {
     tag: 'Account',
     id: 'createApiKey',
     summary: 'Create an API key',
-    description: 'The key (`lf_…`) comes back once, as `token`. Only owners and admins create keys with the `admin` scope.',
+    description:
+      'The key (`lf_…`) comes back once, as `token`. Only owners and admins create keys with the `admin` scope. `allowedIps` and `maxUses` are fixed at creation (a new key replaces one): a call from another address, or past the cap, gets 401 (“This API key can’t be used from this address” / “This API key has used all its uses”, no fall back to a session) and an `api.denied` audit row; a use is a request that reaches its handler. The same rules hold for SCIM tokens and `/api/mcp`. In production an address list is refused (400) until `LANDFLOW_TRUSTED_PROXIES` is set.',
     body: jsonBody(
       object(
-        { label: { type: 'string', minLength: 1, maxLength: 100 }, scopes: { ...array(ref('ApiKeyScope')), minItems: 1 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 3650, description: 'None: never expires' } },
+        { label: { type: 'string', minLength: 1, maxLength: 100 }, scopes: { ...array(ref('ApiKeyScope')), minItems: 1 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 3650, description: 'None: never expires' },
+          allowedIps: { ...array({ type: 'string', maxLength: 100 }), maxItems: 50, description: 'IPv4/IPv6 addresses or CIDR ranges, `localhost`; none: any address. A bad entry answers 400 naming it' },
+          maxUses: { type: 'integer', minimum: 1, maximum: 1000000, description: 'None: no cap' },
+        },
         ['label', 'scopes'],
       ),
     ),
@@ -2159,6 +2278,41 @@ function paths(): Record<string, Record<string, Json>> {
   });
   add('get', '/api/projects/{id}/mcp', { tag: 'MCP', id: 'getProjectMcp', summary: 'A project’s MCP server', description: 'Where the project’s scoped instance MCP server is served and whether its gateway route is registered.', pathParams: { id: 'The project id' }, responses: { 200: reply('The state', { type: 'object', additionalProperties: true }), 404: notFound } });
   add('patch', '/api/projects/{id}/mcp', { tag: 'MCP', id: 'updateProjectMcp', summary: 'Register a project’s MCP server on the gateway', description: 'Project admins (and instance owners and admins). `gateway: true` makes the gateway sync add `/mcp/projects/<name>` (while the instance server is on).', pathParams: { id: 'The project id' }, body: jsonBody(object({ gateway: { type: 'boolean' } }, ['gateway'])), responses: { 200: reply('The state', { type: 'object', additionalProperties: true }), 400: invalid, 403: errorRef('Not a project admin'), 404: notFound } });
+  // C19: a project's event subscriptions (docs/features/event-subscriptions.md).
+  const eventTypes = { type: 'string', enum: ['run.started', 'run.finished', 'run.failed', 'node.finished'] };
+  const subscriptionDoc = object(
+    {
+      id: { type: 'string' }, projectId: { type: 'string' }, name: { type: 'string' }, url: { type: 'string' }, events: array(eventTypes),
+      workflowIds: { type: ['array', 'null'], items: { type: 'string' }, description: 'Null: every workflow of the project' }, nodeNames: array({ type: 'string' }),
+      includeOutput: { type: 'boolean' }, ordered: { type: 'boolean' }, enabled: { type: 'boolean' }, disabledReason: { type: ['string', 'null'] },
+      createdAt: { type: 'string' }, updatedAt: { type: 'string' }, lastDelivery: { type: ['object', 'null'], additionalProperties: true },
+      backlog: { type: 'integer', description: 'Events waiting to be delivered' }, dead: { type: 'integer', description: 'Events given up on after 72 hours' }, lastError: { type: ['string', 'null'] }, oldestAgeSeconds: { type: 'integer' },
+    },
+    ['id', 'projectId', 'name', 'url', 'events', 'enabled', 'backlog', 'dead'],
+  );
+  const subscriptionInput = {
+    name: { type: 'string', maxLength: 120 }, url: { type: 'string', description: 'http or https; an address the outbound policy blocks is a 400' }, events: array(eventTypes),
+    workflowIds: { type: ['array', 'null'], items: { type: 'string' } }, nodeNames: { ...array({ type: 'string' }), description: 'The steps `node.finished` is sent for (required with that event)' },
+    includeOutput: { type: 'boolean' }, ordered: { type: 'boolean' },
+  };
+  const subscriptionPath = { id: 'The project id', subscriptionId: 'The subscription id' };
+  const adminOnly = errorRef('Not an admin of the project');
+  add('get', '/api/projects/{id}/event-subscriptions', { tag: 'Projects', id: 'listEventSubscriptions', summary: 'A project’s event subscriptions', description: 'Members of the project. Each has its backlog, dead events, last delivery and last error; never the signing secret.', pathParams: { id: 'The project id' }, responses: { 200: reply('The subscriptions', object({ subscriptions: array(subscriptionDoc), canEdit: { type: 'boolean' } }, ['subscriptions', 'canEdit'])), 404: notFound } });
+  add('post', '/api/projects/{id}/event-subscriptions', {
+    tag: 'Projects', id: 'createEventSubscription', summary: 'Add an event subscription',
+    description: 'Project admins (and instance owners and admins). Landflow makes the signing secret and answers it once. Run events are sent as signed POSTs with a stable `x-landflow-event-id`, at least once and in order; see the feature page. At most 20 per project (409).',
+    pathParams: { id: 'The project id' }, body: jsonBody(object(subscriptionInput, ['name', 'url', 'events'])),
+    responses: { 201: reply('The subscription and its secret (shown once)', object({ subscription: subscriptionDoc, secret: { type: 'string' } }, ['subscription', 'secret'])), 400: invalid, 403: adminOnly, 404: notFound, 409: errorRef('The project already has 20') },
+  });
+  add('patch', '/api/projects/{id}/event-subscriptions/{subscriptionId}', {
+    tag: 'Projects', id: 'updateEventSubscription', summary: 'Change an event subscription',
+    description: 'Project admins. Any field of the create body, `enabled` (turning it on clears why it was off) and `newSecret: true`, which replaces the signing secret and answers the new one once.',
+    pathParams: subscriptionPath, body: jsonBody(object({ ...subscriptionInput, enabled: { type: 'boolean' }, newSecret: { type: 'boolean' } })),
+    responses: { 200: reply('The subscription (and the new secret, once)', object({ subscription: subscriptionDoc, secret: { type: 'string' } }, ['subscription'])), 400: invalid, 403: adminOnly, 404: notFound },
+  });
+  add('delete', '/api/projects/{id}/event-subscriptions/{subscriptionId}', { tag: 'Projects', id: 'deleteEventSubscription', summary: 'Remove an event subscription', description: 'Project admins. Events still waiting for it are dropped.', pathParams: subscriptionPath, responses: { 200: reply('Removed', ok), 403: adminOnly, 404: notFound } });
+  add('post', '/api/projects/{id}/event-subscriptions/{subscriptionId}/retry', { tag: 'Projects', id: 'retryEventSubscription', summary: 'Retry an event subscription now', description: 'Project admins. Waiting events are due at once and the ones given up on after 72 hours are queued again.', pathParams: subscriptionPath, responses: { 200: reply('How many events it touched', object({ retried: { type: 'integer' } }, ['retried'])), 403: adminOnly, 404: notFound } });
+  add('post', '/api/projects/{id}/event-subscriptions/{subscriptionId}/test', { tag: 'Projects', id: 'testEventSubscription', summary: 'Send a test event', description: 'Project admins. One signed `test` event straight to the URL, not through the queue; a receiver that refuses is a 200 with `ok: false`.', pathParams: subscriptionPath, responses: { 200: reply('What the receiver answered', object({ ok: { type: 'boolean' }, status: { type: 'integer' }, message: { type: 'string' } }, ['ok', 'message'])), 403: adminOnly, 404: notFound } });
   add('get', '/api/mcp/tools', {
     tag: 'MCP',
     id: 'listMcpTools',
@@ -2985,6 +3139,44 @@ function paths(): Record<string, Record<string, Json>> {
     pathParams: { id: 'The project id' },
     body: jsonBody(agentSettingsDoc),
     responses: { 200: reply('The settings', settingsView), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound },
+  });
+  // C21: the vector collections a project owns or may use
+  const collectionView = object({ key: { type: 'string' }, store: { type: 'string' }, name: { type: 'string' }, access: { type: 'string', enum: ['owner', 'read', 'write'] }, ownerProjectId: { type: 'string' }, ownerName: { type: 'string' }, source: { type: 'string', enum: ['first-write', 'upgrade', 'admin'] }, grants: array(object({ projectId: { type: 'string' }, projectName: { type: 'string' }, level: { type: 'string', enum: ['read', 'write'] } }, ['projectId', 'level'])), lostAccess: array(object({ projectId: { type: 'string' }, projectName: { type: 'string' } }, ['projectId'])) }, ['key', 'store', 'name', 'access', 'ownerProjectId', 'source']);
+  add('get', '/api/projects/{id}/collections', {
+    tag: 'Projects',
+    id: 'listProjectCollections',
+    summary: 'The vector collections a project owns or may use',
+    description: 'Any member. `collections` are the ones the project owns and the ones shared with it (`access` owner, read or write); the owner’s admins also see `grants` and `lostAccess` (projects that named the collection before the upgrade and have no access until granted). `lost` is what this project named before the upgrade and no longer reaches; `notion` (with an active Notion link) says whether its flows may read its Notion knowledge. `?check=<name>&store=sqlite|memory` answers `{ usable, message? }` for one name instead.',
+    pathParams: { id: 'The project id' },
+    query: [
+      { name: 'check', description: 'A collection name to check (answers `{ usable, message? }`)', schema: { type: 'string' } },
+      { name: 'store', description: 'sqlite or memory, with `check`', schema: { type: 'string', enum: ['sqlite', 'memory'] } },
+    ],
+    responses: { 200: reply('The collections', object({ collections: array(collectionView), lost: array({ type: 'object', additionalProperties: true }), canManage: { type: 'boolean' }, notion: { type: 'object', additionalProperties: true, nullable: true } }, ['collections', 'lost', 'canManage'])), 404: notFound },
+  });
+  add('post', '/api/projects/{id}/collections/{key}', {
+    tag: 'Projects',
+    id: 'changeProjectCollection',
+    summary: 'Share a collection, stop sharing it, or switch the Notion read',
+    description: 'Admins of the owning project (owners and admins of the instance too); each change is audited with from and to. Body `{ grant: { projectId | "*", level: "read" | "write" } }`, `{ revoke: projectId | "*" }` (also dismisses a lost-access notice) or `{ notionRead: boolean }` (with the project’s own Notion collection key). `key` is the collection’s key, URL-encoded (`sqlite:handbook`).',
+    pathParams: { id: 'The owning project’s id', key: 'The collection key, URL-encoded' },
+    body: jsonBody(object({ grant: object({ projectId: { type: 'string' }, level: { type: 'string', enum: ['read', 'write'] } }, ['projectId', 'level']), revoke: { type: 'string' }, notionRead: { type: 'boolean' } })),
+    responses: { 200: reply('Done', object({ ok: { type: 'boolean' } }, ['ok'])), 400: invalid, 403: errorRef('Not an admin of the project'), 404: notFound },
+  });
+  add('get', '/api/settings/collections', {
+    tag: 'Settings',
+    id: 'listAllCollections',
+    summary: 'Every vector collection on the instance',
+    description: 'Owners and admins. Each claimed collection with its owner, source and grants, the report of the one-time adoption at the upgrade (`adoption`: `at`, `collections`, `lost`, `unresolved`) and the projects.',
+    responses: { 200: reply('The collections', object({ collections: array(collectionView), adoption: { type: 'object', additionalProperties: true }, projects: array({ type: 'object', additionalProperties: true }) }, ['collections'])), 403: errorRef('Not an owner or admin') },
+  });
+  add('post', '/api/settings/collections', {
+    tag: 'Settings',
+    id: 'changeAllCollections',
+    summary: 'Find owners again, or move a collection',
+    description: 'Owners and admins. `{ adopt: true }` looks for owners again (what is owned is kept) and answers `{ adoption }`; `{ transfer: { key, projectId } }` moves a collection to another project (audited).',
+    body: jsonBody(object({ adopt: { type: 'boolean' }, transfer: object({ key: { type: 'string' }, projectId: { type: 'string' } }, ['key', 'projectId']) })),
+    responses: { 200: reply('Done', object({ ok: { type: 'boolean' }, adoption: { type: 'object', additionalProperties: true } })), 400: invalid, 403: errorRef('Not an owner or admin'), 404: notFound },
   });
   add('get', '/api/agents/{id}/sessions', {
     tag: 'Agents',

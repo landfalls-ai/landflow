@@ -8,9 +8,10 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { ArrowRight, KeyRound, MailCheck, TriangleAlert } from 'lucide-react';
 import { ApiError, api } from '@/lib/client/api';
-import { MIN_PASSWORD_LENGTH, type Role } from '@/lib/shared/auth';
+import { MIN_PASSWORD_LENGTH, type MfaChallengeResponse, type Role } from '@/lib/shared/auth';
 import { Button } from '@/components/ui/button';
 import { FieldLabel, Input } from '@/components/ui/inputs';
+import { MfaStep } from './mfa-step';
 
 /** The message to show for a failed request: the first validation issue, else the error. */
 function messageOf(caught: unknown): string {
@@ -71,7 +72,7 @@ function useSubmit(run: () => Promise<void>) {
       setBusy(false);
     }
   };
-  return { busy, error, submit, setError };
+  return { busy, error, submit, setError, setBusy };
 }
 
 const passwordHint = `At least ${MIN_PASSWORD_LENGTH} characters`;
@@ -79,11 +80,31 @@ const passwordHint = `At least ${MIN_PASSWORD_LENGTH} characters`;
 export function LoginForm({ next, oidcLabel, samlLabel, initialError, smtp, localSignIn = 'all' }: { next: string; oidcLabel?: string; samlLabel?: string; initialError?: string; smtp: boolean; localSignIn?: 'all' | 'owner' | 'off' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { busy, error, submit } = useSubmit(async () => {
-    await api('/api/auth/login', { method: 'POST', json: { email, password } });
+  const [second, setSecond] = useState<MfaChallengeResponse>();
+  const { busy, error, submit, setBusy } = useSubmit(async () => {
+    const answer = await api<Partial<MfaChallengeResponse> | undefined>('/api/auth/login', { method: 'POST', json: { email, password } });
+    // 202: the password was right and a second factor is next (no session yet).
+    if (answer?.mfaRequired) {
+      setSecond(answer as MfaChallengeResponse);
+      setBusy(false);
+      return;
+    }
     window.location.assign(next);
   });
   const ssoOnly = localSignIn === 'off';
+  if (second) {
+    return (
+      <MfaStep
+        challenge={second.challenge}
+        methods={second.methods}
+        next={next}
+        onBack={() => {
+          setSecond(undefined);
+          setPassword('');
+        }}
+      />
+    );
+  }
   return (
     <form method="post" onSubmit={submit} className="space-y-3.5">
       {(oidcLabel || samlLabel) && (
@@ -260,11 +281,19 @@ export function ResetForm({ token }: { token: string }) {
       .then(setAccount)
       .catch((e) => setLoadError(messageOf(e)));
   }, [token]);
-  const { busy, error, submit, setError } = useSubmit(async () => {
-    await api('/api/auth/password/reset', { method: 'POST', json: { token, password } });
+  const [second, setSecond] = useState<MfaChallengeResponse>();
+  const { busy, error, submit, setError, setBusy } = useSubmit(async () => {
+    const answer = await api<Partial<MfaChallengeResponse> | undefined>('/api/auth/password/reset', { method: 'POST', json: { token, password } });
+    // The password is set; an account with a second factor still answers it before it is signed in.
+    if (answer?.mfaRequired) {
+      setSecond(answer as MfaChallengeResponse);
+      setBusy(false);
+      return;
+    }
     window.location.assign('/');
   });
   if (loadError) return <ErrorBox message={loadError} />;
+  if (second) return <MfaStep challenge={second.challenge} methods={second.methods} next="/" onBack={() => window.location.assign('/login')} />;
   if (!account) return <div className="h-40 rounded-xl bg-sf2 animate-pulse-soft" />;
   return (
     <form

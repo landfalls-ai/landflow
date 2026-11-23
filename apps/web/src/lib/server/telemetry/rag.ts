@@ -15,6 +15,7 @@ interface Instruments {
   retrievalDuration: Histogram;
   retrievalDocuments: Counter;
   guardrailChecks: Counter;
+  ragChunks: Counter;
 }
 
 let cached: { provider: MeterProvider; instruments: Instruments } | undefined;
@@ -31,13 +32,19 @@ function instruments(): Instruments {
         retrievalDuration: meter.createHistogram('landflow.retrieval.duration', { description: 'Duration of a vector store insert or query', unit: 'ms', advice }),
         retrievalDocuments: meter.createCounter('landflow.retrieval.documents', { description: 'Documents inserted into or returned by vector stores' }),
         guardrailChecks: meter.createCounter('landflow.guardrails.checks', { description: 'Texts checked by the Guardrails node' }),
+        ragChunks: meter.createCounter('landflow.rag.chunks', { description: 'Chunks of a re-indexed document by outcome: reused (kept vector), embedded, removed' }),
       },
     };
   }
   return cached.instruments;
 }
 
-export type VectorStoreOperation = 'insert' | 'query';
+/** C20: one document's re-index, counted by outcome in `landflow.rag.chunks`. */
+export function recordChunks(counts: { reused: number; embedded: number; removed: number }): void {
+  for (const outcome of ['reused', 'embedded', 'removed'] as const) if (counts[outcome]) instruments().ragChunks.add(counts[outcome], { 'landflow.outcome': outcome });
+}
+
+export type VectorStoreOperation = 'insert' | 'query' | 'replace';
 
 export interface VectorStoreCall {
   /** `memory`, `sqlite` or `pgvector`. */

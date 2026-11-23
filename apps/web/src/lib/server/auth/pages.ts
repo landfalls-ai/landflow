@@ -8,6 +8,7 @@ import { redirect } from 'next/navigation';
 import { can, type Action, type Viewer } from '../../shared/auth';
 import { isPublicPath, PATH_HEADER, SESSION_COOKIE } from '../../shared/auth-paths';
 import { ensureBootstrapped } from '../bootstrap';
+import { enrolmentRequired } from './policy';
 import { sessionUser } from './sessions';
 import { setupRequired, viewerOf, type UserRecord } from './users';
 
@@ -24,9 +25,15 @@ export async function currentPageUser(): Promise<UserRecord | undefined> {
  * comes from the proxy (x-landflow-path); without it (no proxy in front) pages render and the API still guards.
  */
 export async function pageViewer(): Promise<Viewer | null> {
-  const user = await currentPageUser();
-  if (user) return viewerOf(user);
+  await ensureBootstrapped();
+  const found = sessionUser((await cookies()).get(SESSION_COOKIE)?.value);
+  const user = found?.user;
   const path = (await headers()).get(PATH_HEADER);
+  if (user) {
+    // A covered user with no second factor sees only the page that adds one.
+    if (path && !path.split(/[?#]/)[0].startsWith('/login/second-factor') && enrolmentRequired(user, found.session.method)) redirect(`/login/second-factor?enrol=1&next=${encodeURIComponent(path)}`);
+    return viewerOf(user);
+  }
   if (path && !isPublicPath(path.split(/[?#]/)[0])) {
     if (setupRequired()) redirect('/setup');
     redirect(`/login?next=${encodeURIComponent(path)}`);

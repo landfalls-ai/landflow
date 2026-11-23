@@ -50,7 +50,7 @@ export type FlowEdge = [string, string, ConnectionType?, number?, number?];
 export async function runFlow(
   nodes: FlowNode[],
   edges: FlowEdge[],
-  options: { input?: Input; extra?: Record<string, INodeType>; variables?: Record<string, string> } = {},
+  options: { input?: Input; extra?: Record<string, INodeType>; variables?: Record<string, string>; workflowId?: string } = {},
 ): Promise<ExecutionResult> {
   const all: FlowNode[] = [{ name: 'Start', type: 'core.manualTrigger' }, ...nodes];
   const resolver: NodeTypeResolver = {
@@ -77,7 +77,7 @@ export async function runFlow(
     targetIndex,
   }));
   return executeWorkflow({
-    workflow: { id: 'wf_test', name: 'Test', nodes: workflowNodes, connections },
+    workflow: { id: options.workflowId ?? 'wf_test', name: 'Test', nodes: workflowNodes, connections },
     resolver,
     executionId: `ex_${Math.random().toString(36).slice(2)}`,
     mode: 'manual',

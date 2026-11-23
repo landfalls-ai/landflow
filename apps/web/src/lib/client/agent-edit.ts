@@ -90,7 +90,7 @@ export async function loadModelChoices(current?: { provider?: string }): Promise
 }
 
 /** "Knowledge from a folder…": a new keyword-search knowledge base in the draft (no embeddings model, no key), then the folder indexed into it. */
-export async function addKnowledgeFolder(agentId: string, folder: string): Promise<{ smoke: AgentSmoke; documents: number; failed: number; collection: string }> {
+export async function addKnowledgeFolder(agentId: string, folder: string): Promise<{ smoke: AgentSmoke; documents: number; failed: number; collection: string; embedded: number; reused: number; removed: number }> {
   const clean = folder.trim().replace(/\/+$/, '');
   const base = clean.split('/').filter(Boolean).at(-1) ?? clean;
   const collection = base.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'documents';
@@ -107,9 +107,9 @@ export async function addKnowledgeFolder(agentId: string, folder: string): Promi
     searchMode: 'keyword',
   };
   const { smoke } = await addToAgent(agentId, { tool });
-  const indexed = await api<{ documents: number; failed?: unknown[] }>(`/api/agents/${encodeURIComponent(agentId)}/knowledge/${id}/folder`, { method: 'POST', json: { folder: clean } });
+  const indexed = await api<{ documents: number; embedded?: number; reused?: number; removed?: number; failed?: unknown[] }>(`/api/agents/${encodeURIComponent(agentId)}/knowledge/${id}/folder`, { method: 'POST', json: { folder: clean } });
   announceSaved(agentId);
-  return { smoke, documents: indexed.documents, failed: indexed.failed?.length ?? 0, collection };
+  return { smoke, documents: indexed.documents, failed: indexed.failed?.length ?? 0, collection, embedded: indexed.embedded ?? 0, reused: indexed.reused ?? 0, removed: indexed.removed ?? 0 };
 }
 
 /** The knowledge bases (vector stores) other agents the caller can read already have, that this agent does not: each as the tool config to copy. */

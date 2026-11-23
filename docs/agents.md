@@ -478,8 +478,29 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     /api/agents/:id/knowledge/:toolId/folder { folder }` reads every Markdown, text, PDF, DOCX, HTML, CSV or JSON file
     under a folder of the files directory (`LANDFLOW_FILES_DIR`; recursive, dotfiles and symlinks that lead out are
     skipped, at most 200 files of 25 MB), each chunk's metadata gaining `source` (its path relative to the files
-    directory, `runbooks/disk-full.md`); indexing again replaces a file's chunks, never doubles them, and the tool's
-    `indexedFrom` records the folder (the dialog shows "Indexed from runbooks"). The timeline shows searches with
+    directory, `runbooks/disk-full.md`); indexing again **embeds only what changed** (C20): each file is cut at
+    content-defined sections (a heading starts one once the section before it holds 800 characters; otherwise cuts fall where a paragraph's hash says so, between 2,000 and
+    6,000 characters) and then by the usual splitter, every chunk keeps a hash of its text and the embeddings model that
+    made its vector, and a chunk whose hash the collection already holds under the same model keeps its stored vector, so an
+    inserted paragraph changes the chunks around it and not every later one. A file's chunks are replaced in one step (the
+    base answers from the old version until the new one is stored, and a failing embeddings model leaves the old chunks), a
+    file keeps its `documentId`, and the chunks of files that left the folder are removed. The answer is `{ documents,
+    chunks, reused, embedded, removed, failed }`; the tool's `indexedFrom` records the folder and `lastIndex` the pass (the
+    dialog shows "Indexed from runbooks · last pass: 12 documents · 3 embedded, 241 reused, 5 removed"). A single upload
+    in the dialog is not diffed (a new document each time); chunks stored before this change have no hash, so the first
+    index afterwards embeds each file once. **Who may use a collection** (C21): a collection belongs to a project. The
+    project that first writes it owns it (an upload, a folder index or a Vector Store node's insert claims it; the
+    claim is decided once, in Postgres in queue mode, and audited as `collection.claimed`); until someone writes it, it is
+    open to every project. The project that asks is the agent's home project (project knowledge asks as its project,
+    a Vector Store node as its workflow's home project, never the run's project). Another project can use the collection
+    only through a grant an admin of the owner gave (read: search; write: also upload, index, insert, clear and delete;
+    write implies read), to one project or to **All projects**; a collection a project can't use fails with the same
+    words whether it exists or not: "This agent’s project can’t use the collection “x”" (the agent's tool is not built,
+    its run lists why, the memory playground and the uploads answer 403 or 400, the connections count is left out, the
+    architect's `list_knowledge_bases` leaves it out and marks a shared one `read` or `write`, and the dialog says so
+    under the Collection field before saving). The project's Settings tab has a [Collections
+    card](projects-and-goals.md#collections). `landflow-brain*`, `landflow-notion-<project>` and
+    `landflow-agent-memory` stay closed to every saved configuration. The timeline shows searches with
     the vector store's icon. In the workflow editor the same collection is reachable from an AI
     Agent with the vector store in **Retrieve Documents (As Tool)** mode. A knowledge base can
     also come [from a plugin](#knowledge-bases-from-a-plugin) (Clickland), with nothing to upload.

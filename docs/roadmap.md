@@ -3050,3 +3050,12 @@ The person decided on 2026-11-18 that production approvals go to an approval inb
 - **C13 built:** the AI Judge node with a person fallback through the approval inbox (request kind `judge`). Open: a judge that decides agent tool approvals stays out by decision; multi-judge voting; "ask a person before denying"; a publish-card line; a per-round token cap.
 - **C12 built as tickets:** ServiceNow and ticket-opening webhook channels, a ticket per approval request and ticket channel with retries, a closing note, and the link in Needs you, Home and the Run Trace card. The delegated decision (a ticket system deciding) was dropped by the person's decision of 2026-11-21.
 - **Open from C14:** inbound MCP approvals still read `LANDFLOW_MCP_APPROVAL` directly (`mcp/approval-mode.ts`).
+
+## Combined wave 4a (2026-11-21)
+
+- **C16 built:** a second factor for local accounts: an authenticator app (TOTP), ten one-use recovery codes, passkeys (WebAuthn, with the counter check), the 202 sign-in step, `LANDFLOW_MFA_REQUIRED`, admin reset and Sign-in & security. Open: passwordless sign-in, an attestation policy, and asking for the local factor when an SSO sign-in links to a local account that has one.
+- **C17 built:** per-key IP allow-list and use cap, last address, exact cross-process use count (`api_key_uses`), the same rules for SCIM and MCP tokens.
+- **C18 built** (W1 claims, W4a Single Use, presets, claims editor). Open: the API workload login (FR-8, a new principal kind in the auth guard).
+- **C19 built:** run events through an outbox: event subscriptions per project, the shared outbox core, the audit outbox on it. Open: alert channels and the error workflow on the outbox; live `node.finished` (needs a durable node event); a broker sink (Kafka, NATS); Notion's outbox and approval tickets on the core; C12-style delegated approval callbacks can enqueue here.
+- **C20 built:** chunk diffing with embedding reuse, atomic per-document swap, Upsert by Key. Open: reuse in the Vector Store node without a key; markdown-aware chunking; C22's sync builds on `syncDocument`.
+- **C21 built:** access per vector collection: owner project, read/write grants, claim on first write, strict adoption with the lost-access notice, the Notion read switch. Open: an instance-wide collections page; per-document access.

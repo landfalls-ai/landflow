@@ -6,6 +6,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ApiKeyScope } from '../../shared/auth';
 import { singleton } from '../singleton';
+import type { SessionMethod } from './sessions';
 import type { UserRecord } from './users';
 
 export interface Principal {
@@ -13,8 +14,15 @@ export interface Principal {
   via: 'session' | 'api-key' | 'test' | 'mcp';
   /** The SHA-256 id of the session (via session). */
   sessionId?: string;
+  /** How the session was made (via session): the guard's enrolment rule reads it. */
+  sessionMethod?: SessionMethod;
+  /**
+   * A covered account with no second factor yet (LANDFLOW_MFA_REQUIRED): this session may only enrol one. The guard refuses it
+   * everywhere else; a public route that reads the session cookie itself must treat it as no one (see ./policy `enrolmentRequired`).
+   */
+  enrolOnly?: boolean;
   /** The key (via api-key). */
-  apiKey?: { id: string; scopes: ApiKeyScope[] };
+  apiKey?: { id: string; scopes: ApiKeyScope[]; /** The key's use cap: the request is counted after the guard (http.ts, auth/api-key-uses.ts). */ maxUses?: number; label?: string };
 }
 
 export interface RequestAuth {

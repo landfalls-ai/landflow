@@ -122,8 +122,9 @@ export function viewerOf(user: UserRecord): Viewer {
   };
 }
 
-export function userView(user: UserRecord): UserView {
-  return { ...viewerOf(user), createdAt: user.createdAt, ...(user.lastLoginAt && { lastLoginAt: user.lastLoginAt }) };
+/** `mfaFactors`: the user's confirmed second factors (counted by `mfaFactorCounts`); never pass `userView` straight to `map`. */
+export function userView(user: UserRecord, mfaFactors?: number): UserView {
+  return { ...viewerOf(user), ...(mfaFactors ? { mfaFactors } : {}), createdAt: user.createdAt, ...(user.lastLoginAt && { lastLoginAt: user.lastLoginAt }) };
 }
 
 export function countUsers(): number {
@@ -283,6 +284,8 @@ export function deleteUser(id: string): boolean {
   const db = authDb();
   return db.transaction(() => {
     db.delete('sessions', { user_id: id });
+    // The keys' use counts go with them (api_key_uses is keyed by the key's id).
+    for (const key of db.all<{ id: string }>('SELECT id FROM api_keys WHERE user_id = ?', id)) db.delete('api_key_uses', { key_id: key.id });
     db.delete('api_keys', { user_id: id });
     // What only this person could read goes with them: their conversations (owner-only, no admin read), their
     // preferences and their private work events (docs/work-and-briefings.md). Shared work stays with the brain.
@@ -313,4 +316,9 @@ export function setUserDisabled(id: string, disabled: boolean): UserRecord {
 /** Display names by user id, for "created by" and lock labels. */
 export function userNames(): Map<string, string> {
   return new Map(authDb().all<{ id: string; name: string }>('SELECT id, name FROM users').map((row) => [row.id, row.name]));
+}
+
+/** Confirmed second factors per user id (Settings → Users shows who has one). */
+export function mfaFactorCounts(): Map<string, number> {
+  return new Map(authDb().all<{ user_id: string; n: number }>('SELECT user_id, COUNT(*) AS n FROM user_mfa_factors WHERE confirmed_at IS NOT NULL GROUP BY user_id').map((row) => [row.user_id, Number(row.n)]));
 }
