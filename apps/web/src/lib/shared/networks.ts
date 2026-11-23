@@ -7,7 +7,7 @@
 /** The prefix of a runner's token (`lf_run_…`): a bearer secret, shown once, kept as its SHA-256. */
 export const RUNNER_TOKEN_PREFIX = 'lf_run_';
 
-/** The HTTP Request node's Run In value for "run in the host" (the default). */
+/** The HTTP Request node's Run In value for "run in the host": the default is empty, and "host" means the same. */
 export const RUN_IN_HOST = 'host';
 
 /** A runner is online when it was seen within this long (a long poll is 25 s, so a healthy one is seen far more often). */
