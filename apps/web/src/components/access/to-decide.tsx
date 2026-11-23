@@ -5,9 +5,10 @@
  * project still decides. The question text is the server's own (target, permission, the GitHub username marked unverified), never rebuilt in the browser, and so are the durations.
  */
 import { CheckCheck } from 'lucide-react';
-import { accessApi, useLoaded } from '@/lib/client/access';
+import { accessApi, requesterInfo, useLoaded } from '@/lib/client/access';
 import { durationText, forDuration, type AccessEntryView, type AccessRequestView } from '@/lib/shared/access';
 import { Card } from '../shell/page-header';
+import { Badge } from '../ui/badge';
 import { ConfirmCard } from '../run-trace/confirm-card';
 import { EmptyState } from '../ui/empty-state';
 
@@ -22,9 +23,18 @@ export function DecideList({ requests, onDecided }: { requests: AccessRequestVie
   }
   return (
     <div className="flex max-w-[760px] flex-col gap-3" data-testid="access-decide">
-      {mine.map((request) => (
+      {mine.map((request) => {
+        const who = requesterInfo(request.requester);
+        return (
+        <div key={request.id} className="flex flex-col gap-1.5">
+          {who.outside && (
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-t2">
+              <Badge tone="accent">Outside</Badge>
+              <span className="font-semibold text-t1">{who.email ?? request.requester.name}</span>
+              {who.verifiedText && <span>{who.verifiedText}</span>}
+            </p>
+          )}
         <ConfirmCard
-          key={request.id}
           executionId={request.executionId ?? ''}
           nodeName={request.entryName}
           since={request.createdAt}
@@ -34,7 +44,9 @@ export function DecideList({ requests, onDecided }: { requests: AccessRequestVie
           }}
           onDecided={onDecided}
         />
-      ))}
+        </div>
+        );
+      })}
     </div>
   );
 }

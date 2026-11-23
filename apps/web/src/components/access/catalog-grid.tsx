@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Plus, Library } from 'lucide-react';
-import { SYSTEM_FORM } from '@/lib/client/access';
+import { SYSTEM_FORM, type CatalogEntry } from '@/lib/client/access';
 import { durationText, type AccessEntryView, type AccessSetup } from '@/lib/shared/access';
 import type { Viewer } from '@/lib/shared/auth';
 import { usePhone } from '@/lib/client/use-phone';
@@ -15,14 +15,17 @@ import { DataGrid, type GridColumn } from '../ui/data-grid';
 import { EmptyState } from '../ui/empty-state';
 import { EntrySheet } from './entry-sheet';
 
-export function CatalogGrid({ entries, isAdmin, onOpen, onNew, phone }: { entries: AccessEntryView[]; isAdmin: boolean; onOpen: (entry: AccessEntryView) => void; onNew: () => void; phone?: boolean }) {
+/** The badge on an entry an admin opened to people without a Landflow account. */
+const OpenOutside = ({ entry }: { entry: CatalogEntry }) => (entry.outsideMayAsk ? <Badge tone="accent" title="People without a Landflow account may ask for this">Open outside</Badge> : null);
+
+export function CatalogGrid({ entries, isAdmin, onOpen, onNew, phone }: { entries: CatalogEntry[]; isAdmin: boolean; onOpen: (entry: AccessEntryView) => void; onNew: () => void; phone?: boolean }) {
   const columns: Array<GridColumn<AccessEntryView>> = [
     { key: 'name', label: 'Name', type: 'text', render: (e) => <button type="button" onClick={() => onOpen(e)} className="text-left font-semibold text-ac hover:underline">{e.name}</button>, width: 200 },
     { key: 'system', label: 'System', type: 'text', value: (e) => SYSTEM_FORM[e.system].label, width: 160 },
     { key: 'target', label: 'Target', type: 'text', value: (e) => e.target.label, width: 200 },
     { key: 'durations', label: 'Durations', type: 'text', value: (e) => e.durations.map(durationText).join(', '), width: 220 },
     { key: 'approvers', label: 'Approvers', type: 'text', value: (e) => e.approverNames.join(', '), width: 180 },
-    { key: 'enabled', label: 'State', type: 'text', render: (e) => <Badge tone={e.enabled ? 'success' : 'muted'}>{e.enabled ? 'On' : 'Off'}</Badge>, width: 80 },
+    { key: 'enabled', label: 'State', type: 'text', render: (e) => <span className="flex flex-wrap gap-1"><Badge tone={e.enabled ? 'success' : 'muted'}>{e.enabled ? 'On' : 'Off'}</Badge><OpenOutside entry={e} /></span>, width: 170 },
   ];
   return (
     <div className="flex flex-col gap-3">
@@ -38,7 +41,7 @@ export function CatalogGrid({ entries, isAdmin, onOpen, onNew, phone }: { entrie
           {entries.map((e) => (
             <li key={e.id}>
               <button type="button" onClick={() => onOpen(e)} className="w-full rounded-2xl border border-hair bg-sf px-4 py-3 text-left">
-                <span className="flex items-center gap-2"><span className="text-[14px] font-semibold text-t1">{e.name}</span><Badge tone={e.enabled ? 'success' : 'muted'}>{e.enabled ? 'On' : 'Off'}</Badge></span>
+                <span className="flex items-center gap-2"><span className="text-[14px] font-semibold text-t1">{e.name}</span><Badge tone={e.enabled ? 'success' : 'muted'}>{e.enabled ? 'On' : 'Off'}</Badge><OpenOutside entry={e} /></span>
                 <span className="block text-[13px] text-t2">{SYSTEM_FORM[e.system].label} · {e.target.label}</span>
                 <span className="block text-[12px] text-t3">{e.durations.map(durationText).join(', ')}</span>
               </button>

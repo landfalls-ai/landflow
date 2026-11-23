@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { ShieldCheck, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
-import { accessApi, overdueGrants, useLoaded } from '@/lib/client/access';
+import { overdueGrants, requesterInfo, useAccessClient, useLoaded } from '@/lib/client/access';
 import type { AccessGrantView, GrantStatus } from '@/lib/shared/access';
 import { usePhone } from '@/lib/client/use-phone';
 import { Card } from '../shell/page-header';
@@ -16,7 +16,7 @@ import { Button } from '../ui/button';
 import { DataGrid, type GridColumn } from '../ui/data-grid';
 import { EmptyState } from '../ui/empty-state';
 import { Segmented } from '../ui/segmented';
-import { untilText } from './my-requests';
+import { untilText, WhoLine } from './my-requests';
 
 export type GrantAct = (grant: AccessGrantView, action: 'revoke' | 'done' | 'retry') => void;
 
@@ -36,9 +36,10 @@ const when = (iso?: string) => (iso ? new Date(iso).toLocaleString([], { month: 
 const untilCell = (g: AccessGrantView) => (g.until === null ? 'No end' : g.until ? when(g.until) : '');
 
 function Actions({ grant, onAct }: { grant: AccessGrantView; onAct: GrantAct }) {
+  const outside = useAccessClient().kind === 'outside';
   return (
     <div className="flex gap-1.5 max-md:w-full">
-      {grant.canRevoke && <Button size="sm" variant="outline" onClick={() => onAct(grant, 'revoke')} className="max-md:h-11 max-md:flex-1">Revoke now</Button>}
+      {grant.canRevoke && <Button size="sm" variant="outline" onClick={() => onAct(grant, 'revoke')} className="max-md:h-11 max-md:flex-1">{outside ? 'Give it back' : 'Revoke now'}</Button>}
       {grant.canMarkDone && <Button size="sm" variant="outline" onClick={() => onAct(grant, 'done')} className="max-md:h-11 max-md:flex-1">Done</Button>}
       {grant.canRetry && <Button size="sm" variant="outline" onClick={() => onAct(grant, 'retry')} className="max-md:h-11 max-md:flex-1">Retry</Button>}
     </div>
@@ -51,14 +52,14 @@ export function OverdueBanner({ grants, now }: { grants: AccessGrantView[]; now?
   return (
     <div role="alert" className="flex items-start gap-2 rounded-xl border border-rdbd bg-rddim px-3 py-2 text-[13px] text-rd">
       <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-      <span>{late.length === 1 ? 'One grant' : `${late.length} grants`} could not be removed on time: {late.map((g) => `${g.holder.name} on ${g.entryName}${g.lastError ? ` (${g.lastError})` : ''}`).join('; ')}. Retry, or remove it by hand.</span>
+      <span>{late.length === 1 ? 'One grant' : `${late.length} grants`} could not be removed on time: {late.map((g) => `${g.holder?.name ?? 'Someone'} on ${g.entryName}${g.lastError ? ` (${g.lastError})` : ''}`).join('; ')}. Retry, or remove it by hand.</span>
     </div>
   );
 }
 
 export function GrantsGrid({ grants, onAct }: { grants: AccessGrantView[]; onAct: GrantAct }) {
   const columns: Array<GridColumn<AccessGrantView>> = [
-    { key: 'holder', label: 'Who', type: 'text', value: (g) => g.holder.name, width: 150 },
+    { key: 'holder', label: 'Who', type: 'text', value: (g) => { const info = requesterInfo(g.holder); return info.outside ? `${info.email ?? g.holder.name} (outside)` : g.holder.name; }, width: 150 },
     { key: 'entryName', label: 'What', type: 'text', render: (g) => <span>{g.entryName} <span className="text-t3">{g.targetLabel}</span></span>, width: 240 },
     { key: 'account', label: 'Account', type: 'text', width: 130 },
     { key: 'since', label: 'Since', type: 'text', value: (g) => when(g.since), width: 130 },
@@ -80,6 +81,8 @@ export function GrantsGrid({ grants, onAct }: { grants: AccessGrantView[]; onAct
 }
 
 export function GrantCards({ grants, onAct }: { grants: AccessGrantView[]; onAct: GrantAct }) {
+  // An outsider's list is only their own: no holder line.
+  const ownGrants = useAccessClient().kind === 'outside';
   return (
     <ul className="flex flex-col gap-2">
       {grants.map((g) => (
@@ -88,7 +91,8 @@ export function GrantCards({ grants, onAct }: { grants: AccessGrantView[]; onAct
             <span className="text-[14px] font-semibold text-t1">{g.entryName}</span>
             <GrantBadge status={g.status} />
           </div>
-          <p className="mt-0.5 text-[13px] text-t2">{g.holder.name}{g.account ? ` · ${g.account}` : ''}</p>
+          {g.holder && !ownGrants && (requesterInfo(g.holder).outside ? <WhoLine person={g.holder} /> : <p className="mt-0.5 text-[13px] text-t2">{g.holder.name}</p>)}
+          {g.account && <p className="text-[13px] text-t2">{g.account}</p>}
           <p className="text-[12px] text-t3">{g.targetLabel} · {untilText(g.until) || 'not started'}{g.approvedBy ? ` · approved by ${g.approvedBy}` : ''}</p>
           {g.lastError && <p className="mt-1 text-[13px] text-rd [overflow-wrap:anywhere]">{g.lastError}</p>}
           {(g.canRevoke || g.canMarkDone || g.canRetry) && <div className="mt-2"><Actions grant={g} onAct={onAct} /></div>}
@@ -99,16 +103,18 @@ export function GrantCards({ grants, onAct }: { grants: AccessGrantView[]; onAct
 }
 
 export function GrantsView({ admin, manages, tick }: { admin: boolean; manages: boolean; tick?: number }) {
-  const phone = usePhone();
+  const client = useAccessClient();
+  // An outsider sees their own grants as cards on every screen: the grid's holder and approver columns are not theirs to see.
+  const phone = usePhone() || client.kind === 'outside';
   const [scope, setScope] = useState<'mine' | 'all'>(admin || manages ? 'all' : 'mine');
-  const { data, error, reload } = useLoaded(() => accessApi.grants(scope), [scope, tick]);
+  const { data, error, reload } = useLoaded(() => client.grants(scope), [client, scope, tick]);
   const [busy, setBusy] = useState(false);
   const act: GrantAct = async (grant, action) => {
     if (busy) return;
     setBusy(true);
     try {
-      await accessApi.grantAction(grant.id, action);
-      toast.success(action === 'revoke' ? 'Access removed' : action === 'done' ? 'Marked done' : 'Tried again');
+      await client.grantAction(grant.id, action);
+      toast.success(action === 'revoke' ? (client.kind === 'outside' ? 'Given back' : 'Access removed') : action === 'done' ? 'Marked done' : 'Tried again');
       await reload();
     } catch (e) {
       toast.error((e as Error).message);

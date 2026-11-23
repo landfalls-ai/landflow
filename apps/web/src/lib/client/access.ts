@@ -4,7 +4,7 @@
  * page's rules are made of (which tabs a person gets, the words for each state, whether Ask is ready, what an approver may allow),
  * so a test reads them without a browser.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { createContext, createElement, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { Viewer } from '@/lib/shared/auth';
 import {
   type AccessEntryView,
@@ -15,11 +15,12 @@ import {
   type AccessSystem,
   ACCESS_LIMITS,
 } from '@/lib/shared/access';
+import type { CredentialSummary } from '@/lib/shared/types';
 import { api, ApiError } from './api';
 
 type Person = Pick<Viewer, 'id' | 'role'>;
 
-export type AccessTabId = 'ask' | 'mine' | 'decide' | 'grants' | 'catalog';
+export type AccessTabId = 'ask' | 'mine' | 'decide' | 'grants' | 'catalog' | 'settings';
 export interface AccessTab {
   id: AccessTabId;
   label: string;
@@ -36,7 +37,7 @@ export function isApprover(viewer: Person, entries: AccessEntryView[]): boolean 
 }
 
 /** The tabs a person gets once access requests are set up: none before. */
-export function accessTabs(input: { setup: AccessSetup | undefined; viewer: Person; entries: AccessEntryView[]; toDecide: number }): AccessTab[] {
+export function accessTabs(input: { setup: AccessSetup | undefined; viewer: Person; entries: AccessEntryView[]; toDecide: number; /** Admins only: the page asks for it (C36 outside requesters' settings). */ settings?: boolean }): AccessTab[] {
   if (!input.setup?.installed) return [];
   const tabs: AccessTab[] = [
     { id: 'ask', label: 'Ask' },
@@ -45,6 +46,7 @@ export function accessTabs(input: { setup: AccessSetup | undefined; viewer: Pers
   if (isApprover(input.viewer, input.entries)) tabs.push({ id: 'decide', label: 'To decide', count: input.toDecide });
   tabs.push({ id: 'grants', label: 'Grants' });
   if (isAdminViewer(input.viewer) || input.entries.some((entry) => entry.canEdit)) tabs.push({ id: 'catalog', label: 'Catalog' });
+  if (input.settings && isAdminViewer(input.viewer)) tabs.push({ id: 'settings', label: 'Settings' });
   return tabs;
 }
 
@@ -135,8 +137,14 @@ export const SYSTEM_FORM: Record<AccessSystem, SystemForm> = {
   },
 };
 
+/** What the Ask form needs of an entry: an outsider's list has no approvers, owners or credential (plan D-13), so those are optional. */
+export type AskEntry = Pick<AccessEntryView, 'id' | 'name' | 'system' | 'durations' | 'target'> & Partial<Pick<AccessEntryView, 'description' | 'approverNames'>>;
+
+/** A catalog entry with the C36 flag: an admin opened it to people without a Landflow account. */
+export type CatalogEntry = AccessEntryView & { outsideMayAsk?: boolean };
+
 /** Whether Ask is ready: an entry, one of its durations, a reason of 3 characters or more and, for GitHub, the username. */
-export function canAsk(input: { entry: AccessEntryView | undefined; durationMinutes: number | null | undefined; reason: string; account: string }): boolean {
+export function canAsk(input: { entry: AskEntry | undefined; durationMinutes: number | null | undefined; reason: string; account: string }): boolean {
   const { entry } = input;
   if (!entry || input.durationMinutes === undefined || !entry.durations.includes(input.durationMinutes)) return false;
   if (input.reason.trim().length < ACCESS_LIMITS.reasonChars[0]) return false;
@@ -181,6 +189,8 @@ export interface AccessAccounts {
   google?: string;
 }
 export interface EntryDraft {
+  /** C36: people without a Landflow account may ask for it (admins only). */
+  outsideMayAsk?: boolean;
   name: string;
   description: string;
   system: AccessSystem;
@@ -197,7 +207,30 @@ export interface Person2 {
   name: string;
 }
 
+/**
+ * What the Ask, My requests, Grants and Chat components call. The Access page uses `accessApi` (`/api/access`); the public request page
+ * passes `outsideApi` (`/request-access/api`, lib/client/access-outside.ts) through `AccessClientProvider`, so one set of components
+ * serves both. Fields a client's views lack (approver names, holders) simply hide.
+ */
+export interface AccessClient {
+  /** `outside`: a requester without a Landflow account; the words and links change, never the rules. */
+  kind: 'user' | 'outside';
+  requests(scope: 'mine'): Promise<{ items: AccessRequestView[] }>;
+  ask(input: { entryId: string; durationMinutes: number | null; reason: string; account?: string }): Promise<AccessRequestView>;
+  cancel(id: string): Promise<unknown>;
+  grants(scope: 'mine' | 'all'): Promise<{ items: AccessGrantView[] }>;
+  /** `revoke` is "Give it back" for an outside requester. */
+  grantAction(id: string, action: 'revoke' | 'done' | 'retry'): Promise<unknown>;
+  accounts(): Promise<AccessAccounts>;
+  saveGithub(github: string): Promise<unknown>;
+  chat(message: string, sessionId: string): Promise<{ reply: string; requestId?: string }>;
+  /** A link to a tab of the client's own page, optionally to one request. */
+  hrefFor(tab: AccessTabId, requestId?: string): string;
+}
+
 export const accessApi = {
+  kind: 'user' as const,
+  hrefFor: (tab: AccessTabId, requestId?: string) => accessHref(tab, requestId),
   setup: () => api<AccessSetup>('/api/access/setup', { background: true }),
   install: (input: { projectId?: string; modelCredentialId?: string }) => api<AccessSetup>('/api/access/setup', { method: 'POST', json: input }),
   entries: () => api<{ items: AccessEntryView[]; people?: Person2[] }>('/api/access/entries', { background: true }),
@@ -227,7 +260,7 @@ function entryBody(draft: EntryDraft, admin = true) {
     enabled: draft.enabled,
   };
   if (!admin) return common;
-  return { ...common, system: draft.system, target: draft.target, credentialId: draft.credentialId || null };
+  return { ...common, outsideMayAsk: Boolean(draft.outsideMayAsk), system: draft.system, target: draft.target, credentialId: draft.credentialId || null };
 }
 
 /** The entry a sheet opens with. */
@@ -244,6 +277,7 @@ export function draftOf(entry?: AccessEntryView): EntryDraft {
     owners: [...entry.owners],
     eligibleUserIds: [...entry.eligibleUserIds],
     enabled: entry.enabled,
+    outsideMayAsk: Boolean((entry as CatalogEntry).outsideMayAsk),
   };
 }
 
@@ -263,3 +297,61 @@ export function useLoaded<T>(load: () => Promise<T>, deps: unknown[] = []) {
   }, [reload]);
   return { ...state, reload };
 }
+
+const ClientContext = createContext<AccessClient>(accessApi);
+/** The client the shared Access components call: `accessApi` unless a page provides another. */
+export const useAccessClient = (): AccessClient => useContext(ClientContext);
+export function AccessClientProvider({ client, children }: { client: AccessClient; children: ReactNode }) {
+  return createElement(ClientContext.Provider, { value: client }, children);
+}
+
+/** A person on a request or grant: a Landflow user, or (C36) an outside requester with the address and how it was verified. */
+export function requesterInfo(person: { id: string; name: string } | undefined): { outside: boolean; email?: string; verifiedBy?: 'email' | 'google'; verifiedText?: string } {
+  const p = person as ({ kind?: string; email?: string; verifiedBy?: 'email' | 'google' } & { id: string; name: string }) | undefined;
+  if (p?.kind !== 'outside') return { outside: false };
+  const verifiedText = p.verifiedBy === 'google' ? 'verified by Google sign-in' : p.verifiedBy === 'email' ? 'verified by email link' : undefined;
+  return { outside: true, ...(p.email && { email: p.email }), ...(p.verifiedBy && { verifiedBy: p.verifiedBy }), ...(verifiedText && { verifiedText }) };
+}
+
+/** Access → Settings (C36): who without a Landflow account may ask, and the requesters who signed in. */
+export interface OutsideSettingsView {
+  enabled: boolean;
+  domains: string[];
+  google: { enabled: boolean; credentialId?: string };
+  /** The page's address; the browser builds it from its own origin when the server doesn't say. */
+  link?: string;
+}
+export interface OutsideRequesterRow {
+  id: string;
+  email: string;
+  verifiedBy: 'email' | 'google';
+  createdAt: string;
+  lastSeenAt?: string | null;
+  openRequests: number;
+  liveGrants: number;
+  blocked: boolean;
+}
+
+/** An organization's own domains only: no wildcards, no public mail domains (the server refuses them too). */
+const PUBLIC_MAIL = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com', 'icloud.com', 'aol.com', 'proton.me', 'protonmail.com']);
+export function normalizeDomain(text: string): string | undefined {
+  const value = text.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^@/, '').replace(/\/+$/, '');
+  if (!/^(?=.{3,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/.test(value)) return undefined;
+  return PUBLIC_MAIL.has(value) ? undefined : value;
+}
+
+/** On needs a domain; Google on needs its credential. */
+export function canSwitchOutsideOn(draft: Pick<OutsideSettingsView, 'domains' | 'google'>): boolean {
+  return draft.domains.length > 0 && (!draft.google.enabled || Boolean(draft.google.credentialId));
+}
+
+/** The credentials the Google picker offers: OpenID Connect clients only. */
+export const oidcCredentials = (credentials: CredentialSummary[]): CredentialSummary[] => credentials.filter((c) => c.type === 'oidcClient' || c.type.endsWith('.oidcClient'));
+
+export const outsideAdminApi = {
+  settings: () => api<OutsideSettingsView>('/api/access/outside', { background: true }),
+  saveSettings: (settings: OutsideSettingsView) => api<OutsideSettingsView>('/api/access/outside', { method: 'PUT', json: { enabled: settings.enabled, domains: settings.domains, google: settings.google } }),
+  requesters: () => api<{ items: OutsideRequesterRow[] }>('/api/access/outside/requesters', { background: true }),
+  block: (id: string) => api<unknown>(`/api/access/outside/requesters/${id}/block`, { method: 'POST' }),
+  unblock: (id: string) => api<unknown>(`/api/access/outside/requesters/${id}/unblock`, { method: 'POST' }),
+};

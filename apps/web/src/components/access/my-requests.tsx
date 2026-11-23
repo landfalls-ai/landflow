@@ -6,10 +6,11 @@
 import { useState } from 'react';
 import { Inbox } from 'lucide-react';
 import { toast } from 'sonner';
-import { accessApi, useLoaded } from '@/lib/client/access';
+import { requesterInfo, useAccessClient, useLoaded } from '@/lib/client/access';
 import { durationText, requestState, type AccessRequestView } from '@/lib/shared/access';
 import { cn } from '@/lib/utils';
 import { Card } from '../shell/page-header';
+import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { StateBadge } from './state-badge';
@@ -25,7 +26,7 @@ export function untilText(until: string | null | undefined): string {
 function detail(request: AccessRequestView, state: ReturnType<typeof requestState>): string | undefined {
   if (state === 'denied') return request.decisions.find((d) => d.outcome === 'deny')?.comment || request.note || 'The approver said no.';
   if (state === 'failed') return request.grant?.lastError || request.note;
-  if (state === 'waiting') return `Waiting for ${request.approverNames.length ? request.approverNames.join(', ') : 'an approver'}`;
+  if (state === 'waiting') return `Waiting for ${request.approverNames?.length ? request.approverNames.join(', ') : 'an approver'}`;
   if (state === 'approved') return request.grant?.system === 'manual' ? 'Approved. Someone will set it up by hand.' : 'Approved.';
   if (state === 'granted') {
     const minutes = request.approvedMinutes === undefined ? request.durationMinutes : request.approvedMinutes;
@@ -36,7 +37,20 @@ function detail(request: AccessRequestView, state: ReturnType<typeof requestStat
   return request.note;
 }
 
-export function RequestRows({ requests, viewerId, highlight, onCancel, onGiveBack, onRetry }: { requests: AccessRequestView[]; viewerId: string; highlight?: string; onCancel: (request: AccessRequestView) => void; onGiveBack: (request: AccessRequestView) => void; onRetry?: (request: AccessRequestView) => void }) {
+/** The person a row names when it isn't the viewer's own: their name, and for an outside requester (C36) the badge, the address and how it was verified. */
+export function WhoLine({ person }: { person: { id: string; name: string } }) {
+  const info = requesterInfo(person);
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-t3">
+      <span>{info.outside && info.email ? info.email : person.name}</span>
+      {info.outside && <Badge tone="accent">Outside</Badge>}
+      {info.verifiedText && <span>{info.verifiedText}</span>}
+    </p>
+  );
+}
+
+/** `viewerId` is the viewer's own id; without it every row is theirs (the public page lists nobody else's). */
+export function RequestRows({ requests, viewerId, highlight, onCancel, onGiveBack, onRetry }: { requests: AccessRequestView[]; viewerId?: string; highlight?: string; onCancel: (request: AccessRequestView) => void; onGiveBack: (request: AccessRequestView) => void; onRetry?: (request: AccessRequestView) => void }) {
   if (requests.length === 0) {
     return (
       <Card>
@@ -49,7 +63,7 @@ export function RequestRows({ requests, viewerId, highlight, onCancel, onGiveBac
       {requests.map((request) => {
         const state = requestState(request);
         const text = detail(request, state);
-        const mine = request.requester.id === viewerId;
+        const mine = viewerId === undefined || request.requester.id === viewerId;
         return (
           <li key={request.id} id={`request-${request.id}`} className={cn('flex flex-wrap items-start gap-x-3 gap-y-2 rounded-2xl border bg-sf px-4 py-3', highlight && (highlight === request.id || highlight === request.grant?.id) ? 'border-ac' : 'border-hair')}>
             <div className="min-w-0 flex-1 basis-60">
@@ -58,7 +72,7 @@ export function RequestRows({ requests, viewerId, highlight, onCancel, onGiveBac
                 <StateBadge state={state} />
                 <span className="text-[12px] text-t3">{durationText(request.durationMinutes)}</span>
               </div>
-              {!mine && <p className="text-[12px] text-t3">{request.requester.name}</p>}
+              {!mine && <WhoLine person={request.requester} />}
               <p className="mt-0.5 text-[13px] text-t2 [overflow-wrap:anywhere]">{request.reason}</p>
               {text && <p className={cn('mt-1 text-[13px] [overflow-wrap:anywhere]', state === 'failed' || state === 'denied' ? 'text-rd' : 'text-t2')}>{text}</p>}
             </div>
@@ -74,8 +88,9 @@ export function RequestRows({ requests, viewerId, highlight, onCancel, onGiveBac
   );
 }
 
-export function RequestsView({ viewerId, highlight, tick }: { viewerId: string; highlight?: string; tick?: number }) {
-  const { data, error, reload } = useLoaded(() => accessApi.requests('mine'), [tick]);
+export function RequestsView({ viewerId, highlight, tick }: { viewerId?: string; highlight?: string; tick?: number }) {
+  const client = useAccessClient();
+  const { data, error, reload } = useLoaded(() => client.requests('mine'), [client, tick]);
   const [busy, setBusy] = useState(false);
   const run = async (work: () => Promise<unknown>, done: string) => {
     if (busy) return;
@@ -97,9 +112,9 @@ export function RequestsView({ viewerId, highlight, tick }: { viewerId: string; 
       requests={data.items}
       viewerId={viewerId}
       highlight={highlight}
-      onCancel={(r) => run(() => accessApi.cancel(r.id), 'Cancelled')}
-      onGiveBack={(r) => r.grant && run(() => accessApi.grantAction(r.grant!.id, 'revoke'), 'Given back')}
-      onRetry={(r) => r.grant && run(() => accessApi.grantAction(r.grant!.id, 'retry'), 'Tried again')}
+      onCancel={(r) => run(() => client.cancel(r.id), 'Cancelled')}
+      onGiveBack={(r) => r.grant && run(() => client.grantAction(r.grant!.id, 'revoke'), 'Given back')}
+      onRetry={(r) => r.grant && run(() => client.grantAction(r.grant!.id, 'retry'), 'Tried again')}
     />
   );
 }
