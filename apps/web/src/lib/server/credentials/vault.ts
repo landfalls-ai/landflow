@@ -453,6 +453,8 @@ export class CredentialVault {
 
   /** The credentials sealed with a project key: `[projectId, version]` per credential id (what must stay openable). */
   projectKeyUse(): Map<string, [string, number]> {
+    // Another process may have saved credentials into the shared file since this one read it (a sweep must see them).
+    this.reloadIfChanged();
     const use = new Map<string, [string, number]>();
     for (const credential of this.credentials.values()) {
       const dek = dekOf(credential.data);

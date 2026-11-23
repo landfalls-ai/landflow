@@ -184,10 +184,45 @@ describe.skipIf(!enabled)('project keys in Postgres, two processes', async () =>
     expect(fresh.dataFor({ id: 'cred_s1', name: 'x' }, 'core.httpHeaderAuth')).toMatchObject({ value: 'sweep-secret-1234567' });
   });
 
+  it('a retired key is stamped with Postgres’s clock, and it is deleted in one statement that refuses while a stored credential names it', async () => {
+    const a = vaultOn(main);
+    const keys = projectKeysOf(a);
+    home.set('cred_t1', 'prj_clock');
+    await a.ensureProjectKey('prj_clock');
+    await direct.query("INSERT INTO credentials (id, name, type, secret_fields, data, created_at, updated_at) VALUES ('cred_t1', 'T1', 'core.httpHeaderAuth', '[]', $1, 'x', 'x')", [JSON.stringify({ v: 3, dek: 'prj_clock.1', iv: 'x', tag: 'x', value: 'x' })]);
+    // This process's clock is a day wrong: the stamp must not follow it.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2020-01-01T00:00:00Z') });
+    try {
+      await a.projectKeys.addVersion('prj_clock');
+    } finally {
+      vi.useRealTimers();
+    }
+    const stamp = (await direct.query<{ near: boolean }>("SELECT (retired_at::timestamptz > now() - interval '1 minute') AS near FROM project_keys WHERE project_id = $1 AND version = 1", ['prj_clock'])).rows[0];
+    expect(stamp?.near).toBe(true);
+    // A credential naming version 1 that only Postgres knows about (another process wrote it a moment ago): nothing may delete it.
+    await direct.query("INSERT INTO credentials (id, name, type, secret_fields, data, created_at, updated_at) VALUES ('cred_late', 'Late', 'core.httpHeaderAuth', '[]', $1, 'x', 'x')", [JSON.stringify({ v: 3, dek: 'prj_clock.1', iv: 'x', tag: 'x', value: 'x' })]);
+    expect(await a.projectKeys.destroyDue('prj_clock', 1, 0)).toBe(0);
+    expect((await direct.query('SELECT 1 FROM project_keys WHERE project_id = $1 AND version = 1', ['prj_clock'])).rowCount).toBe(1);
+    // Inside the grace period it stays too; after it, with nothing naming it, it goes.
+    await direct.query("DELETE FROM credentials WHERE id IN ('cred_late', 'cred_t1')");
+    expect(await a.projectKeys.destroyDue('prj_clock', 1)).toBe(0);
+    expect(await a.projectKeys.destroyDue('prj_clock', 1, 0)).toBe(1);
+  });
+
+  it('revert waits for this process’s writes and counts what Postgres says is still on a project key', async () => {
+    const a = vaultOn(main, `${K2},${K1}`);
+    await direct.query("INSERT INTO credentials (id, name, type, secret_fields, data, created_at, updated_at) VALUES ('cred_other', 'Other', 'core.httpHeaderAuth', '[]', $1, 'x', 'x')", [JSON.stringify({ v: 3, dek: 'prj_pg.2', iv: 'x', tag: 'x', value: 'x' })]);
+    const result = await projectKeysOf(a).revert();
+    expect(result.onProjectKeys).toBeGreaterThanOrEqual(1);
+    expect(result.done).toBe(false);
+    await direct.query("DELETE FROM credentials WHERE id = 'cred_other'");
+    expect(await projectKeysOf(a).revert()).toMatchObject({ onProjectKeys: 0, done: true });
+  });
+
   it('revert in one process reaches Postgres as plain version 2 values the ring alone opens; migrate puts them back', async () => {
     const mainVault = vaultOn(main, `${K2},${K1}`);
     const keys = projectKeysOf(mainVault);
-    const reverted = keys.revert();
+    const reverted = await keys.revert();
     expect(reverted).toMatchObject({ failed: [], onProjectKeys: 0, done: true });
     await main.flush();
     const rows = (await direct.query<{ id: string; data: string }>('SELECT id, data FROM credentials')).rows;

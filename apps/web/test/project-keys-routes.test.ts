@@ -117,6 +117,24 @@ describe('what they do', () => {
   });
 });
 
+describe('the off switch', () => {
+  it('creating a credential through the route makes no project key while LANDFLOW_PROJECT_KEYS=off', async () => {
+    const fresh = projects.createTeamProject({ name: 'Switched off' });
+    const route = await import('@/app/api/credentials/route');
+    process.env.LANDFLOW_PROJECT_KEYS = 'off';
+    try {
+      const response = await route.POST(new Request(`http://localhost/api/credentials?projectId=${fresh.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Off', type: 'core.httpHeaderAuth', data: { name: 'X-Key', value: 'off-secret-12345678' } }) }));
+      expect(response.status).toBe(201);
+      const { credential } = (await response.json()) as { credential: { id: string } };
+      const id = credential.id;
+      expect(credentials.sealedWith(id)).toMatch(/^ring:/);
+      expect(database().all('SELECT 1 FROM project_keys WHERE project_id = ?', fresh.id)).toEqual([]);
+    } finally {
+      delete process.env.LANDFLOW_PROJECT_KEYS;
+    }
+  });
+});
+
 describe('audit posture (C31-D5)', () => {
   it('a credential save still works while audit is down: creating its project’s key is fail-open', () => {
     const fresh = projects.createTeamProject({ name: 'Audit down' });

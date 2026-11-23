@@ -29,6 +29,6 @@ export const POST = handler(async (request: Request) => {
   if (user.role !== 'owner') return error('Only the owner can move credentials between keys', 403);
   const body = await parseBody(request, z.object({ action: z.enum(['migrate', 'revert']) }));
   if (!body.ok) return body.response;
-  const result = body.data.action === 'migrate' ? await projectKeys.migrate((id) => Boolean(getProject(id))) : projectKeys.revert();
+  const result = body.data.action === 'migrate' ? await projectKeys.migrate((id) => Boolean(getProject(id))) : await projectKeys.revert();
   return json(result);
 });

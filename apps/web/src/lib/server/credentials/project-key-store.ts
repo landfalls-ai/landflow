@@ -79,6 +79,9 @@ export interface ProjectKeyStoreOptions {
   now?: () => number;
 }
 
+/** Stands for "Postgres's now" in `change`. */
+const NOW = '\u0000now';
+
 export class ProjectKeyStore {
   private readonly cache = new Map<string, { key: Buffer; at: number }>();
   private readonly ensuring = new Map<string, Promise<void>>();
@@ -295,6 +298,9 @@ export class ProjectKeyStore {
     }
   }
 
+  /** Postgres's clock as the ISO text `retired_at` holds, so a skewed process clock cannot shorten the grace period. */
+  private static readonly PG_NOW = `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
   /** Tell the other processes a row changed (they read it back from Postgres and drop what they cached). */
   private async notify(client: { query(text: string, values?: unknown[]): Promise<unknown> }, projectId: string, version: number) {
     const payload = this.db.keyNotice('project_keys', [projectId, version]);
@@ -308,15 +314,16 @@ export class ProjectKeyStore {
       await client.query('BEGIN');
       try {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`landflow:project-key:${projectId}`]);
-        const previous = (await client.query<{ version: string }>("UPDATE project_keys SET state = 'retired', retired_at = $2 WHERE project_id = $1 AND state = 'active' RETURNING version", [projectId, now])).rows[0];
+        const previous = (await client.query<{ version: string }>(`UPDATE project_keys SET state = 'retired', retired_at = ${ProjectKeyStore.PG_NOW} WHERE project_id = $1 AND state = 'active' RETURNING version`, [projectId])).rows[0];
         const version = Number((await client.query<{ v: string }>('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM project_keys WHERE project_id = $1', [projectId])).rows[0]!.v);
         const key = randomBytes(32);
         const row: ProjectKeyRow = { project_id: projectId, version, wrapped: this.wrap(projectId, version, key), state: 'active', created_at: now, retired_at: null };
         await client.query('INSERT INTO project_keys (project_id, version, wrapped, state, created_at, retired_at) VALUES ($1, $2, $3, $4, $5, NULL)', [row.project_id, row.version, row.wrapped, row.state, row.created_at]);
         await this.notify(client, projectId, version);
         if (previous) await this.notify(client, projectId, Number(previous.version));
+        const stamp = previous ? (await client.query<{ retired_at: string }>('SELECT retired_at FROM project_keys WHERE project_id = $1 AND version = $2', [projectId, Number(previous.version)])).rows[0]?.retired_at : undefined;
         await client.query('COMMIT');
-        return { row, key, previous: previous ? Number(previous.version) : undefined };
+        return { row, key, previous: previous ? Number(previous.version) : undefined, stamp };
       } catch (error) {
         await client.query('ROLLBACK').catch(() => undefined);
         throw error;
@@ -326,7 +333,7 @@ export class ProjectKeyStore {
       const done = await call;
       // Into this copy only: Postgres has them already.
       const old = done.previous === undefined ? undefined : this.rows(projectId).find((row) => row.version === done.previous);
-      if (old) this.db.upsertLocal('project_keys', { ...old, state: 'retired', retired_at: now });
+      if (old) this.db.upsertLocal('project_keys', { ...old, state: 'retired', retired_at: done.stamp ?? now });
       this.db.upsertLocal('project_keys', done.row);
       this.remember(projectId, done.row.version, done.key);
       return { version: done.row.version, ...(done.previous !== undefined && { previous: done.previous }) };
@@ -353,7 +360,7 @@ export class ProjectKeyStore {
   private async change(projectId: string, version: number, set: Partial<Pick<ProjectKeyRow, 'state' | 'retired_at' | 'wrapped'>>, where: { state?: ProjectKeyState; wrapped?: string } = {}): Promise<ProjectKeyRow | undefined> {
     const call = this.direct(async (client) => {
       const values: unknown[] = [projectId, version];
-      const assign = Object.entries(set).map(([column, value]) => (values.push(value), `${column} = $${values.length}`));
+      const assign = Object.entries(set).map(([column, value]) => (column === 'retired_at' && value === NOW ? `retired_at = ${ProjectKeyStore.PG_NOW}` : (values.push(value), `${column} = $${values.length}`)));
       const guard = Object.entries(where).map(([column, value]) => (values.push(value), `${column} = $${values.length}`));
       const updated = await client.query<ProjectKeyRow>(`UPDATE project_keys SET ${assign.join(', ')} WHERE project_id = $1 AND version = $2${guard.map((g) => ` AND ${g}`).join('')} RETURNING *`, values);
       if (updated.rows[0]) await this.notify(client, projectId, version);
@@ -364,7 +371,7 @@ export class ProjectKeyStore {
       if (row) this.db.upsertLocal('project_keys', normalize(row));
       return row && normalize(row);
     }
-    return this.changeLocal(projectId, version, set, where);
+    return this.changeLocal(projectId, version, set.retired_at === NOW ? { ...set, retired_at: new Date().toISOString() } : set, where);
   }
 
   /** The SQLite form of `change`: look for the row and change only the named columns, in one transaction. */
@@ -380,7 +387,7 @@ export class ProjectKeyStore {
 
   /** Retire one version (nothing new is sealed with it; what names it still opens). A retired or missing row is left alone. */
   retire(projectId: string, version: number): Promise<unknown> {
-    return this.change(projectId, version, { state: 'retired', retired_at: new Date().toISOString() }, { state: 'active' });
+    return this.change(projectId, version, { state: 'retired', retired_at: NOW }, { state: 'active' });
   }
 
   /** Retire every active version of a project. */
@@ -407,6 +414,33 @@ export class ProjectKeyStore {
       this.forget(projectId);
     }
     return gone;
+  }
+
+  /**
+   * Delete one retired version only if it has been retired for `graceMs` by Postgres's clock and no stored credential names it,
+   * both decided inside the one DELETE (a credential written by another process a moment ago is seen). SQLite: this process's
+   * clock and rows. Returns how many went (0 or 1).
+   */
+  async destroyDue(projectId: string, version: number, graceMs = KEY_DESTROY_GRACE_MS): Promise<number> {
+    const call = this.direct(async (client) => {
+      const deleted = await client.query(
+        `DELETE FROM project_keys WHERE project_id = $1 AND version = $2 AND state = 'retired' AND retired_at IS NOT NULL
+           AND retired_at::timestamptz <= now() - make_interval(secs => $3::float8 / 1000.0)
+           AND NOT EXISTS (SELECT 1 FROM credentials WHERE strpos(data, '"dek":"' || $1 || '.' || $2::text || '"') > 0)`,
+        [projectId, version, graceMs],
+      );
+      if (deleted.rowCount) await this.notify(client, projectId, version);
+      return deleted.rowCount ?? 0;
+    });
+    const n = call
+      ? await call
+      : this.db.transaction(() => {
+          const row = this.rows(projectId).find((r) => r.version === version);
+          return row && row.state === 'retired' && row.retired_at && Date.parse(row.retired_at) <= Date.now() - graceMs ? this.db.delete('project_keys', { project_id: projectId, version }) : 0;
+        });
+    if (n) this.db.delete('project_keys', { project_id: projectId, version });
+    this.forget(projectId);
+    return n;
   }
 
   /** Re-wrap every key whose wrap names another ring key than the primary, keeping each row's version and AAD; one conditional change per row (Postgres: a conditional UPDATE naming only that column; SQLite: the row just read, in a transaction), only if the row still holds the wrap that was read. */

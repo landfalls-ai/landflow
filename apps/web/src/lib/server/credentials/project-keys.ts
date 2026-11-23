@@ -173,7 +173,7 @@ export function projectKeysOf(vault: CredentialVault) {
     },
 
     /** Every credential back onto the ring's primary key as version 2 (before a downgrade to a host without project keys). Keys are kept. Fail-closed audit. */
-    revert(): ResealResult & { onProjectKeys: number; done: boolean } {
+    async revert(): Promise<ResealResult & { onProjectKeys: number; done: boolean }> {
       const input = (result: (ResealResult & { onProjectKeys: number }) | undefined): AuditInput => ({
         action: 'encryption.project_key.reverted',
         target: { type: 'settings', id: 'encryption', name: 'Encryption key' },
@@ -182,7 +182,10 @@ export function projectKeysOf(vault: CredentialVault) {
       });
       if (auditFailClosed()) recordAudit(input(undefined), { required: true });
       const done = resealEach(vault, vault.sealedWithAll().map((c) => c.id), 'ring');
-      const onProjectKeys = vault.projectKeyUse().size;
+      // This process's own writes must have reached Postgres before it is asked what still names a project key.
+      const named = new Set([...vault.projectKeyUse().values()].map(([project, version]) => `${project}:${version}`));
+      for (const id of (await store().namedInDatabase()) ?? []) named.add(id);
+      const onProjectKeys = named.size;
       const result = { ...done, onProjectKeys };
       if (!auditFailClosed()) recordAudit(input(result));
       return { ...result, done: done.failed.length === 0 && onProjectKeys === 0 };
@@ -217,7 +220,7 @@ export function projectKeysOf(vault: CredentialVault) {
           details: { count: result?.length ?? due.length, keys: due.map((row) => `${row.project_id}:${row.version}`).join(',') },
         }),
         async () => {
-          for (const row of due) if (await store().destroy(row.project_id, [row.version])) gone.push(`${row.project_id}:${row.version}`);
+          for (const row of due) if (await store().destroyDue(row.project_id, row.version, KEY_DESTROY_GRACE_MS - (nowMs - Date.now()))) gone.push(`${row.project_id}:${row.version}`);
           return gone;
         },
       );

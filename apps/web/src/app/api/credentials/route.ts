@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { JsonObject } from '@landflow/protocol';
 import { credentials } from '@/lib/server/credentials/vault';
+import { envFlag } from '@/lib/server/config';
 import { handler, json, parseBody } from '@/lib/server/http';
 import { defaultProjectId, homeProjectId, usableCredentialIds, visibleIds, withOwnership } from '@/lib/server/projects';
 import { createIn, forgetDeleted, projectParam, routeActor, targetProject } from '@/lib/server/projects/http';
@@ -52,7 +53,8 @@ export const POST = handler(async (request: Request) => {
   const id = credentials.newId();
   const project = targetProject(request);
   // The project's key is made (in Postgres, in queue mode) before the credential is sealed with it.
-  await credentials.ensureProjectKey(project ?? defaultProjectId() ?? '').catch(() => undefined);
+  // (LANDFLOW_PROJECT_KEYS=off: no project key is made, nothing is sealed with one.)
+  if (envFlag('LANDFLOW_PROJECT_KEYS', true)) await credentials.ensureProjectKey(project ?? defaultProjectId() ?? '').catch(() => undefined);
   const credential = createIn(project, 'credential', () => credentials.create({ ...body.data, data: body.data.data as JsonObject }, { id, actor: routeActor().id }), (c) => c.id, id);
   // Ids, names and the type only: never the data. The id exists only once it is created, so in fail-closed mode a
   // credential whose event can't be stored is deleted again (the credentials file is no transaction).

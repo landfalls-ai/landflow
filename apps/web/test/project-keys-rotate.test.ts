@@ -205,8 +205,21 @@ describe('migrate and revert', () => {
     expect(status.projects.find((p) => p.projectId === 'prj_rot_5')).toMatchObject({ active: 2, retired: [] });
   });
 
-  it('revert puts every credential back on the ring’s primary key as version 2, and the ring alone opens them', () => {
-    const result = projectKeys.revert();
+  it('rotateEncryption called without a project keys result refuses on Postgres instead of reporting a rotation that skipped them', () => {
+    const db = database();
+    const real = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(db), 'kind') ?? Object.getOwnPropertyDescriptor(db, 'kind');
+    Object.defineProperty(db, 'kind', { value: 'postgres', configurable: true });
+    try {
+      expect(() => rotateEncryption()).toThrow(/rotateEncryptionAll/);
+      expect(() => rotateEncryption({ projectKeys: { rewrapped: 0, current: 0, failed: [] } })).not.toThrow();
+    } finally {
+      delete (db as unknown as Record<string, unknown>).kind;
+      if (real && !Object.getOwnPropertyDescriptor(db, 'kind')) Object.defineProperty(db, 'kind', real);
+    }
+  });
+
+  it('revert puts every credential back on the ring’s primary key as version 2, and the ring alone opens them', async () => {
+    const result = await projectKeys.revert();
     expect(result).toMatchObject({ failed: [], onProjectKeys: 0, done: true });
     expect(result.resealed).toBe(COUNT + OLD);
     const rows = [...credentialRows().values()].map((data) => JSON.parse(data) as { v: number; kid: string; dek?: string });
@@ -216,6 +229,6 @@ describe('migrate and revert', () => {
     const stored = JSON.parse(credentialRows().get('cred_rot_9')!);
     expect(JSON.parse(ring.openWith(ringOnly, stored, 'landflow:credential:cred_rot_9'))).toMatchObject({ value: 'secret-value-9-padding' });
     // Idempotent.
-    expect(projectKeys.revert()).toMatchObject({ resealed: 0, done: true });
+    expect(await projectKeys.revert()).toMatchObject({ resealed: 0, done: true });
   });
 });

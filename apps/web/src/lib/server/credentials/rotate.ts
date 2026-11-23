@@ -94,6 +94,12 @@ export async function rotateEncryptionAll(): Promise<RotationResult> {
   return rotateEncryption({ projectKeys: await projectKeys.rewrapAll() });
 }
 
+function postgresNeedsAsync(): RewrapResult {
+  // Project keys in Postgres can only be re-wrapped by waiting for the database: a caller that did not do it must not report a root rotation that skipped them.
+  if (database().kind === 'postgres') throw new Error('Project keys were not re-wrapped: on Postgres call rotateEncryptionAll() (it waits for the database)');
+  return projectKeys.rewrapAllNow();
+}
+
 /**
  * Re-seal every stored sealed value with the primary key. Idempotent; call it with the new ring on every process. Project keys are
  * re-wrapped here only without Postgres (`rotateEncryptionAll` does it where that has to wait): pass their result when the caller did.
@@ -108,7 +114,7 @@ export function rotateEncryption(options: { projectKeys?: RewrapResult } = {}): 
   };
 
   // C31: project keys first: they are re-wrapped, and the credentials sealed with them are left as they are.
-  result.projectKeys = options.projectKeys ?? (database().kind === 'postgres' ? { rewrapped: 0, current: 0, failed: [] } : projectKeys.rewrapAllNow());
+  result.projectKeys = options.projectKeys ?? postgresNeedsAsync();
   result.failed.push(...result.projectKeys.failed.map((id) => `project_keys:${id}`));
 
   const creds = credentials.rotateCredentials();
