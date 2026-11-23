@@ -48,7 +48,7 @@ export class Deck implements INodeType {
       { name: 'task', displayName: 'Task', type: 'string', default: '', required: true, typeOptions: { rows: 6 }, description: 'What the unit should do. Sent as is, up to 1 MiB' },
       { name: 'agent', displayName: 'Agent', type: 'string', default: '', placeholder: 'claude', description: 'The deck agent to run: claude, opencode, pi, codex or devin. Empty uses the pane\'s own' },
       { name: 'command', displayName: 'Command', type: 'string', default: '', description: 'The command the unit\'s agent starts with. Off unless LANDFLOW_DECK_ALLOW_COMMAND=1 is set where the plugin runs, because it runs as you' },
-      { name: 'dir', displayName: 'Directory', type: 'string', default: '', placeholder: '/Users/me/project', description: 'An existing absolute directory to start in instead of a new worktree' },
+      { name: 'dir', displayName: 'Directory', type: 'string', default: '', placeholder: '/path/to/project', description: 'An existing absolute directory to start in instead of a new worktree' },
       {
         name: 'reportTo',
         displayName: 'Report To',

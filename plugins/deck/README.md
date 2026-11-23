@@ -49,8 +49,7 @@ Can a plain deck pane read its inbox? **Yes, with a caveat that only a live run 
   `DOT_AGENT_DECK_PANE_CAPABILITY` at spawn; `inbox_cli.rs:29-46`). A plugin started from that pane's shell inherits them and sits
   inside the pane's process tree, which the daemon requires to hand over mail (`daemon.rs` `mail_taker_admitted`). So a plugin
   started in a deck pane can read the pane's inbox. Outside a pane the CLI prints "should be run from within a dot-agent-deck
-  managed pane" and the node fails with "run the deck plugin from a deck pane". What was **not** proven: the source was read, the
-  real deck was not available to run it against (see the history row's live check).
+  managed pane" and the node fails with "run the deck plugin from a deck pane". What was **not** proven: the deck binary was not installed on the machine where this was built, so it has been checked against a fake only (the tests, and a run on a scratch host with the fake standing in for the binary). Run one real dispatch before relying on it.
 - **(b) The JSON of `inbox fetch --json`.** One line, `{"messages":[{"id","subject","from","text"}]}`, each message handed over once.
 - **(c) The words.** Dispatch's reply opens `dispatch: spawned isolated` (a refusal opens `dispatch:` with anything else); the
   completion opens `dispatch: a unit you dispatched has completed`, its sender label is `the dispatch of "<unit>"`, and the report
