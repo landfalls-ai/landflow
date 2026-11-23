@@ -2139,6 +2139,12 @@ export const MIGRATIONS: Migration[] = [
     ],
     addColumns: [{ table: 'users', column: 'custom_role_id', definition: 'TEXT' }],
   },
+  // C31: a data key per project for its credentials, wrapped by the key ring (docs/features/secrets-and-environments.md#project-keys); `state` is active (at most one per project) or retired, `wrapped` a v2 sealed string
+  {
+    version: 2932,
+    name: 'project_keys',
+    statements: [`CREATE TABLE IF NOT EXISTS project_keys (project_id TEXT NOT NULL, version BIGINT NOT NULL, wrapped TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL, retired_at TEXT, PRIMARY KEY (project_id, version))`],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2300,6 +2306,7 @@ export const TABLES = {
   knowledge_source_items: ['source_id', 'item_key'], // C22:
   knowledge_sync_runs: ['id'], // C22:
   custom_roles: ['id'], // C32:
+  project_keys: ['project_id', 'version'], // C31:
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

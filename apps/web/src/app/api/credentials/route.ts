@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import type { JsonObject } from '@landflow/protocol';
 import { credentials } from '@/lib/server/credentials/vault';
+import { envFlag } from '@/lib/server/config';
 import { handler, json, parseBody } from '@/lib/server/http';
-import { homeProjectId, usableCredentialIds, visibleIds, withOwnership } from '@/lib/server/projects';
-import { createInProject, forgetDeleted, projectParam, routeActor } from '@/lib/server/projects/http';
+import { defaultProjectId, homeProjectId, usableCredentialIds, visibleIds, withOwnership } from '@/lib/server/projects';
+import { createIn, forgetDeleted, projectParam, routeActor, targetProject } from '@/lib/server/projects/http';
 import { credentialRateLimitSchema } from '@/lib/server/schemas';
 import { store } from '@/lib/server/store';
 import { credentialIdsIn } from '@/lib/server/agents/credential-scope';
@@ -48,7 +49,13 @@ export const POST = handler(async (request: Request) => {
   const body = await parseBody(request, z.object({ name: z.string().max(120).default(''), type: z.string().min(3), data: z.record(z.string(), z.unknown()).default({}), rateLimit: credentialRateLimitSchema.nullable().optional() }));
   if (!body.ok) return body.response;
   // ?projectId= puts it in a project (the caller must be an editor there); else the caller's personal project.
-  const credential = createInProject(request, 'credential', () => credentials.create({ ...body.data, data: body.data.data as JsonObject }, { actor: routeActor().id }), (c) => c.id);
+  // The id is chosen first so the credential's project is recorded before it is sealed: the project's key seals it (C31).
+  const id = credentials.newId();
+  const project = targetProject(request);
+  // The project's key is made (in Postgres, in queue mode) before the credential is sealed with it.
+  // (LANDFLOW_PROJECT_KEYS=off: no project key is made, nothing is sealed with one.)
+  if (envFlag('LANDFLOW_PROJECT_KEYS', true)) await credentials.ensureProjectKey(project ?? defaultProjectId() ?? '').catch(() => undefined);
+  const credential = createIn(project, 'credential', () => credentials.create({ ...body.data, data: body.data.data as JsonObject }, { id, actor: routeActor().id }), (c) => c.id, id);
   // Ids, names and the type only: never the data. The id exists only once it is created, so in fail-closed mode a
   // credential whose event can't be stored is deleted again (the credentials file is no transaction).
   try {
