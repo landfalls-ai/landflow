@@ -53,8 +53,16 @@ function mailSink(): Promise<{ port: number; messages: string[]; close: () => vo
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ port: (server.address() as { port: number }).port, messages, close: () => { for (const s of sockets) s.destroy(); server.close(); } })));
 }
 
-/** The sign-in link in a mail: soft line breaks undone. */
-const linkIn = (message: string | undefined): string | undefined => message?.replace(/=\r?\n/g, '').match(/https?:\/\/[^\s"<>]+\/request-access#t=[A-Za-z0-9_-]+/)?.[0];
+/** The mail's body as text: the host's mailer sends base64 (or quoted-printable); the sink keeps the raw message. */
+const bodyOf = (message: string | undefined): string => {
+  if (!message) return '';
+  const [head = '', ...rest] = message.split(/\r?\n\r?\n/);
+  const body = rest.join('\n\n').replace(/\r?\n\.\r?\n?$/, '');
+  return /content-transfer-encoding:\s*base64/i.test(head) ? Buffer.from(body.replace(/\s+/g, ''), 'base64').toString('utf8') : body;
+};
+
+/** The sign-in link in a mail: decoded, soft line breaks undone. */
+const linkIn = (message: string | undefined): string | undefined => bodyOf(message).replace(/=\r?\n/g, '').match(/https?:\/\/[^\s"<>]+\/request-access#t=[A-Za-z0-9_-]+/)?.[0];
 
 test.describe.configure({ mode: 'serial' });
 
@@ -70,7 +78,8 @@ test.beforeAll(async ({}, testInfo) => {
   entryName = `Figma seat ${size}`;
   sink = await mailSink();
   const issuer = await google.start();
-  host = await startScratchHost({ env: { LANDFLOW_SMTP_HOST: '127.0.0.1', LANDFLOW_SMTP_PORT: String(sink.port), LANDFLOW_SMTP_IGNORE_TLS: 'true', LANDFLOW_SMTP_FROM: 'Landflow <landflow@localhost>', LANDFLOW_TRUSTED_PROXIES: '0', LANDFLOW_ACCESS_OUTSIDE_DEV_OIDC: 'true' } });
+  // The tier's shared dev host holds Next's one dev lock, so this host runs the production build (`pnpm build` first).
+  host = await startScratchHost({ prod: true, env: { LANDFLOW_REGISTRY_OPEN: 'true', LANDFLOW_SMTP_HOST: '127.0.0.1', LANDFLOW_SMTP_PORT: String(sink.port), LANDFLOW_SMTP_IGNORE_TLS: 'true', LANDFLOW_SMTP_FROM: 'Landflow <landflow@localhost>', LANDFLOW_TRUSTED_PROXIES: '0', LANDFLOW_ACCESS_OUTSIDE_DEV_OIDC: 'true' } });
   const origin = host.url;
   const probe = await fetch(`${origin}/request-access/api/config`).catch(() => undefined);
   missing = !probe || probe.status === 404 && !(await probe.clone().text()).includes('enabled');
@@ -87,10 +96,11 @@ test.beforeAll(async ({}, testInfo) => {
   // A closed entry: outsiders must not see it.
   await admin.post('/api/access/entries', { data: { name: `Closed ${size}`, durations: [60], approverIds: [me.user.id], owners: [me.user.id], eligibleUserIds: [], enabled: true, outsideMayAsk: false, system: 'manual', target: {}, credentialId: null } });
   // The fake's client takes this host's callback; its Workspace accounts.
-  await fetch(`${issuer}/_fake/clients`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientId: GOOGLE_OIDC_CLIENT_ID, clientSecret: GOOGLE_OIDC_CLIENT_SECRET, redirectUris: [`${origin}/request-access/api/sign-in/google/callback`] }) });
-  await fetch(`${issuer}/_fake/accounts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'dana@partner.test', name: 'Dana Partner', hd: 'partner.test', emailVerified: true }) });
-  const credential = await admin.post('/api/credentials', { data: { name: 'Fake Google', type: 'oidcClient', data: { issuer, clientId: GOOGLE_OIDC_CLIENT_ID, clientSecret: GOOGLE_OIDC_CLIENT_SECRET } } });
-  const credentialId = credential.status() < 300 ? ((await credential.json()) as { id?: string }).id : undefined;
+  await fetch(`${issuer}/_fake/clients`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_id: GOOGLE_OIDC_CLIENT_ID, client_secret: GOOGLE_OIDC_CLIENT_SECRET, redirect_uris: [`${origin}/request-access/api/sign-in/google/callback`] }) });
+  await fetch(`${issuer}/_fake/accounts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'dana@partner.test', name: 'Dana Partner', hd: 'partner.test', email_verified: true }) });
+  const credential = await admin.post('/api/credentials', { data: { name: 'Fake Google', type: 'core.oidcClient', data: { issuer, clientId: GOOGLE_OIDC_CLIENT_ID, clientSecret: GOOGLE_OIDC_CLIENT_SECRET } } });
+  expect(credential.status(), await credential.text()).toBeLessThan(300);
+  const credentialId = credential.status() < 300 ? ((await credential.json()) as { credential?: { id?: string } }).credential?.id : undefined;
   const saved = await admin.put('/api/access/outside', { data: { enabled: true, domains: ['partner.test'], google: credentialId ? { enabled: true, credentialId } : { enabled: false } } });
   expect(saved.status()).toBeLessThan(300);
 });
@@ -131,15 +141,19 @@ test('an outsider signs in by link, asks, is approved, and gives it back', async
     const link = linkIn(sink!.messages.at(-1))!;
 
     // The link waits for Continue; the fragment is gone afterwards.
+    // A mail link opens in a fresh load (a goto that only changes the hash would not reload the page).
+    await page.goto('about:blank');
     await page.goto(link);
     await expect(page.getByTestId('outside-verify')).toBeVisible();
+    // Whose link it is, masked, before it is used.
+    await expect(page.getByTestId('outside-continue')).toContainText(`Continue as ${email[0]}•••@partner.test`);
     await page.getByTestId('outside-continue').click();
     await expect(page.getByTestId('outside-sign-out')).toBeVisible({ timeout: 20_000 });
     expect(page.url()).not.toContain('#t=');
     // The same link again is spent.
     const again = await context.newPage();
+    // The page asks whose link it is before offering Continue, so a spent link is told at once.
     await again.goto(link);
-    await again.getByTestId('outside-continue').click();
     await expect(again.getByText('expired or was already used')).toBeVisible();
     await again.close();
 
