@@ -66,7 +66,7 @@ export function EditorLogs() {
     if (running) setOpen(true);
   }, [running]);
 
-  const nodes = useMemo(() => Object.fromEntries(flowNodes.map((n) => [n.id, { name: n.data.wf.name, type: n.data.wf.type } satisfies LogsNode])), [flowNodes]);
+  const nodes = useMemo(() => Object.fromEntries(flowNodes.map((n) => [n.id, { name: n.data.wf.name, type: n.data.wf.type, parameters: n.data.wf.parameters } satisfies LogsNode])), [flowNodes]);
   const pending = useMemo<LogsPending[]>(
     () =>
       Object.entries(statuses)

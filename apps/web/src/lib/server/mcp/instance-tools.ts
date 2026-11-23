@@ -9,7 +9,7 @@ import { governedSave } from '../governance/saves';
 import { currentActorId } from '../auth/context';
 import { z } from 'zod';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
-import type { JsonObject, NodeItem } from '@landflow/protocol';
+import { DECIDE_OUTPUTS_NOTE, type JsonObject, type NodeItem } from '@landflow/protocol';
 import type { Workflow } from '@landflow/engine';
 import type { ExecutionRecord, ExecutionSummary, NodeTypeInfo } from '../../shared/types';
 import { PARAMETER_FORMATS } from '../flow-builder';
@@ -39,7 +39,7 @@ import { registerProjectTools } from './project-tools'; // PC10
 import { registerDebugTools } from './debug-tools';
 import { listAgentUpdates } from '../assistant/publish-tools'; // AG21:
 import { registerRunLogTool } from './run-log-tool'; // AG20:
-import { normalizeWorkflow, validateWorkflow, type WorkflowInput } from './workflows';
+import { normalizeWorkflow, remapOutputConnections, validateWorkflow, type WorkflowInput } from './workflows';
 
 const INSTRUCTIONS = `Landflow is an n8n-like workflow platform. A workflow is a graph of nodes: a trigger starts it, items (JSON objects) flow along "main" connections from left to right, and each node processes the items it gets.
 
@@ -291,13 +291,20 @@ export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: read
       if (refused) return refused;
       const defined = Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined));
       let merged: Record<string, unknown> = { ...existing, ...defined };
+      let droppedConnections: string[] = [];
       if (changes.nodes || changes.connections) {
         merged = normalizeWorkflow({ ...merged, nodes: (changes.nodes ?? existing.nodes) as WorkflowInput['nodes'], connections: changes.connections ?? existing.connections } as WorkflowInput, existing);
+        // Nodes without connections: a Decide whose options changed keeps each connection on its option.
+        if (changes.nodes && !changes.connections) {
+          const remapped = remapOutputConnections(existing, merged.nodes as Parameters<typeof remapOutputConnections>[1]);
+          merged = { ...merged, connections: remapped.connections };
+          droppedConnections = remapped.dropped;
+        }
       }
       const parsed = workflowSchema.safeParse(merged);
       if (!parsed.success) return failure(`Invalid workflow: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
       const { workflow: saved, extras } = governedSave({ ...existing, ...parsed.data, id } as Workflow, existing, (w) => store.saveWorkflow(w), { by: currentActorId(), source: 'mcp' });
-      return json({ id: saved.id, name: saved.name, active: Boolean(saved.active), url: workflowUrl(saved.id), validation: validateWorkflow(saved), ...extras });
+      return json({ id: saved.id, name: saved.name, active: Boolean(saved.active), url: workflowUrl(saved.id), validation: validateWorkflow(saved), ...(droppedConnections.length && { droppedConnections }), ...extras });
     },
   );
 
@@ -390,6 +397,7 @@ export function instanceServer(actor?: Actor, scope?: McpScope, keyScopes?: read
         version: descriptor.version,
         inputs: descriptor.inputs,
         outputs: descriptor.outputs,
+        ...(descriptor.outputs.some((p) => p.expand) && { outputsFollow: DECIDE_OUTPUTS_NOTE }),
         ...(descriptor.credentials?.length && { credentials: descriptor.credentials }),
         ...(descriptor.toolDescription && { toolDescription: descriptor.toolDescription }),
         ...(descriptor.outputSchema && { outputSchema: descriptor.outputSchema }),

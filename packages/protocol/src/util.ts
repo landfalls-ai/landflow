@@ -1,3 +1,4 @@
+import { decideRouting } from './decide';
 import type { NodeDescriptor, PortDescriptor } from './types';
 
 /** "go-crypto" + "hash" → "go-crypto.hash" */
@@ -30,12 +31,21 @@ export function mainPorts(ports: PortDescriptor[]): PortDescriptor[] {
  */
 export function indexedPorts(ports: PortDescriptor[], parameters: Record<string, unknown> = {}): Array<{ port: PortDescriptor; index: number; visible: boolean }> {
   const counters: Record<string, number> = {};
-  return ports.map((port) => ({ port, index: (counters[port.type] = (counters[port.type] ?? -1) + 1), visible: isPropertyVisible(port, parameters) }));
+  return expandPorts(ports, parameters).map((port) => ({ port, index: (counters[port.type] = (counters[port.type] ?? -1) + 1), visible: isPropertyVisible(port, parameters) }));
+}
+
+/** A port with `expand` becomes the ports its rule gives for `parameters` (the Decide node's outputs follow its options). */
+export function expandPorts(ports: PortDescriptor[], parameters: Record<string, unknown> = {}): PortDescriptor[] {
+  return ports.flatMap((port) => {
+    if (port.expand !== 'decide') return [port];
+    const { expand: _rule, ...rest } = port;
+    return decideRouting(parameters).labels.map((displayName) => ({ ...rest, displayName }));
+  });
 }
 
 /** The ports `parameters` show. */
 export function visiblePorts(ports: PortDescriptor[], parameters: Record<string, unknown> = {}): PortDescriptor[] {
-  return ports.filter((port) => isPropertyVisible(port, parameters));
+  return expandPorts(ports, parameters).filter((port) => isPropertyVisible(port, parameters));
 }
 
 /**

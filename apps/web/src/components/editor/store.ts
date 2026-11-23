@@ -19,7 +19,7 @@ import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge
 import { nanoid } from 'nanoid';
 import { toast } from 'sonner'; // AG17:
 import { create } from 'zustand';
-import { defaultParameters, defaultVersionOf, portParameters, withPropertyDefaults } from '@landflow/protocol';
+import { defaultParameters, defaultVersionOf, decideQuestions, decideRoutingFinished, expandPorts, portParameters, remapExpandedConnections, withPropertyDefaults } from '@landflow/protocol';
 import type { NodeProgress } from '@/lib/client/node-progress';
 import { edgeCountsOf, statusesOf, waitSummary, withWaiting, type NodeStatus, type WaitInfo } from '@/lib/client/run-data';
 import type { FlowTemplate } from '@/lib/client/templates';
@@ -462,6 +462,9 @@ function writeBreakpoints(workflowId: string, ids: string[]) {
   } catch {}
 }
 
+/** Per node, the last parameters whose routing was finished (see updateNode): what its connections' output numbers match. */
+const finishedParameters = new Map<string, Record<string, unknown>>();
+
 export const useEditor = create<EditorState>((set, get) => {
   /**
    * Save the canvas as an undo step before an edit. Edits with the same `key` within `windowMs` share one step (a drag,
@@ -604,6 +607,7 @@ export const useEditor = create<EditorState>((set, get) => {
   ...emptyRun,
 
   load(workflow, nodeTypes) {
+    finishedParameters.clear();
     Object.assign(history, { past: [], future: [], last: undefined, batch: 0, dragging: false, resizing: false, saved: '', stored: '' });
     set({
       workflowId: workflow.id,
@@ -792,7 +796,8 @@ export const useEditor = create<EditorState>((set, get) => {
         position = { x: anchor.position.x + siblings * 110, y: anchor.position.y + Math.max(190, (anchor.measured?.height ?? 0) + SUBNODE_CLEARANCE) };
       } else {
         // Next step: one column to the right, branches fanned out by output index.
-        const outputs = state.nodeTypes[anchor.data.wf.type]?.descriptor.outputs.filter((p) => p.type === 'main').length ?? 1;
+        const anchorType = state.nodeTypes[anchor.data.wf.type];
+        const outputs = anchorType ? expandPorts(anchorType.descriptor.outputs, anchor.data.wf.parameters).filter((p) => p.type === 'main').length : 1;
         position = { x: anchor.position.x + 260, y: anchor.position.y + (handle.index - (outputs - 1) / 2) * 150 };
       }
     }
@@ -1000,10 +1005,33 @@ export const useEditor = create<EditorState>((set, get) => {
 
   updateNode(id, patch) {
     record(`node:${id}`, 1500);
-    set((s) => ({
-      nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { wf: { ...n.data.wf, ...patch } } } : n)),
-      dirty: true,
-    }));
+    set((s) => {
+      const node = s.nodes.find((n) => n.id === id);
+      let edges = s.edges;
+      if (node && patch.parameters && s.nodeTypes[node.data.wf.type]?.descriptor.outputs.some((p) => p.expand)) {
+        // The question being routed by was renamed (a keystroke in its Name): Route By follows it in the same change.
+        const was = decideQuestions(node.data.wf.parameters.questions);
+        const now = decideQuestions(patch.parameters.questions);
+        const route = String(node.data.wf.parameters.routeBy ?? '').trim();
+        const renamed = route && was.length === now.length ? now.find((q, i) => String(was[i].name ?? '').trim() === route && String(q.name ?? '').trim() !== route) : undefined;
+        if (renamed && patch.parameters.routeBy === node.data.wf.parameters.routeBy) patch = { ...patch, parameters: { ...patch.parameters, routeBy: String(renamed.name ?? '').trim() } };
+        // A node whose outputs follow its parameters (Decide): a connection stays on the output of the same name when the
+        // options change. While the routing is unfinished (half-typed name, cleared options) nothing moves: the next
+        // finished state is compared with the last finished one, which the connections still match.
+        if (decideRoutingFinished(patch.parameters!)) {
+          const base = finishedParameters.get(id) ?? node.data.wf.parameters;
+          const mine = (e: FlowEdge) => e.source === id && (e.data?.connectionType ?? 'main') === 'main';
+          const indexOf = (e: FlowEdge) => Number((e.sourceHandle ?? 'main:0').split(':')[1] ?? 0);
+          const moved = remapExpandedConnections(base, patch.parameters!, s.edges.filter(mine).map((e) => ({ edge: e, sourceIndex: indexOf(e) })));
+          const kept = new Map(moved.map((m) => [m.edge.id, `main:${m.sourceIndex}`]));
+          edges = s.edges.flatMap((e) => (!mine(e) ? [e] : kept.has(e.id) ? [{ ...e, sourceHandle: kept.get(e.id) }] : []));
+          finishedParameters.set(id, patch.parameters!);
+        } else if (!finishedParameters.has(id) && decideRoutingFinished(node.data.wf.parameters)) {
+          finishedParameters.set(id, node.data.wf.parameters);
+        }
+      }
+      return { nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { wf: { ...n.data.wf, ...patch } } } : n)), edges, dirty: true };
+    });
   },
 
   renameNode(id, name) {
@@ -1215,6 +1243,7 @@ export const useEditor = create<EditorState>((set, get) => {
   },
 
   undo() {
+    finishedParameters.clear();
     const previous = history.past.pop();
     if (!previous) return;
     history.future.push(snapshotOf(get()));
@@ -1223,6 +1252,7 @@ export const useEditor = create<EditorState>((set, get) => {
   },
 
   redo() {
+    finishedParameters.clear();
     const next = history.future.pop();
     if (!next) return;
     history.past.push(snapshotOf(get()));

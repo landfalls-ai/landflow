@@ -11,7 +11,7 @@
  * There is no `router` purpose: the router makes no model call (docs/limitations.md), a call answered by the cheap
  * model is an `answer` call of that model.
  */
-export const CALL_PURPOSES = ['answer', 'guardrail', 'judge', 'embed', 'cache-embed', 'rerank', 'summary', 'eval'] as const;
+export const CALL_PURPOSES = ['answer', 'guardrail', 'judge', 'embed', 'cache-embed', 'rerank', 'summary', 'eval', 'decide'] as const;
 export type CallPurpose = (typeof CALL_PURPOSES)[number];
 
 /** The words the screens use (docs/ui-review.md: sentence case, no jargon). */
@@ -24,6 +24,7 @@ export const CALL_PURPOSE_LABELS: Record<CallPurpose, string> = {
   rerank: 'Rerank',
   summary: 'Summary',
   eval: 'Evaluation',
+  decide: 'Decide',
 };
 
 export function isCallPurpose(value: unknown): value is CallPurpose {

@@ -7,6 +7,7 @@
 import { useEffect, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { CircleAlert, CircleCheck, CircleDot, Loader2, Pause, Pin, Plus, PowerOff, CornerDownRight } from 'lucide-react';
+import { expandPorts } from '@landflow/protocol';
 import { cn } from '@/lib/utils';
 import { duration } from '@/lib/client/format';
 import { NodeIcon } from '../ui/icon';
@@ -22,7 +23,8 @@ export function StepList() {
   // Only what the order depends on, so a run's progress doesn't recompute it. Node types count too: they name outputs.
   const shape = useEditor((s) =>
     [
-      s.nodes.map((n) => `${n.id}:${n.data.wf.type}@${Math.round(n.position.x)},${Math.round(n.position.y)}`).join(';'),
+      // A node whose outputs follow its parameters (Decide) counts them too.
+      s.nodes.map((n) => `${n.id}:${n.data.wf.type}@${Math.round(n.position.x)},${Math.round(n.position.y)}${n.data.wf.type === 'core.decide' ? JSON.stringify([n.data.wf.parameters.questions, n.data.wf.parameters.routeBy]) : ''}`).join(';'),
       s.edges.map((e) => `${e.source}>${e.target}:${e.sourceHandle ?? ''}:${e.data?.connectionType ?? 'main'}`).join(';'),
     ].join('|'),
   );
@@ -30,8 +32,9 @@ export function StepList() {
   const { steps, anchor } = useMemo(() => {
     const { nodes, edges } = useEditor.getState();
     const outputsOf = (id: string) => {
-      const type = nodes.find((n) => n.id === id)?.data.wf.type;
-      return (type ? nodeTypes[type]?.descriptor.outputs.filter((p) => p.type === 'main') : undefined) ?? [];
+      const wf = nodes.find((n) => n.id === id)?.data.wf;
+      const descriptor = wf && nodeTypes[wf.type]?.descriptor;
+      return (descriptor ? expandPorts(descriptor.outputs, wf.parameters).filter((p) => p.type === 'main') : undefined) ?? [];
     };
     const steps = stepOrder(
       nodes,

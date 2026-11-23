@@ -19,6 +19,7 @@ import { practiceDraftNode } from './practices'; // PR03:
 import { practiceCheckNode } from './practice-check'; // PR08:
 import { aiAgentNode, anthropicChatModelNode, calculatorToolNode, ollamaChatModelNode, simpleMemoryNode } from './ai';
 import { aiJudgeNode } from './judge'; // C13:
+import { decideNode } from './decide'; // C34:
 import { chainLlmNode, informationExtractorNode, textClassifierNode } from './chains';
 import { aiStep } from './composites';
 import { anthropicApiCredential, cohereApiCredential, httpBasicAuthCredential, httpBearerAuthCredential, httpHeaderAuthCredential, jwtAuthCredential, openAiApiCredential, s3ApiCredential, strandsDeciderApiCredential, typesafeApiCredential } from './credentials';
@@ -134,6 +135,7 @@ export const corePlugin = definePlugin({
     chainLlmNode,
     textClassifierNode,
     aiJudgeNode, // C13:
+    decideNode, // C34:
     informationExtractorNode,
     openAiNode,
     anthropicChatModelNode,
