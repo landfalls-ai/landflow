@@ -3059,3 +3059,13 @@ The person decided on 2026-11-18 that production approvals go to an approval inb
 - **C19 built:** run events through an outbox: event subscriptions per project, the shared outbox core, the audit outbox on it. Open: alert channels and the error workflow on the outbox; live `node.finished` (needs a durable node event); a broker sink (Kafka, NATS); Notion's outbox and approval tickets on the core; C12-style delegated approval callbacks can enqueue here.
 - **C20 built:** chunk diffing with embedding reuse, atomic per-document swap, Upsert by Key. Open: reuse in the Vector Store node without a key; markdown-aware chunking; C22's sync builds on `syncDocument`.
 - **C21 built:** access per vector collection: owner project, read/write grants, claim on first write, strict adoption with the lost-access notice, the Notion read switch. Open: an instance-wide collections page; per-document access.
+
+## Combined wave 4b (2026-11-22)
+
+- **C22 built:** knowledge sources (folder, S3, site, Google Drive) with schedules, Pause, Sync now and sync history; `s3Api` credential; migration 2929.
+- **C23 built:** UI primitives (combobox, data grid, field diff, history sheet, agent version compare, the node panel's credential combobox). Open: the other credential pickers (kagent, model, triggers), a multi-select combobox, a history for credentials.
+- **C24 built:** `@landflow/test-fakes` (`defineFake`, Slack, GitHub, Notion on the contract), node-state tests in the messaging and GitHub plugins, a Playwright browser tier at two viewports behind `LANDFLOW_INTEGRATION=browser`.
+- **C25 built:** the docs publish manifest, `llms.txt`, `llms-full.txt`, the `/llms.txt` routes and `pnpm check:docs`. Open: a `landflow docs` CLI command from the same manifest; a page per URL (`/llms/<path>.md`).
+- **C26 built (agent secret proxy, narrow):** secret routes on the kagent card, `<name>-routes` Secret and EgressPolicy, keyed-hash drift, leader rotation timer, audit `kagent.route.*`, Run Trace connection rows. Lifted: "GitHub only, by hand" for the sandbox's credentialed access. Open: C30 dynamic secrets feeding a route with a lease; routes for non-Claude runtimes (their tools go through Landflow's MCP endpoint, so none planned).
+- **C27 built (content-keyed trust):** a `trust_records` table, canonical per-tool fingerprints, MCP tools snapshotted at publish and held when changed, the review banner and sheet, a Needs you item, marketplace node plugin installs asked by the hash. Open: the flows' MCP Client Tool (C27-D6), a descriptor hash for registry-announced plugins, an "approve all" for many agents, a cap on how long a hold may wait.
+
