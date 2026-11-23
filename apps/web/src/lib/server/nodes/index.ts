@@ -9,6 +9,7 @@ import { runTeamNode } from './run-team';
 import { messageAgentNode, workflowTrigger } from './agents';
 import { brainEntityNode } from './entities';
 import { memoryAddNode, memoryForgetNode, memoryProfileNode, memorySearchNode } from './memory'; // C07:
+import { memoryExtractNode } from './memory-extract'; // C28:
 import { briefingNodes } from './briefing';
 // LL05:
 import { applyCapRaiseNode, capRaiseTriggerNode } from './cap-raise';
@@ -117,6 +118,7 @@ export const corePlugin = definePlugin({
     brainEntityNode,
     memorySearchNode,
     memoryAddNode,
+    memoryExtractNode, // C28:
     memoryForgetNode,
     memoryProfileNode,
     githubWorkEventNode, // B31:
