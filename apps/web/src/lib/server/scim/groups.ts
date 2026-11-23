@@ -25,6 +25,7 @@ import { auditedTransaction } from '../audit';
 import { currentActorId } from '../auth/context';
 import { authDb } from '../auth/db';
 import { roleByName, setCustomRole } from '../auth/roles';
+import { ungrantable } from '../../shared/auth';
 import { getUser, updateUser } from '../auth/users';
 import { recordAudit } from '../audit';
 import { describeProjectMap, grantsFor, parseProjectMap, syncManagedMemberships, type ProjectGrant } from '../projects/mapping';
@@ -162,6 +163,9 @@ export function recomputeGrants(userIds: Iterable<string>) {
   const byName = new Map(Object.entries(map).map(([group, mapping]) => [group.toLowerCase(), mapping]));
   const managesRoles = Object.values(map).some((mapping) => mapping.role);
   const namedCustom = new Set(Object.values(map).flatMap((mapping) => (mapping.customRole ? [mapping.customRole.toLowerCase()] : [])));
+  // The token's person (none outside a SCIM request: the map in the environment is the operator's own).
+  const actorId = currentActorId();
+  const actor = actorId ? getUser(actorId) : undefined;
   for (const userId of new Set(userIds)) {
     const user = getUser(userId);
     if (!user) continue;
@@ -181,11 +185,14 @@ export function recomputeGrants(userIds: Iterable<string>) {
     }
     syncManagedMemberships(userId, 'scim', grantsFor(Object.keys(projectMap), projectMap, { create: true, createdBy: currentActorId() }));
     const managed = user.externalId || user.provisionedBy === 'scim';
-    if (managesRoles && managed && user.role !== 'owner') {
+    // A token never gives more than its person could: a member's token (a custom role with scim:manage) changes no built-in role.
+    if (managesRoles && managed && user.role !== 'owner' && actor?.role !== 'member') {
       const desired = role ?? 'member';
       if (user.role !== desired) auditUserChange(user, updateUser(userId, { role: desired }));
     }
-    if (namedCustom.size && managed && user.role !== 'owner') {
+    // ...and never a custom role holding what its person couldn't grant (the owner's token may give any).
+    const refused = Boolean(actor && customRole && ungrantable(actor, customRole.rules.map((rule) => rule.action)).length);
+    if (namedCustom.size && managed && user.role !== 'owner' && !refused) {
       const current = getUser(userId)!;
       const held = current.customRole;
       // Only members hold one; a role the map doesn't name (given by hand) stays.

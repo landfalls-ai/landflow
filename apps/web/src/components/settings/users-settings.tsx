@@ -149,7 +149,9 @@ export function UsersSettings({ initial }: { initial?: UserView[] } = {}) {
         </div>
         {users.map((user) => {
           const you = user.id === viewer?.id;
-          const roles = ASSIGNABLE_ROLES.filter((r) => canManageUser(viewer, user, { kind: 'role', role: r }));
+          // What the person's custom role grants: who may act on them is decided by it (the server checks the same).
+          const target = { ...user, customRole: { actions: customRoles.find((r) => r.id === user.customRole?.id)?.rules.map((rule) => rule.action) } };
+          const roles = ASSIGNABLE_ROLES.filter((r) => canManageUser(viewer, target, { kind: 'role', role: r }));
           return (
             <div key={user.id} className="grid grid-cols-[minmax(0,1fr)_150px_minmax(0,140px)_auto] items-center gap-3 border-b border-hair px-4 py-2.5 last:border-b-0 hover:bg-sf2 max-md:flex max-md:flex-col max-md:items-stretch max-md:gap-2.5">
               <div className="flex min-w-0 items-center gap-2.5">
@@ -183,7 +185,7 @@ export function UsersSettings({ initial }: { initial?: UserView[] } = {}) {
                 ) : (
                   <Badge tone={user.role === 'owner' ? 'accent' : user.role === 'admin' ? 'success' : 'neutral'}>{ROLE_LABELS[user.role]}</Badge>
                 )}
-                {user.role === 'member' && (manage && customRoles.length > 0 && canManageUser(viewer, user, { kind: 'role', role: 'member' }) ? (
+                {user.role === 'member' && (manage && customRoles.length > 0 && canManageUser(viewer, target, { kind: 'role', role: 'member' }) ? (
                   <Select
                     value={user.customRole?.id ?? ''}
                     onChange={(e) =>
@@ -211,17 +213,17 @@ export function UsersSettings({ initial }: { initial?: UserView[] } = {}) {
                 {user.lastLoginAt ? timeAgo(user.lastLoginAt) : 'never'}
               </span>
               <div className="flex w-[132px] items-center justify-end gap-1 max-md:w-auto max-md:justify-start max-md:gap-2">
-                {manage && Boolean(user.mfaFactors) && canResetMfa(viewer, user) && (
+                {manage && Boolean(user.mfaFactors) && canResetMfa(viewer, target) && (
                   <Button size="icon-sm" variant="ghost" className="max-md:size-11" onClick={() => void resetSecondFactor(user)} aria-label={`Reset second factor of ${user.name}`} title="Reset second factor">
                     <ShieldOff className="size-3.5" />
                   </Button>
                 )}
-                {canManageUser(viewer, user, { kind: 'reset-password' }) && !you && (
+                {canManageUser(viewer, target, { kind: 'reset-password' }) && !you && (
                   <Button size="icon-sm" variant="ghost" className="max-md:size-11" onClick={() => void resetLink(user)} aria-label={`Password reset link for ${user.name}`} title="Password reset link">
                     <KeyRound className="size-3.5" />
                   </Button>
                 )}
-                {canManageUser(viewer, user, { kind: 'remove' }) && (
+                {canManageUser(viewer, target, { kind: 'remove' }) && (
                   <Button size="icon-sm" variant="ghost" className="max-md:size-11" onClick={() => setRemoving(user)} aria-label={`Remove ${user.name}`} title="Remove">
                     <Trash2 className="size-3.5" />
                   </Button>

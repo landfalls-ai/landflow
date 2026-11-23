@@ -11,7 +11,7 @@ import { Pencil, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/client/api';
 import { plural } from '@/lib/client/format';
-import { ACTIONS, GRANTABLE_ACTIONS, OWNER_ONLY_GRANTS, ungrantable, type Action, type RoleHolder, type UserView } from '@/lib/shared/auth';
+import { ACTIONS, can, GRANTABLE_ACTIONS, OWNER_ONLY_GRANTS, ungrantable, type Action, type RoleHolder, type UserView } from '@/lib/shared/auth';
 import { ACTION_LABELS, type CustomRoleView } from '@/lib/shared/roles';
 import { useViewer } from '@/components/auth/viewer';
 import { Card } from '@/components/shell/page-header';
@@ -87,10 +87,12 @@ export function RoleEditor({ role, onClose, onSaved }: { role?: CustomRoleView; 
           {ACTIONS.map((action) => {
             const why = whyNotGrantable(viewer, action);
             const { label, note } = ACTION_LABELS[action];
+            // An owner-only action's note already says so and says what it really allows: an admin sees it too, not only the reason.
+            const ownerOnly = OWNER_ONLY_GRANTS.includes(action);
             return (
               <div key={action} className="rounded-[10px] px-1 py-0.5">
                 <Checkbox checked={picked.has(action)} disabled={Boolean(why)} onChange={(on) => toggle(action, on)} label={label} />
-                <p className="ml-6 text-[12px] leading-snug text-t3">{why ?? note ?? ` `}</p>
+                <p className="ml-6 text-[12px] leading-snug text-t3">{ownerOnly && note ? note : why ?? note ?? ` `}</p>
               </div>
             );
           })}
@@ -134,7 +136,9 @@ export function RolesSettings({ roles: given, users = [], onChanged }: { roles?:
 
   if (error) return <div className="rounded-[10px] border border-rdbd bg-rddim px-3 py-2.5 text-[13px] text-rd">{error}</div>;
   if (!roles) return <div className="h-24 rounded-2xl border border-hair bg-sf animate-pulse-soft" />;
-  const manage = Boolean(viewer && (viewer.role === 'owner' || viewer.grants?.includes('users:manage') || viewer.role === 'admin'));
+  const manage = can(viewer, 'users:manage');
+  // Editing or deleting a role is for who could have made it (the server checks the same).
+  const mayChange = (role: CustomRoleView) => manage && ungrantable(viewer!, role.rules.map((rule) => rule.action)).length === 0;
 
   return (
     <Card className="space-y-3 px-5 py-4">
@@ -167,7 +171,7 @@ export function RolesSettings({ roles: given, users = [], onChanged }: { roles?:
                   ))}
                 </div>
               </div>
-              {manage && (
+              {mayChange(role) && (
                 <div className="flex items-center gap-1">
                   <Button size="icon-sm" variant="ghost" onClick={() => setEditing(role)} aria-label={`Edit ${role.name}`} title="Edit">
                     <Pencil className="size-3.5" />
@@ -181,7 +185,7 @@ export function RolesSettings({ roles: given, users = [], onChanged }: { roles?:
           ))}
         </ul>
       )}
-      <p className="text-[12px] text-t3">You grant only actions you hold. Only the owner grants Manage users and Create admin API keys. A role never makes a member an admin of every project.</p>
+      <p className="text-[12px] text-t3">You grant only actions you hold. Only the owner grants Manage users, Manage settings, Manage plugins, Manage SCIM tokens and Create admin API keys. A role never makes a member an admin of every project.</p>
       {editing && <RoleEditor role={editing === 'new' ? undefined : editing} onClose={() => setEditing(undefined)} onSaved={() => void load()} />}
     </Card>
   );

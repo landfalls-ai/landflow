@@ -57,16 +57,16 @@ describe('can() with grants', () => {
     expect(ACTIONS).toHaveLength(11);
     expect(GRANTABLE_ACTIONS).toHaveLength(10);
     expect(GRANTABLE_ACTIONS).not.toContain('projects:manage');
-    expect([...OWNER_ONLY_GRANTS].sort()).toEqual(['apiKeys:admin', 'users:manage']);
+    expect([...OWNER_ONLY_GRANTS].sort()).toEqual(['apiKeys:admin', 'plugins:manage', 'scim:manage', 'settings:manage', 'users:manage']);
     for (const action of ACTIONS) expect(ACTION_LABELS[action].label.length).toBeGreaterThan(0);
   });
 });
 
 describe('ungrantable()', () => {
-  const holder = { role: 'member' as const, grants: ['users:manage' as const, 'plugins:manage' as const] };
-  it('a holder of users:manage and plugins:manage may not grant scim:manage (AS-2)', () => {
+  const holder = { role: 'member' as const, grants: ['users:manage' as const, 'mcp:manage' as const] };
+  it('a holder of users:manage and mcp:manage may not grant scim:manage (AS-2)', () => {
     expect(ungrantable(holder, ['scim:manage'])).toEqual(['scim:manage']);
-    expect(ungrantable(holder, ['plugins:manage'])).toEqual([]);
+    expect(ungrantable(holder, ['mcp:manage'])).toEqual([]);
   });
   it('an admin may not grant users:manage or apiKeys:admin, the owner may (AS-3)', () => {
     expect(ungrantable({ role: 'admin' }, ['users:manage', 'apiKeys:admin', 'mcp:manage'])).toEqual(['users:manage', 'apiKeys:admin']);

@@ -95,8 +95,10 @@ function checkEscalation(actor: UserRecord, rules: readonly RoleRule[]) {
 }
 
 function checkName(name: string, exceptId?: string): { name: string; key: string } {
-  const clean = name.trim();
+  // NFKC first: full-width and other look-alike forms of "admin" are the built-in name, not a new one.
+  const clean = name.normalize('NFKC').trim();
   if (!clean || clean.length > 40) throw new RoleError('A role name is 1 to 40 characters');
+  if (!/^[\p{L}\p{N} _-]+$/u.test(clean)) throw new RoleError('A role name is letters, digits, spaces, - and _');
   const key = clean.toLowerCase();
   if (RESERVED_ROLE_NAMES.includes(key)) throw new RoleError(`“${clean}” is a built-in role and can’t be reused as a custom role’s name`);
   const taken = authDb().get<{ id: string }>('SELECT id FROM custom_roles WHERE name_key = ?', key);
@@ -162,6 +164,8 @@ export function deleteRole(id: string, actor: UserRecord, options: { confirm?: b
   auditedTransaction(() => {
     const existing = find(id);
     if (!existing) throw new RoleError('Role not found', 404);
+    // Consistent with making and editing one: you can't remove a role you couldn't have made.
+    checkEscalation(actor, existing.rules);
     if (existing.holders > 0 && !options.confirm) throw new RoleError(`${existing.holders} ${existing.holders === 1 ? 'person holds' : 'people hold'} this role. Confirm to delete it and leave them as plain members`, 409, { holders: existing.holders });
     for (const holder of authDb().all<{ id: string; email: string }>('SELECT id, email FROM users WHERE custom_role_id = ?', id)) {
       setCustomRole(holder.id, null);

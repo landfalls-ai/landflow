@@ -15,11 +15,11 @@
  * (or the requester, for decisions) are notified (./notify). Plain server module (no Next.js imports): workers can
  * load it.
  */
+import { isInstanceAdmin } from '../projects/access';
 import { nanoid } from 'nanoid';
 import type { Workflow } from '@landflow/engine';
 import type { PublishResult } from '../../shared/publish';
 import type { PublishRequestDiff, PublishRequestedResponse, PublishRequestKind, PublishRequestList, PublishRequestStatus, PublishRequestView } from '../../shared/governance';
-import { can } from '../../shared/auth';
 import { recordAudit } from '../audit';
 import { getUser, listUsers, userNames, type UserRecord } from '../auth/users';
 import { database } from '../db';
@@ -106,7 +106,7 @@ export function mayApprove(user: Pick<UserRecord, 'id' | 'role'> & { disabledAt?
   ensureProjectApprovers();
   const { approverRole } = getGovernancePolicy().fourEyes;
   // `member` is the instance's editor role: owners, admins and members; `admin`: owners and admins.
-  if (approverRole === 'admin' ? !can(user, 'settings:manage') : !['owner', 'admin', 'member'].includes(user.role)) return false;
+  if (approverRole === 'admin' ? !isInstanceAdmin(user) : !['owner', 'admin', 'member'].includes(user.role)) return false;
   for (const check of approverChecks()) {
     try {
       if (check(user as UserRecord, workflowId) === false) return false;
@@ -161,7 +161,7 @@ function view(row: Row, viewer?: Pick<UserRecord, 'id' | 'role'>, names = userNa
     ...(data.scheduledFor && { scheduledFor: data.scheduledFor }),
     ...(viewer && {
       canApprove: pending && mayApprove(getUser(viewer.id) ?? viewer, row.workflow_id, row.requested_by),
-      canCancel: pending && (viewer.id === row.requested_by || can(viewer, 'settings:manage')),
+      canCancel: pending && (viewer.id === row.requested_by || isInstanceAdmin(viewer)),
     }),
   };
 }
@@ -528,7 +528,7 @@ export function cancelRequest(id: string, user: Pick<UserRecord, 'id' | 'role'>)
   const row = rowOf(id);
   if (!row) throw new ApprovalError('Publish request not found', 404);
   if (row.status !== 'pending') throw new ApprovalError(`This request is already ${row.status}`, 409);
-  if (user.id !== row.requested_by && !can(user, 'settings:manage')) throw new ApprovalError('Only the requester or an admin can withdraw this request', 403);
+  if (user.id !== row.requested_by && !isInstanceAdmin(user)) throw new ApprovalError('Only the requester or an admin can withdraw this request', 403);
   const next = setStatus(row, 'canceled', { by: user.id });
   audit('publish_request.cancel', next, { summary: `Withdrew the request to ${KIND_LABEL[row.kind]}` });
   return view(next, user);

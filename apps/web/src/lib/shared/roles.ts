@@ -25,15 +25,15 @@ export interface CustomRoleView {
 /** The editor's words for each action; `note` says what else the action opens, so nobody grants it by accident. */
 export const ACTION_LABELS: Record<Action, { label: string; note?: string }> = {
   'users:manage': { label: 'Manage users', note: 'Invite, remove and change roles. Only the owner can grant it.' },
-  'settings:manage': { label: 'Manage settings', note: 'Instance settings, security, source control, environments, transports.' },
+  'settings:manage': { label: 'Manage settings', note: 'Instance settings, security, source control and environments, which reach every project. Only the owner can grant it.' },
   'credentials:share': { label: 'Share credentials' },
   'mcp:manage': { label: 'Manage MCP', note: 'The instance MCP server, its tokens’ grants and the gateway.' },
-  'plugins:manage': { label: 'Manage plugins', note: 'Install and remove plugins and marketplaces.' },
+  'plugins:manage': { label: 'Manage plugins', note: 'Installs third-party code that runs on the host, with the host’s access to the data directory. Only the owner can grant it.' },
   'variables:manage': { label: 'Manage variables' },
   'workflows:takeover': { label: 'Take over workflows', note: 'Take a workflow someone else has open in the editor.' },
   'apiKeys:admin': { label: 'Create admin API keys', note: 'Only the owner can grant it.' },
   'projects:manage': { label: 'Manage projects', note: 'Sees every project. Can’t be granted through a custom role.' },
-  'scim:manage': { label: 'Manage SCIM tokens' },
+  'scim:manage': { label: 'Manage SCIM tokens', note: 'A SCIM token creates, changes and removes users and groups. Only the owner can grant it.' },
   'audit:read': { label: 'Read the audit log', note: 'The events of the projects the person is a member of, not every event.' },
 };
 

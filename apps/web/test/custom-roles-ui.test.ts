@@ -62,15 +62,21 @@ describe('what the editor lets a viewer grant', () => {
   });
   it('a holder may grant only what they hold', async () => {
     const { whyNotGrantable } = await import('../src/components/settings/roles-settings');
-    const holder = viewerOf({ role: 'member', grants: ['plugins:manage'] });
-    expect(whyNotGrantable(holder, 'plugins:manage')).toBeUndefined();
-    expect(whyNotGrantable(holder, 'mcp:manage')).toBe('You can only grant actions you hold.');
+    const holder = viewerOf({ role: 'member', grants: ['mcp:manage'] });
+    expect(whyNotGrantable(holder, 'mcp:manage')).toBeUndefined();
+    expect(whyNotGrantable(holder, 'variables:manage')).toBe('You can only grant actions you hold.');
+    expect(whyNotGrantable(holder, 'plugins:manage')).toBe('Only the owner can grant this.');
+  });
+  it('hides Edit and Delete on a role the viewer couldn’t have made, and reads manage through can()', () => {
+    const source = readFileSync(join(root, 'components/settings/roles-settings.tsx'), 'utf8');
+    expect(source).toContain("can(viewer, 'users:manage')");
+    expect(source).toContain('{mayChange(role) && (');
   });
   it('the editor disables a box it may not grant and prints the reason under it', () => {
     // The dialog portals to <body>, which a server render has none of: checked through its source.
     const source = readFileSync(join(root, 'components/settings/roles-settings.tsx'), 'utf8');
     expect(source).toContain('disabled={Boolean(why)}');
-    expect(source).toContain('{why ?? note');
+    expect(source).toContain('why ?? note');
   });
 });
 

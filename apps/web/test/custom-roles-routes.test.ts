@@ -105,8 +105,9 @@ describe('custom roles through the routes', () => {
     expect((await call(rolesRoute.POST, '/api/users/roles', { session: ownerSession, body: { name: 'Bosses', rules: [{ action: 'users:manage', effect: 'allow' }] } })).status).toBe(201);
     expect((await call(rolesRoute.POST, '/api/users/roles', { session: ownerSession, body: { name: 'Everything', rules: [{ action: 'projects:manage', effect: 'allow' }] } })).status).toBe(403);
     expect((await call(rolesRoute.POST, '/api/users/roles', { session: ownerSession, body: { name: 'Odd', rules: [{ action: 'nope:nope', effect: 'allow' }] } })).status).toBe(400);
-    // An admin who may grant plugins:manage creates it fine.
-    expect((await call(rolesRoute.POST, '/api/users/roles', { session: admin.session, body: { name: 'Plugins only', rules: [{ action: 'plugins:manage', effect: 'allow' }] } })).status).toBe(201);
+    // An admin creates a role of actions that aren't the owner's alone; plugins:manage is (a plugin runs code on the host).
+    expect((await call(rolesRoute.POST, '/api/users/roles', { session: admin.session, body: { name: 'MCP only', rules: [{ action: 'mcp:manage', effect: 'allow' }] } })).status).toBe(201);
+    expect((await call(rolesRoute.POST, '/api/users/roles', { session: admin.session, body: { name: 'Plugins only', rules: [{ action: 'plugins:manage', effect: 'allow' }] } })).status).toBe(403);
   });
 
   it('a plain member can’t create, edit or delete roles', async () => {

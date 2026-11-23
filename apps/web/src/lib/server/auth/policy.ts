@@ -17,6 +17,8 @@ export interface RoutePolicy {
   scope: ApiKeyScope | 'any';
   /** Role action a user needs (see `can`). */
   action?: Action;
+  /** The built-in owner or admin role itself, whatever custom role is held: the route reaches every project (C32 review). */
+  instanceAdmin?: true;
   /** Only with a session, never an API key. */
   sessionOnly?: boolean;
   /** No entry named the path: the default below applied (test/policy-coverage.test.ts requires every route to be named or to guard itself). */
@@ -43,7 +45,7 @@ export function routePolicy(method: string, path: string): RoutePolicy {
 
   // Stopping every run of every project is instance-wide: admins, like the other instance-wide controls (/api/settings).
   // The key keeps the executions:write scope it always needed (the CLI's `executions stop --all`); the role decides.
-  if (path === '/api/executions/stop-all') return { scope: 'executions:write', action: 'settings:manage' };
+  if (path === '/api/executions/stop-all') return { scope: 'executions:write', action: 'settings:manage', instanceAdmin: true };
 
   // Starting runs.
   // Listening for a test event runs the editor's workflow too (lib/server/test-webhooks.ts).
@@ -53,11 +55,11 @@ export function routePolicy(method: string, path: string): RoutePolicy {
 
   // Git sync (the CLI) and Settings → Source control: reading the files is a read; applying them changes variables too.
   if (path === '/api/sync/export') return { scope: 'workflows:read' };
-  if (under('/api/sync') || under('/api/source-control')) return { scope: 'admin', action: 'settings:manage' };
+  if (under('/api/sync') || under('/api/source-control')) return { scope: 'admin', action: 'settings:manage', instanceAdmin: true };
 
   // External secrets providers and environments (promotion, pull, settings): changes are admin; anyone sees the environment.
   if (under('/api/external-secrets')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'settings:manage' };
-  if (under('/api/environment')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage' };
+  if (under('/api/environment')) return read ? { scope: 'workflows:read' } : { scope: 'admin', action: 'settings:manage', instanceAdmin: true };
   // C16: resetting a person's second factors is a session's act, never an API key's (like /api/api-keys): a stolen admin key can't strip a factor.
   if (/^\/api\/users\/[^/]+\/mfa$/.test(path)) return { scope: 'admin', action: 'users:manage', sessionOnly: true };
   if (under('/api/users')) return read ? { scope: 'admin' } : { scope: 'admin', action: 'users:manage' };

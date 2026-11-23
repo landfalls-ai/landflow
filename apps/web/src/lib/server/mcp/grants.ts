@@ -23,6 +23,7 @@ import { parse } from '../db/rows';
 import { nodeTypeBlocked, scopedNodeBlocked } from '../governance/policy';
 import { policyScope } from '../governance/scopes';
 import { registry } from '../plugins/registry';
+import { isInstanceAdmin, visibleIds, type Actor } from '../projects/access';
 import { getProject, membershipsOf } from '../projects/store';
 import { getGroup, groupsOf } from '../scim/groups';
 import { singleton } from '../singleton';
@@ -162,8 +163,25 @@ export function getGrant(id: string): McpToolGrant | undefined {
   return row && fromRow(row);
 }
 
-export function createGrant(input: GrantInput, createdBy?: string): McpToolGrant {
+/** Who writes a grant: a plain id (trusted callers inside the server), or the person asking, whose credential access is checked. */
+export type GrantActor = string | Actor;
+
+/**
+ * A grant binds credentials for everyone it names, so its author may bind only credentials they can use themselves: an
+ * owner or admin binds any; a member holding Manage MCP through a custom role (C32) binds what their projects hold.
+ */
+function requireUsableCredentials(credentials: Record<string, string> | undefined, actor: GrantActor | undefined) {
+  if (!actor || typeof actor === 'string' || !credentials) return;
+  const ids = Object.values(credentials);
+  if (!ids.length || isInstanceAdmin(actor)) return;
+  const visible = visibleIds(actor, 'credential', ids);
+  if (visible && ids.some((id) => !visible.has(id))) throw new McpGrantError('You can only bind credentials you can use yourself', 403);
+}
+
+export function createGrant(input: GrantInput, actor?: GrantActor): McpToolGrant {
+  const createdBy = typeof actor === 'string' ? actor : actor?.id;
   validate(input);
+  requireUsableCredentials(input.credentials, actor);
   const now = new Date().toISOString();
   const row: GrantRow = {
     id: `mcpg_${nanoid(12)}`,
@@ -187,6 +205,7 @@ export function createGrant(input: GrantInput, createdBy?: string): McpToolGrant
  * an instance owner. Turning them up is for any manager.
  */
 export function updateGrant(id: string, patch: Partial<Omit<GrantInput, 'subject' | 'pluginId'>>, actor?: { id: string; role?: string }): McpToolGrant {
+  requireUsableCredentials(patch.credentials, actor?.role ? (actor as Actor) : undefined);
   const db = mcpDb();
   const row = db.get<GrantRow>('SELECT * FROM mcp_grants WHERE id = ?', id);
   if (!row) throw new McpGrantError('Grant not found', 404);

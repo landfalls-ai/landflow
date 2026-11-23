@@ -2173,7 +2173,7 @@ function paths(): Record<string, Record<string, Json>> {
     tag: 'Account',
     id: 'createCustomRole',
     summary: 'Create a custom role',
-    description: 'You may grant only the actions you hold, only the owner grants `users:manage` or `apiKeys:admin`, and nobody grants `projects:manage` (403 naming the action). A name is 1 to 40 characters, unique in any case, and not `owner`, `admin` or `member` (409 for a taken one). Recorded as `role.created` in one transaction with the change (503 and no change when audit is fail-closed and down).',
+    description: 'You may grant only the actions you hold, only the owner grants `users:manage`, `apiKeys:admin`, `scim:manage`, `plugins:manage` or `settings:manage`, and nobody grants `projects:manage` (403 naming the action). A name is 1 to 40 characters, unique in any case, and not `owner`, `admin` or `member` (409 for a taken one). Recorded as `role.created` in one transaction with the change (503 and no change when audit is fail-closed and down).',
     body: jsonBody(object({ name: { type: 'string', minLength: 1, maxLength: 40 }, description: { type: 'string', maxLength: 200 }, rules: { ...array(object({ action: { type: 'string' }, effect: { type: 'string', const: 'allow' } }, ['action', 'effect'])), minItems: 1, maxItems: 20 } }, ['name', 'rules'])),
     responses: { 201: reply('The role', object({ role: ref('CustomRole') }, ['role'])), 400: invalid, 403: errorRef('A rule grants more than you may'), 409: errorRef('The name is taken'), 503: errorRef('The audit log is unavailable') },
   });

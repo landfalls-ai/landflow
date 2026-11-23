@@ -11,8 +11,8 @@
  * live at its time with the requester as publisher. A schedule made while four-eyes was off, whose time comes after
  * it was switched on, becomes a publish request instead of going live (status `requested`).
  */
+import { isInstanceAdmin } from './projects/access';
 import { nanoid } from 'nanoid';
-import { can } from '../shared/auth';
 import type { ScheduledPublish } from '../shared/publish';
 import { recordAudit } from './audit';
 import { userNames, type UserRecord } from './auth/users';
@@ -172,7 +172,7 @@ export function cancelSchedule(id: string, user: Pick<UserRecord, 'id' | 'role'>
   const row = scheduleRow(id);
   if (!row || (workflowId && row.workflow_id !== workflowId)) throw new ScheduleError('Scheduled publish not found', 404);
   if (row.status !== 'pending' && row.status !== 'awaiting_approval') throw new ScheduleError(`This schedule is already ${row.status}`, 409);
-  if (user.id !== row.created_by && !can(user, 'settings:manage')) throw new ScheduleError('Only who scheduled it, or an owner or admin, can cancel it', 403);
+  if (user.id !== row.created_by && !isInstanceAdmin(user)) throw new ScheduleError('Only who scheduled it, or an owner or admin, can cancel it', 403);
   const next: ScheduleRow = { ...row, status: 'canceled', finished_at: new Date().toISOString(), result: `Canceled by ${userNames().get(user.id) ?? user.id}` };
   saveScheduleRow(next);
   if (row.request_id) {

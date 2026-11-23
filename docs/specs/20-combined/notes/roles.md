@@ -3,7 +3,7 @@
 ## docs/limitations.md
 
 - Add: a custom role grants a subset of the existing role-gated actions to a member, and nothing else. A member holds **one** (no union of several), there are no conditions (a rule can't be limited to some projects), no custom project roles and no deny rules; routes still name actions, not roles.
-- Add: `projects:manage` can't be granted through a custom role (it means "admin of every project"), and `isInstanceAdmin` is the built-in owner or admin role, so a holder never sees other people's projects. `users:manage` and `apiKeys:admin` can only be granted by the owner.
+- Add: `projects:manage` can't be granted through a custom role (it means "admin of every project"), and `isInstanceAdmin` is the built-in owner or admin role, so a holder never sees other people's projects. `users:manage`, `apiKeys:admin`, `scim:manage`, `plugins:manage` and `settings:manage` can only be granted by the owner (decision 2026-11-23, after the P31 review: SCIM rewrites users and groups, a plugin runs third-party code on the host with the host's access to the data directory, settings reach every project). Routes that reach every project (`/api/sync`, `/api/source-control`, environment changes, stop-all) and four-eyes or promotion approval need the built-in owner or admin role even then.
 - Add: code that checks `user.role` directly (`isActiveAdmin` in `auth/users.ts`, the owner checks in routes such as encryption rotation) ignores custom roles: that is the safe side (fewer rights).
 - Add: `audit:read` through a role reads the events of the holder's member projects, but the action also opens Verify, Sign now's head and the read-only audit settings (`GET /api/settings/audit`), which owners and admins see in full.
 - Add: a role holder's controls come from `grants` on the viewer, read at page load: a role edited while a tab is open shows its new controls after a reload (the server enforces the change on the next request).
@@ -20,3 +20,7 @@
 ## docs/development.md
 
 - New tests: `custom-roles` (shared rules and the store), `custom-roles-routes` (AS-1, 3, 4, 5, 6, 7 and delete in use through the guard), `custom-roles-scim`, `custom-roles-ui`; `LANDFLOW_INTEGRATION=postgres` also runs `test/custom-roles.postgres.test.ts` (migration 2931 and the join on Postgres); `LANDFLOW_INTEGRATION=browser` runs `e2e/roles.spec.ts`.
+
+## Decision 2026-11-23 (P31 review: privilege escalations)
+
+The person decided: `scim:manage`, `plugins:manage` and `settings:manage` are owner-only grants (`OWNER_ONLY_GRANTS`), the editor's notes say what each really allows, and routes that reach every project are blocked for non-admin holders (`instanceAdmin` in the route policy; `mayApprove`, `mayApprovePromotion` and the withdraw paths use `isInstanceAdmin`). Also: SCIM never changes the owner, its own person or (unless the owner's token) an admin, and a SCIM-mapped role is given only if the token's person could grant it; MCP grants bind only credentials their author can use; a user manager acts only on members whose role holds nothing they lack; role names are plain; deleting a role is checked like making one. Limitation to add: a holder of `settings:manage` (given by the owner) still can't use sync, source control or environment changes, only the settings routes that don't reach every project.
