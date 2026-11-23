@@ -1,0 +1,24 @@
+{
+  "name": "@landflow/plugin-sap",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SAP S/4HANA Cloud plugin: an OData node (get, list, create, update, delete) with presets, a poll trigger and an event trigger. Usable as an agent tool; writes are off unless allowed.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "fake-s4": "tsx test/fake-s4.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@landflow/sdk": "workspace:*",
+    "@landflow/transports": "workspace:*"
+  },
+  "devDependencies": {
+    "@landflow/protocol": "workspace:*",
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "vitest": "^5.0.5"
+  }
+}

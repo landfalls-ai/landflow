@@ -125,8 +125,8 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   // Plugins, code and marketplace
   { name: 'LANDFLOW_REGISTRY_GRPC_PORT', group: 'plugins', default: '`7070`', description: 'gRPC RegistryService (`off` to disable)' },
   { name: 'LANDFLOW_PLUGINS', group: 'plugins', default: '–', description: 'static plugin endpoints' },
-  { name: 'LANDFLOW_SCAN_HOSTS', group: 'plugins', default: '`127.0.0.1`', description: 'pull discovery (the compose file sets the ports to `7101-7107,7111-7114,7116-7120,7201-7207,7211-7214,7216-7220`)' },
-  { name: 'LANDFLOW_SCAN_PORTS', group: 'plugins', default: '`7100-7299`', description: 'pull discovery (the compose file sets the ports to `7101-7107,7111-7114,7116-7120,7201-7207,7211-7214,7216-7220`)' },
+  { name: 'LANDFLOW_SCAN_HOSTS', group: 'plugins', default: '`127.0.0.1`', description: 'pull discovery (the compose file sets the ports to `7101-7107,7111-7114,7116-7120,7123-7124,7201-7207,7211-7214,7216-7220,7223-7224`)' },
+  { name: 'LANDFLOW_SCAN_PORTS', group: 'plugins', default: '`7100-7299`', description: 'pull discovery (the compose file sets the ports to `7101-7107,7111-7114,7116-7120,7123-7124,7201-7207,7211-7214,7216-7220,7223-7224`)' },
   { name: 'LANDFLOW_SCAN_ON_START', group: 'plugins', default: '`true`', description: 'scan at boot' },
   { name: 'LANDFLOW_PLUGIN_DISCOVERY', group: 'plugins', default: '–', description: '`kubernetes`: discover plugins from labelled Services; `LANDFLOW_K8S_NAMESPACES` (`*`: every namespace), `LANDFLOW_K8S_SPREAD` (`pods`: calls spread over the ready pods, or `service`), `LANDFLOW_K8S_CONTEXT`, `LANDFLOW_K8S_ADDRESS`, `LANDFLOW_K8S_CLUSTER_DOMAIN`, `LANDFLOW_K8S_LABEL_SELECTOR`, `LANDFLOW_K8S_RESYNC_SECONDS` in [deployment.md, "Kubernetes"](../deployment.md#kubernetes)' },
   { name: 'LANDFLOW_CODE_RUNNER_URL', group: 'plugins', default: '–', description: 'the Code node\'s sandbox, e.g. `http://127.0.0.1:7300` (pnpm) or `http://127.0.0.1:53300` (Docker); set: the sandbox is the default and Python works', profile: 'recommended-in-production', waivedBy: 'LANDFLOW_CODE_IN_PROCESS', productionNote: 'Code nodes fail (they no longer run inside the host in production; set a runner, or LANDFLOW_CODE_IN_PROCESS=true to accept that)' },
@@ -357,6 +357,7 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'AWS_ACCESS_KEY_ID', group: 'sourcecontrol', default: '–', description: 'access key of the AWS Secrets Manager provider when its Settings pick "environment" authentication (`~/.aws` and instance metadata are never read)' },
   { name: 'AWS_SECRET_ACCESS_KEY', group: 'sourcecontrol', default: '–', description: 'secret key for the same provider', secret: true },
   { name: 'AWS_SESSION_TOKEN', group: 'sourcecontrol', default: '–', description: 'session token for the same provider, with temporary credentials', secret: true },
+  { name: 'LANDFLOW_DEBUG_NODE_TIMEOUT_MS', group: 'execution', default: '`30000`', description: 'the longest one local-override call (`runs:debug`) waits for the developer\'s plugin, in milliseconds', readBy: 'host' },
   // Read by plugins
   { name: 'LANDFLOW_REGISTRY_URL', group: 'plugin', default: '–', description: 'where the plugin announces itself (the host registry) ([protocol.md](../protocol.md))', readBy: 'plugins' },
   { name: 'LANDFLOW_ADVERTISE_HOST', group: 'plugin', default: 'the plugin\'s host name', description: 'the host name the plugin tells the registry to call it on ([protocol.md](../protocol.md))', readBy: 'plugins' },
@@ -364,6 +365,17 @@ export const CONFIG_CATALOG: readonly ConfigVariable[] = [
   { name: 'LANDFLOW_GRPC_PORT', group: 'plugin', default: '–', description: 'the plugin\'s gRPC port ([protocol.md](../protocol.md))', readBy: 'plugins' },
   { name: 'LANDFLOW_SEARCH_SEARXNG_URL', group: 'plugin', default: '–', description: 'read by the Web Search plugin, not the host (also a compose variable for the `web-search` profile): the SearXNG base URL it uses when the SearXNG credential names none ([web-search.md](../web-search.md))', readBy: 'plugins' },
   { name: 'LANDFLOW_SEARCH_DENY_DOMAINS', group: 'plugin', default: '–', description: 'read by the Web Search plugin (also a compose variable): comma-separated domains (subdomains included) the node refuses as `site` and drops from results', readBy: 'plugins' },
+  { name: 'LANDFLOW_DESKTOP_DOCKER_CONTEXT', group: 'plugin', default: '–', description: 'read by the Desktop plugin, not the host: the Docker context it starts sandboxes on (`orbstack` locally) ([plugins/desktop](../../plugins/desktop/README.md))', readBy: 'plugins' },
+  { name: 'LANDFLOW_DESKTOP_DOCKER_BIN', group: 'plugin', default: '`docker`', description: 'read by the Desktop plugin, not the host: the Docker CLI it runs ([plugins/desktop](../../plugins/desktop/README.md))', readBy: 'plugins' },
+  { name: 'LANDFLOW_DESKTOP_IMAGE', group: 'plugin', default: '`landflow/desktop-sandbox:dev`', description: 'read by the Desktop plugin, not the host: the sandbox image (built from `services/desktop-sandbox`) ([plugins/desktop](../../plugins/desktop/README.md))', readBy: 'plugins' },
+  { name: 'LANDFLOW_DESKTOP_APPS', group: 'plugin', default: '–', description: 'read by the Desktop plugin, not the host: the operator\'s ceiling on which apps a sandbox may start ([plugins/desktop](../../plugins/desktop/README.md))', readBy: 'plugins' },
+  { name: 'LANDFLOW_DESKTOP_ALLOWED_HOSTS', group: 'plugin', default: '–', description: 'read by the Desktop plugin, not the host: the operator\'s ceiling on the hosts a sandbox may reach through its proxy ([plugins/desktop](../../plugins/desktop/README.md))', readBy: 'plugins' },
+  { name: 'LANDFLOW_DESKTOP_MAX_STEPS', group: 'plugin', default: '`150`', description: 'read by the Desktop plugin, not the host: the most steps one desktop run takes ([plugins/desktop](../../plugins/desktop/README.md))', readBy: 'plugins' },
+  { name: 'LANDFLOW_DESKTOP_MAX_MINUTES', group: 'plugin', default: '`60`', description: 'read by the Desktop plugin, not the host: the most minutes one desktop run lasts ([plugins/desktop](../../plugins/desktop/README.md))', readBy: 'plugins' },
+  { name: 'LANDFLOW_DESKTOP_MEMORY', group: 'plugin', default: '–', description: 'read by the Desktop plugin, not the host: the sandbox\'s memory limit ([plugins/desktop](../../plugins/desktop/README.md))', readBy: 'plugins' },
+  { name: 'LANDFLOW_DESKTOP_CPUS', group: 'plugin', default: '–', description: 'read by the Desktop plugin, not the host: the sandbox\'s CPU limit ([plugins/desktop](../../plugins/desktop/README.md))', readBy: 'plugins' },
+  { name: 'LANDFLOW_SAP_ALLOWED_HOSTS', group: 'plugin', default: '–', description: 'read by the SAP plugin, not the host (also set in compose and the k8s component): hosts it may call, comma separated, `.suffix` matches subdomains; empty: any https host. A host named exactly here may use http (the fake server)', readBy: 'plugins' },
+  { name: 'LANDFLOW_SAP_METADATA_TTL_SECONDS', group: 'plugin', default: '`3600`', description: 'read by the SAP plugin: how long a service\'s `$metadata` is cached (seconds)', readBy: 'plugins' },
 ];
 
 /**

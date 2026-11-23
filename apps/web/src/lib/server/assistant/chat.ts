@@ -35,7 +35,7 @@ import { agentToolLines, failureClause } from '@/lib/shared/tenant-catalog'; // 
 import { runLog } from './run-log'; // AG20:
 import { isPropertyVisible, withPropertyDefaults } from '@landflow/protocol'; // SB12:
 import { needsPerson } from '@/lib/shared/run-check'; // SB12:
-import { redundantBranches, registryLookup, validateOps, withoutRepeatedAdds } from './ops';
+import { redundantBranches, registryLookup, unknownReferenceCautions, validateOps, withoutRepeatedAdds } from './ops';
 import {
   APPLY_REQUEST,
   PERSON_ONLY,
@@ -704,6 +704,7 @@ async function chat(input: ChatInput, scope: UsageScope): Promise<void> {
         const { ops: proposedOps, invented: inventedNotes, values, destinations: destinationNotes } = withoutInventedIds(teamed, known(), typeText, (op) => (op.op === 'addNode' ? String(op.type ?? '') : nodeByName(String(op.node ?? ''))?.type));
         for (const value of values) invented.add(value);
         let validated = validateOps(working, proposedOps, lookup); // SB07: let
+        if (validated.ops.length) validated.cautions.push(...(await unknownReferenceCautions(working, validated.workflow, lookup)));
         const back = addedBack(validated.ops);
         if (back.length) {
           return result(

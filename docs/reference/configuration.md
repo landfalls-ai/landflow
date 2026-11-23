@@ -90,6 +90,7 @@ still works.
 | `LANDFLOW_VALKEY_SENTINEL_TLS` | `false` | `true` when the sentinels speak TLS |
 | `LANDFLOW_EXPRESSION_SANDBOX` | `realm` | `realm`: `{{ }}` expressions run in a sealed `node:vm` context; `isolate`: in an isolated-vm isolate with its own heap and a memory cap (not a defence against memory bombs: some abort the process where the realm survives, see `LANDFLOW_EXPRESSION_MEMORY_MB`). `isolate` needs the optional `isolated-vm` package and `NODE_OPTIONS=--no-node-snapshot` in every process that evaluates expressions (the host, the worker, the image sets it); where it cannot load, or the value is neither `realm` nor `isolate`, the production profile refuses to start and development falls back to `realm` with a warning ([engine](../features/engine.md#expressions-run-in-a-sealed-realm)) |
 | `LANDFLOW_EXPRESSION_MEMORY_MB` | `64` | the heap cap of the `isolate` expression backend in MB (8 to 4096), shared by all expressions of the process; an expression that exceeds it fails and the isolate is rebuilt. It is not a hard bound: one builtin call can allocate far past it (measured 0.5 to 2 GB resident at 64), and Set/Map/sparse-object growth aborts the process at the default ([engine.md](../features/engine.md#the-isolate-backend-optional)) |
+| `LANDFLOW_DEBUG_NODE_TIMEOUT_MS` | `30000` | the longest one local-override call (`runs:debug`) waits for the developer's plugin, in milliseconds |
 
 ## Addresses and time
 
@@ -107,7 +108,7 @@ still works.
 |---|---|---|
 | `LANDFLOW_REGISTRY_GRPC_PORT` | `7070` | gRPC RegistryService (`off` to disable) |
 | `LANDFLOW_PLUGINS` | – | static plugin endpoints |
-| `LANDFLOW_SCAN_HOSTS` / `LANDFLOW_SCAN_PORTS` | `127.0.0.1` / `7100-7299` | pull discovery (the compose file sets the ports to `7101-7107,7111-7114,7116-7120,7201-7207,7211-7214,7216-7220`) |
+| `LANDFLOW_SCAN_HOSTS` / `LANDFLOW_SCAN_PORTS` | `127.0.0.1` / `7100-7299` | pull discovery (the compose file sets the ports to `7101-7107,7111-7114,7116-7120,7123-7124,7201-7207,7211-7214,7216-7220,7223-7224`) |
 | `LANDFLOW_SCAN_ON_START` | `true` | scan at boot |
 | `LANDFLOW_PLUGIN_DISCOVERY` | – | `kubernetes`: discover plugins from labelled Services; `LANDFLOW_K8S_NAMESPACES` (`*`: every namespace), `LANDFLOW_K8S_SPREAD` (`pods`: calls spread over the ready pods, or `service`), `LANDFLOW_K8S_CONTEXT`, `LANDFLOW_K8S_ADDRESS`, `LANDFLOW_K8S_CLUSTER_DOMAIN`, `LANDFLOW_K8S_LABEL_SELECTOR`, `LANDFLOW_K8S_RESYNC_SECONDS` in [deployment.md, "Kubernetes"](../deployment.md#kubernetes) |
 | `LANDFLOW_CODE_RUNNER_URL` *(recommended in production)* | – | the Code node's sandbox, e.g. `http://127.0.0.1:7300` (pnpm) or `http://127.0.0.1:53300` (Docker); set: the sandbox is the default and Python works |
@@ -314,3 +315,14 @@ Plugins read these themselves; the host does not. `plugins/agent-shell` (HTTP 71
 | `LANDFLOW_GRPC_PORT` | – | the plugin's gRPC port ([protocol.md](../protocol.md)) |
 | `LANDFLOW_SEARCH_SEARXNG_URL` | – | read by the Web Search plugin, not the host (also a compose variable for the `web-search` profile): the SearXNG base URL it uses when the SearXNG credential names none ([web-search.md](../web-search.md)) |
 | `LANDFLOW_SEARCH_DENY_DOMAINS` | – | read by the Web Search plugin (also a compose variable): comma-separated domains (subdomains included) the node refuses as `site` and drops from results |
+| `LANDFLOW_DESKTOP_DOCKER_CONTEXT` | – | read by the Desktop plugin, not the host: the Docker context it starts sandboxes on (`orbstack` locally) ([plugins/desktop](../../plugins/desktop/README.md)) |
+| `LANDFLOW_DESKTOP_DOCKER_BIN` | `docker` | read by the Desktop plugin, not the host: the Docker CLI it runs ([plugins/desktop](../../plugins/desktop/README.md)) |
+| `LANDFLOW_DESKTOP_IMAGE` | `landflow/desktop-sandbox:dev` | read by the Desktop plugin, not the host: the sandbox image (built from `services/desktop-sandbox`) ([plugins/desktop](../../plugins/desktop/README.md)) |
+| `LANDFLOW_DESKTOP_APPS` | – | read by the Desktop plugin, not the host: the operator's ceiling on which apps a sandbox may start ([plugins/desktop](../../plugins/desktop/README.md)) |
+| `LANDFLOW_DESKTOP_ALLOWED_HOSTS` | – | read by the Desktop plugin, not the host: the operator's ceiling on the hosts a sandbox may reach through its proxy ([plugins/desktop](../../plugins/desktop/README.md)) |
+| `LANDFLOW_DESKTOP_MAX_STEPS` | `150` | read by the Desktop plugin, not the host: the most steps one desktop run takes ([plugins/desktop](../../plugins/desktop/README.md)) |
+| `LANDFLOW_DESKTOP_MAX_MINUTES` | `60` | read by the Desktop plugin, not the host: the most minutes one desktop run lasts ([plugins/desktop](../../plugins/desktop/README.md)) |
+| `LANDFLOW_DESKTOP_MEMORY` | – | read by the Desktop plugin, not the host: the sandbox's memory limit ([plugins/desktop](../../plugins/desktop/README.md)) |
+| `LANDFLOW_DESKTOP_CPUS` | – | read by the Desktop plugin, not the host: the sandbox's CPU limit ([plugins/desktop](../../plugins/desktop/README.md)) |
+| `LANDFLOW_SAP_ALLOWED_HOSTS` | – | read by the SAP plugin, not the host (also set in compose and the k8s component): hosts it may call, comma separated, `.suffix` matches subdomains; empty: any https host. A host named exactly here may use http (the fake server) |
+| `LANDFLOW_SAP_METADATA_TTL_SECONDS` | `3600` | read by the SAP plugin: how long a service's `$metadata` is cached (seconds) |

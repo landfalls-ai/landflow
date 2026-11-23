@@ -182,7 +182,9 @@ describe('routes wait on readiness', () => {
     // telemetry/fingerprint.ts (the logger) come in, three small leaf modules; the budget follows (81 * 1.1 rounds up to 90).
     // W4a P16, re-measured: 92. net/ip-allow.ts and shared/ip-entry.ts (the guard's address check through auth/api-keys.ts) and
     // auth/api-key-refusal.ts (the messages) come in; the audit and use-count helpers are imported on first use. The budget follows (84 * 1.1 rounds up to 93).
-    expect(closure.size).toBeLessThan(Math.ceil(84 * 1.1));
+    // One-node override merge, re-measured: 93. auth/debug-tokens.ts (the guard) reads debug-node/settings.ts (the owner's switch) to
+    // refuse a `runs:debug` mint while it is off; one small leaf module. The budget follows (85 * 1.1 rounds up to 94).
+    expect(closure.size).toBeLessThan(Math.ceil(85 * 1.1));
   });
 
   it('handler() boots through the registered bootstrapper, and rejects rather than hangs without one', async () => {

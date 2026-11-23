@@ -2219,6 +2219,29 @@ export const MIGRATIONS: Migration[] = [
       { table: 'access_grants', column: 'holder_kind', definition: `TEXT NOT NULL DEFAULT 'user'` },
     ],
   },
+  {
+    version: 2938,
+    name: 'debug_node_override',
+    addColumns: [
+      { table: 'debug_tokens', column: 'node_id', definition: 'TEXT' },
+      { table: 'debug_tokens', column: 'node_name', definition: 'TEXT' },
+    ],
+    statements: [
+      // One-node local override (docs/specs/19-debug-token.md): a `runs:debug` token is bound to a node (the two columns
+      // above) and spends its single use by inserting its id here (the primary key makes the claim atomic). Only metadata
+      // is kept: the debug result is returned to the caller and never stored.
+      `CREATE TABLE IF NOT EXISTS debug_node_runs (
+        token_id TEXT PRIMARY KEY,
+        execution_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        plugin_host TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        status TEXT NOT NULL
+      )`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2251,6 +2274,7 @@ export const TABLES = {
   api_key_uses: ['key_id'],
   auth_tokens: ['id'],
   debug_tokens: ['id'],
+  debug_node_runs: ['token_id'],
   workflow_publications: ['workflow_id'],
   workflow_publish_log: ['id'],
   node_static_data: ['workflow_id', 'node_id'],

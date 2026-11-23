@@ -1,6 +1,6 @@
 # Desktop agent: an agent that sees and uses a desktop, in a disposable sandbox
 
-Status: proposed (2026-11-07). Part of the [specs](README.md). Research and a plan; no code yet.
+Status: phases 1 and the first slice of 2 built (2026-11-07), on the go/no-go recommendations (go; no credentials on the desktop; no separate product); see [features/desktop.md](../features/desktop.md). Not built: phases 3 to 5 (native toolset, benchmark, safety classes and injection tests, watch view, retention, Desktop Agent node). Part of the [specs](README.md).
 
 ## Problem
 

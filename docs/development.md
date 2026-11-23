@@ -19,7 +19,7 @@ pnpm dev:all:web-search                       # the same plus the Web Search plu
 docker compose -f deploy/compose.infra.yml up -d --wait   # Postgres, Valkey, Mailpit, MinIO, OpenBao (optional)
 ```
 
-`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|linear|attio|fathom|clickland|landledger|landfall|triage|threat-intel|browser|deck|web-search|agent-shell|ai-sdk` runs one plugin (`deck` on 7122 / 7222, run inside a deck pane; `web-search` on 7113 / 7213, `agent-shell` on 7114 / 7214, `ai-sdk` on 7115 / 7215; these three, `deck`, `github`, `clickland`, `landledger` and the Landfall, triage and threat-intel plugins are not in `dev:all`; see ports in [platform/kubernetes.md](platform/kubernetes.md)), and
+`pnpm dev` runs only the host; `pnpm plugin:ts|py|go|messaging|productivity|google|databases|github|linear|attio|fathom|clickland|landledger|landfall|triage|threat-intel|browser|deck|web-search|agent-shell|desktop|ai-sdk|sap` runs one plugin (`sap` on 7123 / 7223; `desktop` on 7124 / 7224, needs the sandbox image from `services/desktop-sandbox` and Docker; `deck` on 7122 / 7222, run inside a deck pane; `web-search` on 7113 / 7213, `agent-shell` on 7114 / 7214, `ai-sdk` on 7115 / 7215; these three, `deck`, `github`, `clickland`, `landledger` and the Landfall, triage and threat-intel plugins are not in `dev:all`; see ports in [platform/kubernetes.md](platform/kubernetes.md)), and
 `pnpm worker` runs a queue-mode worker. The host keeps its data in `apps/web/.data` (SQLite, `credentials.json`,
 `encryption.key`). Don't edit those files by hand: use the UI, the API or the [CLI](features/cli.md).
 [deployment.md, "Using the infra from the dev server on the host"](deployment.md#using-the-infra-from-the-dev-server-on-the-host)
@@ -195,7 +195,7 @@ Every suite, from the repository root. All of them run offline.
 pnpm typecheck                                     # every TypeScript package
 for p in protocol transports engine sdk cli test-fakes; do (cd packages/$p && npx vitest run); done
 (cd services/code-runner && npx vitest run)
-for p in messaging text-toolkit github landfall triage browser; do (cd plugins/$p && npx vitest run); done
+for p in messaging text-toolkit github landfall triage browser desktop; do (cd plugins/$p && npx vitest run); done
 (cd sdks/go && go test ./...)
 (cd sdks/go/transport && go test -race -count=1 -run Claim .)
 for k in kafka amqp nats valkey mqtt amqp1 sqs pubsub pulsar servicebus; do (cd sdks/go/transport/$k && go test ./...); done

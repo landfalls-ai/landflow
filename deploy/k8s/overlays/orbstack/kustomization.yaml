@@ -40,6 +40,8 @@ components:
   - ../../components/code-runner
   - ../../components/mailpit
   - ../../components/local-access
+  # SAP plugin (build landflow/plugin-sap:k8s-dev first, see components/sap): off by default.
+#   - ../../components/sap
 #   - ../../components/postgres
 #   - ../../components/valkey
 images:
@@ -65,6 +67,7 @@ images:
   - { name: landflow/plugin-grafana, newTag: k8s-dev }
   - { name: landflow/plugin-ai-sdk, newTag: k8s-dev }
   - { name: landflow/code-runner, newTag: k8s-dev }
+  - { name: landflow/plugin-sap, newTag: k8s-dev } # only used with components/sap
 generatorOptions:
   disableNameSuffixHash: true
   labels: { app.kubernetes.io/part-of: landflow, app.kubernetes.io/component: config }

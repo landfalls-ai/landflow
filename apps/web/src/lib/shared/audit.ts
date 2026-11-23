@@ -147,6 +147,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'mcp.policy_hook.delete': 'Removed an MCP policy hook',
   'mcp.policy.denied': 'An MCP policy hook blocked a call',
   'mcp.policy.failed': 'An MCP policy hook did not answer',
+  'debug.node.run': 'Ran one node of a recorded run against a local plugin (debug run)',
   'marketplace.install': 'Installed from a marketplace',
   'marketplace.uninstall': 'Uninstalled a marketplace plugin',
   'audit.export': 'Exported the audit log',
