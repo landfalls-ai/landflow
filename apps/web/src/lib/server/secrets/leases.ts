@@ -97,7 +97,7 @@ async function readRow(id: string, db: Database = database()): Promise<LeaseRow 
 /**
  * Insert a new row unless the run already has one for the path. Resolves to whether this caller won and the row that
  * stands. SQLite: one IMMEDIATE transaction decides. Postgres mode: a copy per process, so the insert is made straight
- * on Postgres (`ON CONFLICT DO NOTHING`), whose row count says who won, and the copy follows.
+ * on Postgres (`ON CONFLICT DO NOTHING` with no target, so the id and the run/provider/path index both decide quietly), whose row count says who won, and the copy follows.
  */
 export async function claim(row: LeaseRow, db: Database = database()): Promise<{ won: boolean; row: LeaseRow }> {
   if (db.kind !== 'postgres') {
@@ -111,7 +111,7 @@ export async function claim(row: LeaseRow, db: Database = database()): Promise<{
   await db.flush();
   const values = COLUMNS.map((column) => row[column] ?? null);
   const outcome = await db.direct(async (client) => {
-    const inserted = await client.query(`INSERT INTO secret_leases (${COLUMNS.join(', ')}) VALUES (${COLUMNS.map((_c, i) => `$${i + 1}`).join(', ')}) ON CONFLICT (id) DO NOTHING`, values);
+    const inserted = await client.query(`INSERT INTO secret_leases (${COLUMNS.join(', ')}) VALUES (${COLUMNS.map((_c, i) => `$${i + 1}`).join(', ')}) ON CONFLICT DO NOTHING`, values);
     // The other processes (the leader's sweeper, a main's lists and counts, key rotation) hear of the row at once.
     if (inserted.rowCount) await tell(db, client, row.id);
     if (inserted.rowCount) return undefined;
