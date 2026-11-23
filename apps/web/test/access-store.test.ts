@@ -47,7 +47,7 @@ describe('the words people see', () => {
       ['approved', 'active', 'granted'],
       ['approved', 'removing', 'granted'],
       ['approved', 'revoke_failed', 'granted'],
-      ['approved', 'expired', 'removed'],
+      ['approved', 'expired', 'expired'],
       ['approved', 'revoked', 'removed'],
       ['approved', 'drift', 'removed'],
       ['approved', 'failed', 'failed'],
