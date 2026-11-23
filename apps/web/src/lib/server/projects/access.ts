@@ -27,6 +27,7 @@ import {
   type ResourceKind,
   type ResourceOwnership,
 } from '../../shared/projects';
+import { isLockedWorkflow } from '../singleton';
 import { authDb } from '../auth/db';
 import { AuthError } from '../auth/errors';
 import {
@@ -94,7 +95,9 @@ function accessFrom(home: string | undefined, homeShares: Array<{ projectId: str
 export function resourceAccess(actor: Actor | undefined, kind: ResourceKind, id: string): ResourceAccess | undefined {
   if (!actor) return undefined;
   if (isInstanceAdmin(actor)) return FULL_ACCESS;
-  return accessFrom(homeProjectId(kind, id), shares(kind, id), (projectId) => projectRole(actor, projectId));
+  const access = accessFrom(homeProjectId(kind, id), shares(kind, id), (projectId) => projectRole(actor, projectId));
+  // The installed access flows decide who gets access: everyone but an instance admin only sees them, whatever their project role.
+  return access && kind === 'workflow' && isLockedWorkflow(id) ? { ...access, role: weakerRole(access.role, 'viewer') } : access;
 }
 
 /** Whether `actor` may do `action` with a resource. */

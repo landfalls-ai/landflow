@@ -210,7 +210,7 @@ describe('3. the question the approver answered is the one the server built', ()
   it('the real flow: an editor who changes the question in the installed flow gets no grant', async () => {
     const original = store.getWorkflow(installed())!;
     const edited = { ...original, nodes: original.nodes.map((node) => (node.type === 'core.confirmDraft' ? { ...node, parameters: { ...node.parameters, title: 'Approve the weekly report?' } } : node)) };
-    store.saveWorkflow(edited, { actor: lead.id });
+    store.saveWorkflow(edited, { actor: null }); // a path that got round the lock: Apply must still not believe the answer
     await publishDraft(installed(), owner.id);
     resetAccessTrigger();
     try {
@@ -316,26 +316,16 @@ describe('6. accounts and the target', () => {
 });
 
 describe('7. a drifted grant still ends at its end', () => {
-  it('is checked at its end: removed if the person is back, otherwise just ended', async () => {
-    const make = async (login: string) => {
-      const a = await pending(team.id, mia, 15, login);
-      record.next = approvedBy();
-      await applyDecision(a.id, a.executionId, 'approved', { steps: [STEP] });
-      const grant = grantOfRequest(a.id)!;
-      fake.teams.get('acme/platform')!.delete(login.toLowerCase());
-      expect((await reconcileGrants(Date.now() + 2 * 60 * MIN)) as unknown).toMatchObject({ drift: 1 });
-      expect(grantRow(grant.id)!.status).toBe('drift');
-      return grant;
-    };
-    const gone = await make('drift-a');
-    await sweepGrants(Date.parse(gone.until!) + 1000);
-    expect(grantRow(gone.id)).toMatchObject({ status: 'expired', end_reason: 'expired' });
-
-    const back = await make('drift-b');
-    fake.teams.get('acme/platform')!.set('drift-b', 'member');
-    await sweepGrants(Date.parse(back.until!) + 1000);
-    expect(grantRow(back.id)!.status).toBe('expired');
-    expect(teamHas('drift-b')).toBe(false);
+  it('is just ended at its end (nothing is removed: the person left outside Landflow)', async () => {
+    const a = await pending(team.id, mia, 15, 'drift-a');
+    record.next = approvedBy();
+    await applyDecision(a.id, a.executionId, 'approved', { steps: [STEP] });
+    const grant = grantOfRequest(a.id)!;
+    fake.teams.get('acme/platform')!.delete('drift-a');
+    expect((await reconcileGrants(Date.now() + 2 * 60 * MIN)) as unknown).toMatchObject({ drift: 1 });
+    expect(grantRow(grant.id)!.status).toBe('drift');
+    await sweepGrants(Date.parse(grant.until!) + 1000);
+    expect(grantRow(grant.id)).toMatchObject({ status: 'expired', end_reason: 'expired' });
   });
 });
 

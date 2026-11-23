@@ -13,7 +13,7 @@ import { database } from '../db';
 import { singleton } from '../singleton';
 import { logger } from '../telemetry/logger';
 import { runAction } from './actions';
-import { removeGrant, resumeGrant, OVERDUE_MS, type EndReason } from './grants';
+import { removeGrant, resumeGrant, OVERDUE_MS, REMOVE_LEASE_MS, type EndReason } from './grants';
 import { claimGrant, grantRow, parseJson, type GrantRow } from './store';
 import { SYSTEMS } from './systems';
 
@@ -61,9 +61,9 @@ export async function reconcileGrants(now = Date.now()): Promise<ReconcileResult
     await removeGrant(grant.id, reason, undefined, now);
     result.retaken++;
   }
-  // A process that stopped mid-grant left `pending` with a lease that ran out: the add is idempotent and the "had it before" answer is
+  // A process that stopped mid-grant left `pending` with a lease that ran out (or, stopped before it took one, none at all and an old row): the add is idempotent and the "had it before" answer is
   // already recorded, so it is taken up again, never worked out again.
-  const unfinished = database().all<GrantRow>(`SELECT * FROM access_grants WHERE status = 'pending' AND system <> 'manual' AND lease_until IS NOT NULL AND lease_until <= ? LIMIT ?`, iso(now), PASS_LIMIT);
+  const unfinished = database().all<GrantRow>(`SELECT * FROM access_grants WHERE status = 'pending' AND system <> 'manual' AND ((lease_until IS NOT NULL AND lease_until <= ?) OR (lease_until IS NULL AND created_at <= ?)) LIMIT ?`, iso(now), iso(now - REMOVE_LEASE_MS), PASS_LIMIT);
   for (const grant of unfinished) {
     await resumeGrant(grant, now);
     result.activated++;

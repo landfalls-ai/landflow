@@ -40,6 +40,8 @@ export interface SystemSpec {
   checks: boolean;
   /** The plugin node; none for a manual system. */
   nodeType?: string;
+  /** Why the catalog does not offer this system for new entries (the plugin operations stay). */
+  notOffered?: string;
 }
 
 const GITHUB_CREDENTIAL = 'github.githubApi';
@@ -97,6 +99,7 @@ export const SYSTEMS: Record<AccessSystem, SystemSpec> = {
     credentialTypes: [GITHUB_CREDENTIAL],
     // GitHub offers no read of a project's collaborators: nothing to check, and no way to see an earlier role.
     checks: false,
+    notOffered: 'GitHub project entries are not offered yet: GitHub gives no way to read a project role, so Landflow could not tell what to leave alone or what to take back',
     nodeType: 'github.githubAccess',
     fields: [
       { name: 'org', label: 'Organization', required: true, placeholder: 'acme' },

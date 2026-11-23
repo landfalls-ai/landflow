@@ -31,6 +31,7 @@ import './practices/context-source';
 // SP03: writes the parts of each recorded model call's prompt (docs/llm-gateway.md#what-a-prompt-was-made-of).
 import './ai-usage/parts-register';
 // C35: registers the built-in access backend (docs/access-requests.md), so routes and nodes reach it through the port.
+import './access/guard'; // registers the lock on the installed access flows
 import './access/port';
 // AP01: registers the approval inbox's port and settles a cancelled run's requests (docs/approval-inbox.md).
 import './approval-inbox';
