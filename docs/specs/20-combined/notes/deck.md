@@ -1,0 +1,20 @@
+# Notes for the integrator: P32 `deck` (C33)
+
+## docs/README.md
+
+- Feature map: add a row "dot-agent-deck from a flow: a Dispatch node that starts a unit in the person's deck and resumes a Wait when it reports (opt-in plugin, run in a deck pane, `pnpm plugin:deck`)" linking [plugins/deck](../plugins/deck/README.md) and [harnesses.md](harnesses.md#dot-agent-deck-from-a-flow). In the plugins row at the end, add `[deck](../plugins/deck/README.md)`.
+
+## docs/development.md
+
+- Add `deck` to the `pnpm plugin:...` list (7122 / 7222, not in `dev:all`), and `pnpm --filter @landflow/plugin-deck test` (a fake `dot-agent-deck` script on PATH through `LANDFLOW_DECK_BIN`; no deck, no container) to the plugin suites.
+
+## docs/limitations.md
+
+- Add: the deck plugin runs only inside a deck pane, because the deck's `dispatch` and `inbox` commands refuse outside one; it must be started by hand there, and closing that pane ends it. It ships Dispatch only (Delegate is orchestrator-only in the deck).
+- Add: the plugin's watches live in memory: a plugin restart loses them and the run's Wait times out while the unit keeps running. Completion is matched on the deck's wording (commit 720a5f05); a deck release that rewords it breaks the match.
+- Add: the deck's spans and a run's spans are joined in the collector by the unit name (`deck.unit.name`, `landflow.execution.id` on the Dispatch span), not parented: the deck ignores `TRACEPARENT`.
+- Add: a dispatched unit runs as the person on the deck's machine; a unit's own command is off unless `LANDFLOW_DECK_ALLOW_COMMAND=1`. The plugin never runs `trust approve`.
+
+## docs/roadmap.md
+
+- C33 (dot-agent-deck as a sibling): built as `plugins/deck` (Dispatch, watches, Report To). Open, for the person to raise with the deck project: a token-authenticated dispatch and inbox entry outside a pane; `TRACEPARENT` honoured on dispatch. Later: a deck view in Landlens; Delegate if the deck lets a non-orchestrator use it.
