@@ -11,7 +11,7 @@ import { logger } from '../../telemetry/logger';
 import { cancelOpenRequestsOf } from '../requests';
 import { accountOf } from '../store';
 import { AccessError } from '../errors';
-import { auditActorOf } from '../rules';
+import { auditActorOf } from '../audit-actor';
 import { endSessionsFor } from './sessions';
 import { requesterRow, requesterRows, saveRequester, type RequesterRow } from './store';
 

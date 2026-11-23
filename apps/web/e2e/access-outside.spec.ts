@@ -70,7 +70,7 @@ test.beforeAll(async ({}, testInfo) => {
   entryName = `Figma seat ${size}`;
   sink = await mailSink();
   const issuer = await google.start();
-  host = await startScratchHost({ env: { LANDFLOW_SMTP_HOST: '127.0.0.1', LANDFLOW_SMTP_PORT: String(sink.port), LANDFLOW_SMTP_IGNORE_TLS: 'true', LANDFLOW_SMTP_FROM: 'Landflow <landflow@localhost>' } });
+  host = await startScratchHost({ env: { LANDFLOW_SMTP_HOST: '127.0.0.1', LANDFLOW_SMTP_PORT: String(sink.port), LANDFLOW_SMTP_IGNORE_TLS: 'true', LANDFLOW_SMTP_FROM: 'Landflow <landflow@localhost>', LANDFLOW_TRUSTED_PROXIES: '0', LANDFLOW_ACCESS_OUTSIDE_DEV_OIDC: 'true' } });
   const origin = host.url;
   const probe = await fetch(`${origin}/request-access/api/config`).catch(() => undefined);
   missing = !probe || probe.status === 404 && !(await probe.clone().text()).includes('enabled');

@@ -136,7 +136,4 @@ export function canMarkDone(actor: Actor, grant: GrantFacts, entry: EntryData | 
 export const canRetry = canMarkDone;
 
 /** Who the audit log names for an action: the person, by id, name and email (the library is called outside a request too). */
-export function auditActorOf(actor: Actor): AuditActorInput {
-  const user = getUser(actor.id);
-  return user ? { id: user.id, name: user.name, email: user.email } : { id: actor.id };
-}
+export { auditActorOf } from './audit-actor';

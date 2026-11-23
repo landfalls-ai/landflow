@@ -13,7 +13,7 @@ import { trustedProxiesConfigured } from '../../net/client-address';
 import { GOOGLE_ISSUER, OIDC_CLIENT_TYPE } from '../../nodes/oidc-client-credential';
 import { canResource, isInstanceAdmin, type Actor } from '../../projects/access';
 import { AccessError } from '../errors';
-import { auditActorOf } from '../rules';
+import { auditActorOf } from '../audit-actor';
 import { parseJson } from '../store';
 
 export const OUTSIDE_SETTINGS_KEY = 'access_outside';
