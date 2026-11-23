@@ -470,7 +470,21 @@ absent from an agent without any). Publishing needs a model, and a persona part 
     read, split, embedded and added to the collection (metadata `documentId`, `fileName`, `page`,
     `chunk`), and a document can be deleted again (`GET/POST/DELETE
     /api/agents/:id/knowledge/:toolId/documents`). The store must be one that supports deletion
-    by metadata (all three do). **Keyword search** (wave ag3): embeddings provider **Keyword search (built in, no
+    by metadata (all three do). **Sources** (C22): the same dialog keeps the base in sync with a
+    **folder** of the files directory, an **S3 bucket** prefix (an `S3` credential: endpoint, region, keys),
+    one **website** (same host only, link depth up to 3, up to 500 pages, `robots.txt` obeyed, half a second
+    between requests, a private start address refused when `LANDFLOW_OUTBOUND_BLOCK_PRIVATE` is on) or a **Google
+    Drive** folder (the person's own connected Google account; Docs read as Markdown, Sheets as CSV, Slides as text).
+    Each source has a schedule (only on **Sync now**, hourly or daily), **Pause**, **Sync now**, **History** (every
+    run: what was added, changed, removed, failed, how many chunks were embedded and how many reused, and the items
+    that failed) and **Remove**, which asks whether to delete the chunks it wrote (yes by default). A sync compares a
+    version marker per item (a file's time and size, an S3 ETag, a page's ETag, a Drive checksum), writes only what
+    changed under the base's home project (the C20 re-index, so unchanged text keeps its vector), and removes what
+    left the source only when it listed the whole source. One sync of a source runs at a time across every process;
+    scheduled syncs run on the leader; a run that stops without finishing is closed as failed. At most 20 sources a
+    base and 2,000 items a sync (a longer source is picked up again a minute later). Routes: `GET/POST
+    /api/agents/:id/knowledge/:toolId/sources`, `PATCH/DELETE …/:sourceId`, `POST …/:sourceId/sync`, `GET …/:sourceId/runs`
+    ([reference/api.md](reference/api.md)). **Keyword search** (wave ag3): embeddings provider **Keyword search (built in, no
     model)** (`embeddings: { provider: 'none', model: 'bm25' }`, search mode `keyword`) stores each passage with a
     one-number vector and ranks by Landflow's BM25 over the stored passages: no model, no key, no call, but it finds
     the words in the question, not their meaning. SQLite and in-memory stores only: a `none` knowledge base on

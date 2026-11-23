@@ -2116,6 +2116,20 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS trust_records_subject ON trust_records (subject_kind, subject_id, state)`,
     ],
   },
+  // C22: knowledge sources (a folder, S3, a site or Drive feeding an agent's knowledge base), the claim of a running sync apart from the source (an admin's edit never clears a lease), what each item looked like at the last sync, and the sync history (docs/agents.md#sources)
+  {
+    version: 2929,
+    name: 'knowledge_sources',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS knowledge_sources (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, tool_id TEXT NOT NULL, collection_key TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, location TEXT NOT NULL, settings TEXT NOT NULL, credential_id TEXT, schedule TEXT NOT NULL, paused BIGINT NOT NULL DEFAULT 0, paused_reason TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS knowledge_sources_where ON knowledge_sources (collection_key, kind, location)`,
+      `CREATE INDEX IF NOT EXISTS knowledge_sources_agent ON knowledge_sources (agent_id, tool_id)`,
+      `CREATE TABLE IF NOT EXISTS knowledge_source_state (source_id TEXT PRIMARY KEY, run_id TEXT, lease_until TEXT, next_at TEXT, last_run TEXT, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS knowledge_source_items (source_id TEXT NOT NULL, item_key TEXT NOT NULL, version TEXT NOT NULL, name TEXT, size BIGINT, extra TEXT, synced_at TEXT NOT NULL, PRIMARY KEY (source_id, item_key))`,
+      `CREATE TABLE IF NOT EXISTS knowledge_sync_runs (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, trigger TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, counts TEXT NOT NULL, errors TEXT, note TEXT)`,
+      `CREATE INDEX IF NOT EXISTS knowledge_sync_runs_source ON knowledge_sync_runs (source_id, started_at)`,
+    ],
+  },
 ];
 
 /** Every table with its primary key columns (upserts conflict on them; Postgres mode copies them at boot). */
@@ -2272,6 +2286,10 @@ export const TABLES = {
   user_recovery_codes: ['user_id', 'code_hash'], // C16:
   mfa_challenges: ['id'], // C16:
   task_runs: ['id'],
+  knowledge_sources: ['id'], // C22:
+  knowledge_source_state: ['source_id'], // C22:
+  knowledge_source_items: ['source_id', 'item_key'], // C22:
+  knowledge_sync_runs: ['id'], // C22:
 } as const satisfies Record<string, readonly string[]>;
 
 export type TableName = keyof typeof TABLES;

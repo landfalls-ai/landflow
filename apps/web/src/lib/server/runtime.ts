@@ -230,6 +230,8 @@ export const SERVICES: ServiceSpec[] = [
   { name: 'notion brain', roles: MAIN, leader: true, start: () => notionBrain.start(), stop: () => notionBrain.stop() },
   // C19: delivers the run events written in each save's transaction to project event subscriptions (lib/server/outbox/dispatcher.ts); one main delivers, so each subscription's order holds.
   { name: 'event outbox', roles: MAIN, leader: true, start: () => eventOutbox.start(), stop: () => eventOutbox.stop() },
+  // C22: scheduled syncs of knowledge sources (lib/server/knowledge-sources/scheduler.ts); the leader starts them, a claim in the database stops a second process from running the same source.
+  { name: 'knowledge sources', roles: MAIN, leader: true, start: async () => (await import('./knowledge-sources/scheduler')).knowledgeSourceScheduler.start(), stop: async () => (await import('./knowledge-sources/scheduler')).knowledgeSourceScheduler.stop() },
   {
     name: 'registry gRPC server',
     roles: MAIN,
